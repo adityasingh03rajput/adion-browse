@@ -81,6 +81,10 @@ process.on('uncaughtException', (err) => {
 });
 
 process.on('unhandledRejection', (reason, promise) => {
+  const msg = reason && reason.message ? reason.message : String(reason);
+  if (msg.includes('Script failed to execute') || msg.includes('Execution context was destroyed')) {
+    return; // Normal transient page-level script error during navigation
+  }
   console.error('[Adion Process] Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
@@ -141,8 +145,14 @@ async function createWindow() {
     return permission === 'media' || permission === 'microphone' || permission === 'audio-capture';
   });
 
-  // Load the browser chrome UI
-  await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+  // Initialize Tab Manager
+  tabManager = new TabManager(mainWindow);
+
+  // Initialize Decoupled AI Voice & Autonomous Control Plane
+  controlPlane = new ControlPlane(mainWindow, tabManager);
+  tabManager.tabSwitchedCallback = (tab) => {
+    controlPlane.onActiveTabChanged(tab);
+  };
 
   // Renderer diagnostic relay — receives explicit log() IPC calls from renderer for terminal visibility
   ipcMain.on('renderer:log', (event, msg) => {
@@ -169,14 +179,8 @@ async function createWindow() {
     }
   });
 
-  // Initialize Tab Manager
-  tabManager = new TabManager(mainWindow);
-
-  // Initialize Decoupled AI Voice & Autonomous Control Plane
-  controlPlane = new ControlPlane(mainWindow, tabManager);
-  tabManager.tabSwitchedCallback = (tab) => {
-    controlPlane.onActiveTabChanged(tab);
-  };
+  // Load the browser chrome UI after all IPC handlers are actively listening
+  await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 
   // Create initial tab
   tabManager.createTab('adion://newtab');

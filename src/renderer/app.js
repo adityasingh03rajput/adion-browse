@@ -49,6 +49,17 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentActiveTitle = '';
   let currentDomain = '';
 
+  // Safe domain extractor helper
+  function extractDomain(url) {
+    if (!url || typeof url !== 'string') return '';
+    try {
+      if (url.startsWith('adion://') || url.startsWith('about:') || url.startsWith('chrome://')) return '';
+      return new URL(url).hostname || '';
+    } catch (_) {
+      return '';
+    }
+  }
+
   // --- TABS RENDERING ---
   function renderTabs(tabs, activeId) {
     currentTabs = tabs;
@@ -862,15 +873,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Live visual pulse modulation based on acoustic energy
         jarvisAudioLevel = Math.min(1.0, rms * 4.5);
-        if (agentHudPulse) {
+        const pulseEl = agentHudPulse || document.getElementById('agentHudSphereWrapper');
+        if (pulseEl) {
           if (rms > 0.015) {
-            agentHudPulse.style.transform = `scale(${Math.min(1.8, 1.0 + rms * 5)})`;
-            agentHudPulse.style.boxShadow = '0 0 16px #10b981';
-            agentHudPulse.style.background = '#10b981';
+            pulseEl.style.transform = `scale(${Math.min(1.8, 1.0 + rms * 5)})`;
+            pulseEl.style.boxShadow = '0 0 16px #10b981';
+            pulseEl.style.background = '#10b981';
           } else {
-            agentHudPulse.style.transform = 'scale(1.0)';
-            agentHudPulse.style.boxShadow = '0 0 8px #ff3366';
-            agentHudPulse.style.background = '#ff3366';
+            pulseEl.style.transform = 'scale(1.0)';
+            pulseEl.style.boxShadow = '0 0 8px #ff3366';
+            pulseEl.style.background = '#ff3366';
           }
         }
 
@@ -1038,16 +1050,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.adionAPI.agent.onAudioLevel((data) => {
       if (!isListening) return;
-      if (data.isSpeechActive) {
-        agentHudState.innerText = `SPEECH (${(data.rms * 100).toFixed(0)}%)`;
-        agentHudPulse.style.transform = `scale(${Math.min(1.8, 1.0 + data.rms * 5)})`;
-        agentHudPulse.style.boxShadow = '0 0 16px #10b981';
-      } else {
-        if (agentHudState.innerText.startsWith('SPEECH')) {
+      if (agentHudState) {
+        if (data.isSpeechActive) {
+          agentHudState.innerText = `SPEECH (${(data.rms * 100).toFixed(0)}%)`;
+        } else if (agentHudState.innerText && agentHudState.innerText.startsWith('SPEECH')) {
           agentHudState.innerText = 'LISTENING';
         }
-        agentHudPulse.style.transform = 'scale(1.0)';
-        agentHudPulse.style.boxShadow = '0 0 8px #10b981';
+      }
+      const pulseEl = agentHudPulse || document.getElementById('agentHudSphereWrapper');
+      if (pulseEl) {
+        if (data.isSpeechActive) {
+          pulseEl.style.transform = `scale(${Math.min(1.8, 1.0 + data.rms * 5)})`;
+          pulseEl.style.boxShadow = '0 0 16px #10b981';
+        } else {
+          pulseEl.style.transform = 'scale(1.0)';
+          pulseEl.style.boxShadow = '0 0 8px #10b981';
+        }
       }
     });
 
