@@ -143,11 +143,9 @@ class AgentRuntime extends EventEmitter {
     // Voice Activity Detection (VAD) threshold
     const isSpeechActive = rms > 0.012;
 
-    // Suppress repetitive audio frame status messages to prevent log spam
-    if (this.verboseAudioLogging) {
-      if (this.audioSession.chunkCount % 50 === 1) {
-        console.log(`[AgentRuntime Audio] Diagnostics: Frame #${this.audioSession.chunkCount} | RMS: ${rms.toFixed(4)}`);
-      }
+    // Log audio frame telemetry to stdout with exact Speech: true / Speech: false from git history
+    if (this.audioSession.chunkCount % 5 === 1 || isSpeechActive) {
+      console.log(`[AgentRuntime Audio] Frame #${this.audioSession.chunkCount} | Size: ${buffer.length}B | RMS: ${rms.toFixed(4)} | Speech: ${isSpeechActive}`);
     }
 
     // VAD Auto-Segmentation & Endpointing State Machine
