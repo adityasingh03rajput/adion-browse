@@ -10,6 +10,7 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const ELECTRON_BIN = require('electron');
@@ -43,11 +44,22 @@ function startBrowser() {
   console.log(`[Adion Supervisor] Launching Adion Browse (attempt #${restartCount + 1})...`);
   console.log('======================================================\n');
 
+  const logDir = path.join(ROOT_DIR, '.data');
+  if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+  const logFile = path.join(logDir, 'browser.log');
+  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+
   browserProcess = spawn(ELECTRON_BIN, ['.'], {
     cwd: ROOT_DIR,
     env: getEnv(),
-    stdio: 'inherit'
+    stdio: ['inherit', 'pipe', 'pipe']
   });
+
+  browserProcess.stdout.pipe(process.stdout);
+  browserProcess.stdout.pipe(logStream);
+
+  browserProcess.stderr.pipe(process.stderr);
+  browserProcess.stderr.pipe(logStream);
 
   const currentPid = browserProcess.pid;
   console.log(`[Adion Supervisor] Browser process active (PID: ${currentPid})`);
