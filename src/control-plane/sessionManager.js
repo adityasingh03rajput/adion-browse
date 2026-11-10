@@ -130,3 +130,4 @@ class SessionManager extends EventEmitter {
 }
 
 module.exports = SessionManager;
+

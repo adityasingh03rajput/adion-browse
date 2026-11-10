@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node scripts/supervisor.js",
     "dev": "node scripts/supervisor.js",
-    "test": "node tests/resilience.test.js && node tests/jarvis_session.test.js",
+    "test": "node tests/resilience.test.js && node tests/jarvis_session.test.js && node tests/preprocessor.test.js",
     "electron:direct": "cmd /c \"set ELECTRON_RUN_AS_NODE=&& set ELECTRON_CACHE=D:\\Adion Browse\\.cache\\electron&& electron .\""
   },
   "keywords": [
