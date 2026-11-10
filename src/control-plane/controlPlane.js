@@ -62,6 +62,10 @@ class ControlPlane {
       this.sendToUI(IPCChannels.AGENT_FEEDBACK_MESSAGE, data);
     });
 
+    this.runtime.on('audio-level', (data) => {
+      this.sendToUI('agent:audio-level', data);
+    });
+
     // Multi-Agent Pool events
     this.multiAgents.on('agent-spawned', (agent) => {
       this.sendToUI('multi-agent:spawned', agent);
@@ -96,19 +100,21 @@ class ControlPlane {
 
     // Voice stream initiated from microphone HUD
     ipcMain.on(IPCChannels.AGENT_VOICE_STREAM_START, () => {
-      this.runtime.setState(AgentState.LISTENING);
-      this.runtime.emit('feedback', { message: 'Microphone active - listening...', level: 'info' });
+      this.runtime.startAudioSession();
+    });
+
+    // Voice stream audio chunks transmitted from microphone
+    ipcMain.on(IPCChannels.AGENT_VOICE_STREAM_DATA, (event, audioChunk) => {
+      this.runtime.processAudioStreamChunk(audioChunk);
     });
 
     // Voice stream finished / speech transcript delivered
     ipcMain.handle(IPCChannels.AGENT_VOICE_STREAM_STOP, async (event, transcript) => {
-      if (transcript && transcript.trim()) {
-        this.sendToUI(IPCChannels.AGENT_VOICE_TRANSCRIPT, { text: transcript });
-        await this.runtime.processCommand(transcript);
-      } else {
-        this.runtime.setState(AgentState.IDLE);
+      const result = await this.runtime.stopAudioSession(transcript);
+      if (result && result.transcript) {
+        this.sendToUI(IPCChannels.AGENT_VOICE_TRANSCRIPT, { text: result.transcript });
       }
-      return { success: true };
+      return { success: true, ...result };
     });
 
     // Cancel active agent task

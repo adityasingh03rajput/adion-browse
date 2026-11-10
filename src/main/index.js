@@ -33,6 +33,14 @@ async function createWindow() {
   // Initialize Adion Shield engine
   await shield.init(session.defaultSession);
 
+  // Grant audio/microphone capture permissions for the AI Voice Control Plane
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === 'media') {
+      return callback(true);
+    }
+    callback(false);
+  });
+
   // Load the browser chrome UI
   await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 

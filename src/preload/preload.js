@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('adionAPI', {
   agent: {
     sendCommand: (commandText) => ipcRenderer.invoke('agent:send-command', commandText),
     startVoice: () => ipcRenderer.send('agent:voice-start'),
+    sendVoiceChunk: (audioBuffer) => ipcRenderer.send('agent:voice-data', audioBuffer),
     stopVoice: (transcript) => ipcRenderer.invoke('agent:voice-stop', transcript),
     cancelTask: () => ipcRenderer.send('agent:cancel-task'),
     onStateChange: (callback) => ipcRenderer.on('agent:state-change', (e, data) => callback(data)),
@@ -52,6 +53,7 @@ contextBridge.exposeInMainWorld('adionAPI', {
     onActionStarted: (callback) => ipcRenderer.on('agent:action-started', (e, data) => callback(data)),
     onActionFinished: (callback) => ipcRenderer.on('agent:action-finished', (e, data) => callback(data)),
     onFeedback: (callback) => ipcRenderer.on('agent:feedback-message', (e, data) => callback(data)),
+    onAudioLevel: (callback) => ipcRenderer.on('agent:audio-level', (e, data) => callback(data)),
     getContextStats: () => ipcRenderer.invoke('agent:get-context-stats'),
     getTabClusters: () => ipcRenderer.invoke('agent:get-tab-clusters'),
     verifyBiometric: (vector) => ipcRenderer.invoke('agent:verify-biometric', vector)

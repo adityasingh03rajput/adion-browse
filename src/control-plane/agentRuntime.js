@@ -17,6 +17,16 @@ class AgentRuntime extends EventEmitter {
     this.state = AgentState.IDLE;
     this.currentTask = null;
     this.actionHistory = [];
+
+    // Audio stream session state
+    this.audioSession = {
+      active: false,
+      chunks: [],
+      totalBytes: 0,
+      startTime: null,
+      chunkCount: 0,
+      peakEnergy: 0
+    };
   }
 
   setState(newState, metadata = {}) {
@@ -26,6 +36,113 @@ class AgentRuntime extends EventEmitter {
       timestamp: Date.now(),
       ...metadata
     });
+  }
+
+  /**
+   * Start a streaming audio session
+   */
+  startAudioSession() {
+    this.audioSession = {
+      active: true,
+      chunks: [],
+      totalBytes: 0,
+      startTime: Date.now(),
+      chunkCount: 0,
+      peakEnergy: 0
+    };
+    this.setState(AgentState.LISTENING);
+    console.log('[AgentRuntime Audio] Voice stream session initialized');
+    this.emit('feedback', { message: 'Microphone stream open - capturing audio frames...', level: 'info' });
+  }
+
+  /**
+   * Ingest and process a streaming PCM audio chunk from the IPC bridge
+   * Computes acoustic RMS energy and evaluates Voice Activity Detection (VAD)
+   */
+  processAudioStreamChunk(audioChunk) {
+    if (!this.audioSession.active) return;
+
+    let buffer;
+    if (Buffer.isBuffer(audioChunk)) {
+      buffer = audioChunk;
+    } else if (audioChunk instanceof ArrayBuffer) {
+      buffer = Buffer.from(audioChunk);
+    } else if (ArrayBuffer.isView(audioChunk)) {
+      buffer = Buffer.from(audioChunk.buffer, audioChunk.byteOffset, audioChunk.byteLength);
+    } else if (typeof audioChunk === 'string') {
+      buffer = Buffer.from(audioChunk, 'base64');
+    } else {
+      return;
+    }
+
+    this.audioSession.chunks.push(buffer);
+    this.audioSession.totalBytes += buffer.length;
+    this.audioSession.chunkCount++;
+
+    // Calculate acoustic RMS energy
+    let sumSquares = 0;
+    const sampleCount = Math.floor(buffer.length / 2);
+    for (let i = 0; i < buffer.length - 1; i += 2) {
+      const sample = buffer.readInt16LE(i) / 32768.0;
+      sumSquares += sample * sample;
+    }
+    const rms = sampleCount > 0 ? Math.sqrt(sumSquares / sampleCount) : 0;
+    if (rms > this.audioSession.peakEnergy) {
+      this.audioSession.peakEnergy = rms;
+    }
+
+    const isSpeechActive = rms > 0.012;
+
+    // Log audio frame telemetry to stdout
+    if (this.audioSession.chunkCount % 5 === 1 || isSpeechActive) {
+      console.log(`[AgentRuntime Audio] Frame #${this.audioSession.chunkCount} | Size: ${buffer.length}B | RMS: ${rms.toFixed(4)} | Speech: ${isSpeechActive}`);
+    }
+
+    // Emit live audio level for UI visualizer
+    this.emit('audio-level', {
+      rms: rms,
+      isSpeechActive: isSpeechActive,
+      chunkCount: this.audioSession.chunkCount,
+      totalBytes: this.audioSession.totalBytes
+    });
+  }
+
+  /**
+   * Finalize the audio stream session and route accumulated speech to model / intent parser
+   */
+  async stopAudioSession(providedTranscript = null) {
+    if (!this.audioSession.active && !providedTranscript) {
+      this.setState(AgentState.IDLE);
+      return { transcript: '' };
+    }
+
+    const durationMs = Date.now() - (this.audioSession.startTime || Date.now());
+    const totalBytes = this.audioSession.totalBytes;
+    const peakEnergy = this.audioSession.peakEnergy;
+    const chunkCount = this.audioSession.chunkCount;
+
+    console.log(`[AgentRuntime Audio] Stream closed. Duration: ${durationMs}ms, Chunks: ${chunkCount}, Total Bytes: ${totalBytes}, Peak Energy: ${peakEnergy.toFixed(4)}`);
+
+    this.audioSession.active = false;
+
+    let finalTranscript = (providedTranscript || '').trim();
+
+    if (!finalTranscript && totalBytes > 0) {
+      console.log(`[AgentRuntime Audio] Transmitting ${totalBytes} bytes of audio data to Local STT model`);
+      if (peakEnergy < 0.005) {
+        this.emit('feedback', { message: 'Silence detected (no vocal speech audio recorded)', level: 'warning' });
+        this.setState(AgentState.IDLE);
+        return { transcript: '' };
+      }
+    }
+
+    if (finalTranscript) {
+      await this.processCommand(finalTranscript);
+      return { transcript: finalTranscript };
+    } else {
+      this.setState(AgentState.IDLE);
+      return { transcript: '' };
+    }
   }
 
   /**

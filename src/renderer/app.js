@@ -439,50 +439,40 @@ document.addEventListener('DOMContentLoaded', () => {
   let isListening = false;
   let recognition = null;
   let hudHideTimeout = null;
+  let audioStream = null;
+  let audioContext = null;
+  let scriptProcessor = null;
+  let latestTranscript = '';
 
-  // Initialize Web Speech Recognition if supported by Chromium
+  // Initialize Web Speech Recognition as complementary STT if available
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (SpeechRecognition) {
     try {
       recognition = new SpeechRecognition();
-      recognition.continuous = false;
+      recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = 'en-US';
-
-      recognition.onstart = () => {
-        isListening = true;
-        btnVoiceAgent.classList.add('listening');
-        showAgentHud('LISTENING', 'Listening to voice command...', true);
-        window.adionAPI.agent.startVoice();
-      };
 
       recognition.onresult = (event) => {
         let transcript = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           transcript += event.results[i][0].transcript;
         }
+        latestTranscript = transcript;
         agentTranscriptPreview.innerText = `"${transcript}"`;
         agentTranscriptPreview.classList.add('has-text');
 
         if (event.results[0].isFinal) {
           showAgentHud('PROCESSING', `Heard: "${transcript}"`);
-          window.adionAPI.agent.stopVoice(transcript);
+          stopMicrophoneStream(transcript);
         }
       };
 
       recognition.onerror = (event) => {
-        console.warn('[Voice Recognition]', event.error);
-        stopListening();
-        if (event.error === 'not-allowed') {
-          showAgentHud('ERROR', 'Microphone permission required');
-        }
-      };
-
-      recognition.onend = () => {
-        stopListening();
+        console.warn('[Speech Recognition Info]', event.error);
       };
     } catch (e) {
-      console.warn('Speech recognition init error:', e);
+      console.warn('Speech recognition fallback enabled:', e);
     }
   }
 
@@ -507,30 +497,109 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function stopListening() {
+  /**
+   * Start streaming hardware microphone audio directly across IPC to the Control Plane
+   */
+  async function startMicrophoneStream() {
+    try {
+      latestTranscript = '';
+      audioStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+          echoCancellation: true,
+          noiseSuppression: true
+        }
+      });
+
+      audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      const source = audioContext.createMediaStreamSource(audioStream);
+
+      // 2048 buffer at 16kHz = ~128ms PCM chunk transmission
+      scriptProcessor = audioContext.createScriptProcessor(2048, 1, 1);
+
+      scriptProcessor.onaudioprocess = (e) => {
+        if (!isListening) return;
+        const inputData = e.inputBuffer.getChannelData(0);
+
+        // Convert Float32Array to 16-bit signed PCM
+        const pcmBuffer = new Int16Array(inputData.length);
+        let sumSquares = 0;
+        for (let i = 0; i < inputData.length; i++) {
+          const s = Math.max(-1, Math.min(1, inputData[i]));
+          pcmBuffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          sumSquares += s * s;
+        }
+
+        const rms = Math.sqrt(sumSquares / inputData.length);
+
+        // Live visual pulse modulation based on acoustic energy
+        if (rms > 0.015) {
+          agentHudPulse.style.transform = `scale(${Math.min(1.8, 1.0 + rms * 5)})`;
+          agentHudPulse.style.boxShadow = '0 0 16px #10b981';
+          agentHudPulse.style.background = '#10b981';
+        } else {
+          agentHudPulse.style.transform = 'scale(1.0)';
+          agentHudPulse.style.boxShadow = '0 0 8px #ff3366';
+          agentHudPulse.style.background = '#ff3366';
+        }
+
+        // Stream raw PCM frame across IPC to Control Plane / Local Model
+        window.adionAPI.agent.sendVoiceChunk(pcmBuffer.buffer);
+      };
+
+      source.connect(scriptProcessor);
+      scriptProcessor.connect(audioContext.destination);
+
+      isListening = true;
+      btnVoiceAgent.classList.add('listening');
+      window.adionAPI.agent.startVoice();
+      showAgentHud('LISTENING', 'Microphone active - stream capturing...', true);
+
+      if (recognition) {
+        try { recognition.start(); } catch(e){}
+      }
+    } catch (err) {
+      console.warn('[Microphone Stream] Error accessing microphone:', err);
+      showAgentHud('WARNING', 'Microphone access denied. Type command:');
+      promptManualCommand();
+    }
+  }
+
+  /**
+   * Stop microphone audio stream and flush final buffer
+   */
+  function stopMicrophoneStream(transcript = '') {
     isListening = false;
     btnVoiceAgent.classList.remove('listening');
+
+    if (scriptProcessor) {
+      scriptProcessor.disconnect();
+      scriptProcessor = null;
+    }
+    if (audioContext && audioContext.state !== 'closed') {
+      audioContext.close();
+      audioContext = null;
+    }
+    if (audioStream) {
+      audioStream.getTracks().forEach(track => track.stop());
+      audioStream = null;
+    }
+
     if (recognition) {
       try { recognition.stop(); } catch(e){}
     }
+
+    const finalCmd = transcript || latestTranscript;
+    window.adionAPI.agent.stopVoice(finalCmd);
   }
 
   function toggleVoiceAgent() {
     if (isListening) {
-      stopListening();
-      window.adionAPI.agent.cancelTask();
-      showAgentHud('IDLE', 'Voice listening stopped');
+      stopMicrophoneStream();
+      showAgentHud('PROCESSING', 'Analyzing audio stream...');
     } else {
-      if (recognition) {
-        try {
-          recognition.start();
-        } catch (err) {
-          promptManualCommand();
-        }
-      } else {
-        // Fallback for typed natural language command
-        promptManualCommand();
-      }
+      startMicrophoneStream();
     }
   }
 
@@ -550,7 +619,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (btnCancelAgent) {
     btnCancelAgent.addEventListener('click', () => {
-      stopListening();
+      stopMicrophoneStream();
       window.adionAPI.agent.cancelTask();
       agentHudOverlay.classList.remove('visible');
     });
@@ -572,6 +641,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.adionAPI.agent.onFeedback((feedback) => {
       showAgentHud(feedback.level.toUpperCase(), feedback.message);
+    });
+
+    window.adionAPI.agent.onAudioLevel((data) => {
+      if (data.isSpeechActive) {
+        agentHudState.innerText = `SPEECH (${(data.rms * 100).toFixed(0)}%)`;
+      }
     });
   }
 });
