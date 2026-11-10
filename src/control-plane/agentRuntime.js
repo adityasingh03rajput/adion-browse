@@ -887,13 +887,24 @@ class AgentRuntime extends EventEmitter {
         
         let targetTab = activeTab;
         if (!targetTab || !targetTab.url || !targetTab.url.includes('whatsapp.com')) {
-          const waUrl = 'https://web.whatsapp.com/';
-          if (activeTab && activeTab.url && !activeTab.url.startsWith('adion://newtab')) {
-            targetTab = this.tabManager.createTab(waUrl);
-            this.emit('feedback', { message: `Opened WhatsApp Web in new tab for "${contact}"`, level: 'info' });
+          // Check if ANY existing tab is already on WhatsApp Web
+          const existingWaTab = this.tabManager ? Array.from(this.tabManager.tabs.values()).find(t => t.url && t.url.includes('whatsapp.com')) : null;
+          if (existingWaTab) {
+            console.log(`[AgentRuntime WhatsApp] Found existing WhatsApp Web tab (${existingWaTab.id}), switching to it...`);
+            this.tabManager.switchTab(existingWaTab.id);
+            targetTab = existingWaTab;
+            this.emit('feedback', { message: `Switched to active WhatsApp Web tab for "${contact}"`, level: 'info' });
           } else {
-            this.tabManager.navigateActiveTab(waUrl);
-            this.emit('feedback', { message: `Navigating to WhatsApp Web for "${contact}"`, level: 'info' });
+            const waUrl = 'https://web.whatsapp.com/';
+            if (activeTab && activeTab.url && !activeTab.url.startsWith('adion://newtab')) {
+              targetTab = this.tabManager.createTab(waUrl);
+              console.log(`[AgentRuntime WhatsApp] Created new tab for WhatsApp Web: ${waUrl}`);
+              this.emit('feedback', { message: `Opened WhatsApp Web in new tab for "${contact}"`, level: 'info' });
+            } else {
+              this.tabManager.navigateActiveTab(waUrl);
+              console.log(`[AgentRuntime WhatsApp] Navigating active tab to WhatsApp Web: ${waUrl}`);
+              this.emit('feedback', { message: `Navigating to WhatsApp Web for "${contact}"`, level: 'info' });
+            }
           }
         }
 
@@ -1483,29 +1494,40 @@ class AgentRuntime extends EventEmitter {
 
   /**
    * Autonomous in-page WhatsApp contact search, chat activation, and message dispatch.
-   * Handles user intentions like "say hi to pidduk" or "text contact hello" directly
+   * Handles user intentions like "say thankyou to safal in whatsapp" directly
    * inside the authenticated WhatsApp Web interface.
    */
   async sendWhatsAppChat(tab, contact = '', message = '') {
-    if (!tab || !tab.view) return { success: false, reason: 'No active tab view' };
+    if (!tab || !tab.view) {
+      console.warn('[AgentRuntime WhatsApp] ⚠️ No active tab view available to dispatch WhatsApp message');
+      return { success: false, reason: 'No active tab view' };
+    }
     const contents = tab.view.webContents;
-    if (!contents) return { success: false, reason: 'No webContents' };
+    if (!contents) {
+      console.warn('[AgentRuntime WhatsApp] ⚠️ No webContents found on target tab');
+      return { success: false, reason: 'No webContents' };
+    }
 
+    console.log(`[AgentRuntime WhatsApp] 🚀 Initiating autonomous workflow: Send "${message}" to "${contact}"`);
     this.emit('feedback', { message: `Step 1/3: Searching for contact "${contact}" in WhatsApp...`, level: 'info' });
     this.emit('jarvis-notification', { type: 'info', message: `Searching for contact "${contact}" in WhatsApp...` });
 
-    let searchSubmitted = false;
+    let searchTyped = false;
+    let chatSelected = false;
     let messageSent = false;
     let qrPromptEmitted = false;
+    let attempts = 0;
     const startTime = Date.now();
-    const timeoutMs = 35000;
+    const timeoutMs = 40000;
 
     while (!messageSent && (Date.now() - startTime < timeoutMs)) {
+      attempts++;
       try {
         const currentUrl = typeof contents.getURL === 'function' ? contents.getURL() : '';
 
-        // If at gateway screen, click through
+        // If at gateway screen (api.whatsapp.com or wa.me), click "use WhatsApp Web"
         if (currentUrl.includes('api.whatsapp.com') || currentUrl.includes('wa.me')) {
+          console.log('[AgentRuntime WhatsApp] Gateway detected, clicking through to web.whatsapp.com...');
           await contents.executeJavaScript(`
             (() => {
               const webLink = Array.from(document.querySelectorAll('a, button')).find(el => 
@@ -1519,52 +1541,78 @@ class AgentRuntime extends EventEmitter {
           `).catch(() => null);
         }
 
-        // WhatsApp Web client state inspection
-        const stepState = await contents.executeJavaScript(`
+        // Check DOM state in WhatsApp Web
+        const result = await contents.executeJavaScript(`
           (() => {
-            // 1. Check for QR code screen
+            // A. Check for QR Code
             const hasQr = Boolean(
               document.querySelector('canvas[aria-label*="Scan"], div[data-ref], [data-testid="qrcode"]') ||
               /scan this qr code|link with phone number/i.test(document.body.innerText)
             );
-            if (hasQr) return { status: 'qr_code_required' };
+            if (hasQr) return { action: 'qr_required' };
 
             const target = ${JSON.stringify(contact)}.trim().toLowerCase();
             const msg = ${JSON.stringify(message)};
 
-            // 2. Check if a conversation is already open matching target
+            // B. Check if target chat is ALREADY open
             const headerTitleEl = document.querySelector('header span[title], header div[title], header span[dir="auto"]');
             const headerTitle = headerTitleEl ? (headerTitleEl.getAttribute('title') || headerTitleEl.innerText || '').toLowerCase() : '';
-            const isTargetChatOpen = headerTitle.includes(target) || target.includes(headerTitle);
+            const isOpenChat = headerTitle.includes(target) || target.includes(headerTitle);
 
-            // 3. Locate composer if conversation is open
-            const composer = document.querySelector('footer div[contenteditable="true"], [data-testid="conversation-compose-box-input"], div[data-tab="10"][contenteditable="true"]');
-            
-            // If composer is found and target chat is open, dispatch message!
-            if (composer && (isTargetChatOpen || ${JSON.stringify(!searchSubmitted)} === 'false')) {
+            // C. Locate composer
+            const composer = document.querySelector(
+              'footer div[contenteditable="true"], [data-testid="conversation-compose-box-input"], footer div[role="textbox"], div[data-tab="10"][contenteditable="true"]'
+            );
+
+            // If chat is open (or was selected) and composer exists, type and send!
+            if (composer && (isOpenChat || ${JSON.stringify(chatSelected)})) {
               composer.focus();
               document.execCommand('selectAll', false, null);
               document.execCommand('insertText', false, msg);
               composer.dispatchEvent(new Event('input', { bubbles: true }));
               composer.dispatchEvent(new Event('change', { bubbles: true }));
 
-              // Try clicking Send button
+              // Try clicking send button
               const sendBtn = document.querySelector('button[aria-label="Send"], span[data-icon="send"]')?.closest('button') ||
                              document.querySelector('button[data-testid="compose-btn-send"]');
               if (sendBtn && !sendBtn.disabled) {
                 sendBtn.click();
-                return { status: 'message_sent' };
+                return { action: 'message_sent', method: 'button_click' };
               }
 
-              // Dispatch Enter key in composer
+              // Try dispatching Enter key
               const enterDown = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
               composer.dispatchEvent(enterDown);
               const enterUp = new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
               composer.dispatchEvent(enterUp);
-              return { status: 'message_sent' };
+              return { action: 'message_sent', method: 'enter_key' };
             }
 
-            // 4. Locate search input in the side pane
+            // D. Check recent chat list (#pane-side) directly for target contact
+            const sidePane = document.getElementById('pane-side') || document.querySelector('#side');
+            if (sidePane) {
+              const allChatItems = Array.from(sidePane.querySelectorAll('div[role="listitem"], div[role="row"], div[data-testid^="list-item"]'));
+              for (const item of allChatItems) {
+                const text = (item.innerText || item.textContent || '').toLowerCase();
+                if (text.includes(target)) {
+                  item.click();
+                  return { action: 'chat_clicked', contactMatch: text.split('\\n')[0] };
+                }
+              }
+
+              const spans = Array.from(sidePane.querySelectorAll('span[title], div[title], span[dir="auto"]'));
+              const matchSpan = spans.find(s => {
+                const t = (s.getAttribute('title') || s.innerText || '').toLowerCase();
+                return t.includes(target);
+              });
+              if (matchSpan) {
+                const clickTarget = matchSpan.closest('div[role="listitem"], div[role="row"], div[data-testid^="list-item"]') || matchSpan;
+                clickTarget.click();
+                return { action: 'chat_clicked', contactMatch: matchSpan.getAttribute('title') || matchSpan.innerText };
+              }
+            }
+
+            // E. Search Bar: If not found in immediate list, focus and search
             const searchBox = document.querySelector(
               '#side div[contenteditable="true"], [data-testid="chat-list-search"], div[title="Search or start new chat"], div[role="textbox"][data-tab="3"], #side [role="textbox"]'
             ) || Array.from(document.querySelectorAll('#side div[contenteditable="true"], div[role="textbox"]')).find(el => {
@@ -1573,68 +1621,69 @@ class AgentRuntime extends EventEmitter {
             });
 
             if (searchBox) {
-              // Focus and input contact name
-              searchBox.focus();
-              document.execCommand('selectAll', false, null);
-              document.execCommand('insertText', false, ${JSON.stringify(contact)});
-              searchBox.dispatchEvent(new Event('input', { bubbles: true }));
-              searchBox.dispatchEvent(new Event('change', { bubbles: true }));
-
-              // Look for matching chat item in chat list
-              const sidePane = document.getElementById('pane-side') || document.querySelector('#side');
-              if (sidePane) {
-                const spans = Array.from(sidePane.querySelectorAll('span[title], div[title], span[dir="auto"]'));
-                const matchSpan = spans.find(s => {
-                  const title = (s.getAttribute('title') || s.innerText || '').toLowerCase();
-                  return title.includes(target);
-                });
-                if (matchSpan) {
-                  const clickTarget = matchSpan.closest('div[role="listitem"], div[role="row"], div[data-testid^="list-item"]') || matchSpan;
-                  clickTarget.click();
-                  return { status: 'chat_selected' };
-                }
+              if (!${JSON.stringify(searchTyped)}) {
+                searchBox.focus();
+                document.execCommand('selectAll', false, null);
+                document.execCommand('insertText', false, ${JSON.stringify(contact)});
+                searchBox.dispatchEvent(new Event('input', { bubbles: true }));
+                searchBox.dispatchEvent(new Event('change', { bubbles: true }));
+                return { action: 'search_typed' };
+              } else {
+                // If already typed, press Enter to open top search result
+                const enterEvent = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
+                searchBox.dispatchEvent(enterEvent);
+                return { action: 'search_entered' };
               }
-
-              // Press Enter to open the first match found by WhatsApp search
-              const enterEvent = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
-              searchBox.dispatchEvent(enterEvent);
-              return { status: 'search_entered' };
             }
 
-            return { status: 'waiting_ui' };
+            return { action: 'waiting_for_ui' };
           })()
-        `).catch(() => ({ status: 'eval_error' }));
+        `).catch(err => ({ action: 'eval_error', error: err.message }));
 
-        if (stepState && stepState.status === 'qr_code_required' && !qrPromptEmitted) {
+        if (result && result.action === 'qr_required' && !qrPromptEmitted) {
           qrPromptEmitted = true;
-          const qrMsg = `WhatsApp Web requires QR code scan. Please link WhatsApp; I will send "${message}" to "${contact}" once logged in.`;
+          const qrMsg = `WhatsApp Web requires QR scan. Please link phone; will send "${message}" to "${contact}" automatically once linked.`;
+          console.log(`[AgentRuntime WhatsApp] ⚠️ ${qrMsg}`);
           this.emit('feedback', { message: qrMsg, level: 'warning' });
           this.emit('jarvis-notification', { type: 'info', message: qrMsg });
         }
 
-        if (stepState && (stepState.status === 'chat_selected' || stepState.status === 'search_entered')) {
-          searchSubmitted = true;
-          this.emit('feedback', { message: `Step 2/3: Opening chat with "${contact}"...`, level: 'info' });
+        if (result && result.action === 'search_typed' && !searchTyped) {
+          searchTyped = true;
+          console.log(`[AgentRuntime WhatsApp] 🔍 Typed "${contact}" into WhatsApp search bar...`);
+          this.emit('feedback', { message: `Step 1/3: Searching for "${contact}"...`, level: 'info' });
         }
 
-        if (stepState && stepState.status === 'message_sent') {
+        if (result && (result.action === 'chat_clicked' || result.action === 'search_entered')) {
+          chatSelected = true;
+          const matchLabel = result.contactMatch ? `"${result.contactMatch}"` : `"${contact}"`;
+          console.log(`[AgentRuntime WhatsApp] 💬 Selected chat with ${matchLabel}, opening conversation...`);
+          this.emit('feedback', { message: `Step 2/3: Opened chat with ${matchLabel}. Typing message...`, level: 'info' });
+        }
+
+        if (result && result.action === 'message_sent') {
           messageSent = true;
           const successMsg = `✅ Sent "${message}" to "${contact}" on WhatsApp!`;
+          console.log(`[AgentRuntime WhatsApp] 🎉 ${successMsg} (${result.method})`);
           this.emit('feedback', { message: successMsg, level: 'success' });
           this.emit('jarvis-notification', { type: 'success', message: successMsg });
-          console.log(`[AgentRuntime] ✅ ${successMsg}`);
           return { success: true, message: successMsg };
         }
+
+        if (attempts % 4 === 0) {
+          console.log(`[AgentRuntime WhatsApp] Coordinating WhatsApp UI (attempt ${attempts}, status: ${result ? result.action : 'unknown'})...`);
+        }
       } catch (err) {
-        console.warn('[AgentRuntime sendWhatsAppChat Error]:', err.message);
+        console.warn(`[AgentRuntime WhatsApp Exception]:`, err.message);
       }
 
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 900));
     }
 
     const finalMsg = messageSent
       ? `✅ Sent "${message}" to "${contact}" on WhatsApp!`
-      : `Searched for "${contact}" on WhatsApp. Chat ready for "${message}".`;
+      : `WhatsApp chat prepared for "${contact}". Ready with message "${message}".`;
+    console.log(`[AgentRuntime WhatsApp Completed]: ${finalMsg}`);
     this.emit('feedback', { message: finalMsg, level: messageSent ? 'success' : 'info' });
     return { success: messageSent, message: finalMsg };
   }
