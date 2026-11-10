@@ -913,22 +913,24 @@ class AgentRuntime extends EventEmitter {
         }
       }
 
-      // B. Fallback: match by data-id or class
+      // B. Fallback: match by data-id or data-testid (never by generic classes like .btn)
       if (!modified && modResult.resolvedSelector) {
-        const cleanSel = modResult.resolvedSelector.replace(/^[#\.]/, '');
-        const altRegex = new RegExp(`(<${tag}[^>]*(?:id|data-id|data-testid|class)=["'][^"']*${cleanSel}[^"']*["'][^>]*>)`, 'i');
-        const match = content.match(altRegex);
-        if (match) {
-          let openTag = match[1];
-          if (finalStyle) {
-            if (/style=["'][^"']*["']/i.test(openTag)) {
-              openTag = openTag.replace(/style=["'][^"']*["']/i, `style="${finalStyle}"`);
-            } else {
-              openTag = openTag.replace(/>$/, ` style="${finalStyle}">`);
+        const cleanSel = modResult.resolvedSelector.replace(/^[#\.]/, '').trim();
+        if (cleanSel && !['button', 'btn', 'input', 'div', 'span', 'p'].includes(cleanSel.toLowerCase())) {
+          const altRegex = new RegExp(`(<${tag}[^>]*(?:id|data-id|data-testid)=["']${cleanSel}["'][^>]*>)`, 'i');
+          const match = content.match(altRegex);
+          if (match) {
+            let openTag = match[1];
+            if (finalStyle) {
+              if (/style=["'][^"']*["']/i.test(openTag)) {
+                openTag = openTag.replace(/style=["'][^"']*["']/i, `style="${finalStyle}"`);
+              } else {
+                openTag = openTag.replace(/>$/, ` style="${finalStyle}">`);
+              }
             }
+            content = content.replace(altRegex, openTag);
+            modified = true;
           }
-          content = content.replace(altRegex, openTag);
-          modified = true;
         }
       }
 

@@ -328,7 +328,7 @@ class CDPBridge {
         const val = ${JSON.stringify(value || '')};
         const attr = ${JSON.stringify(attribute || '')};
 
-        // Multi-tier Smart Element Resolver across ANY webpage
+        // High-Precision Scored DOM Element Targeting & Validation Engine across ANY webpage
         function resolveElement(sel) {
           if (!sel) return document.body;
           const s = sel.trim();
@@ -378,68 +378,94 @@ class CDPBridge {
             if (landmark) return landmark;
           }
 
-          // 5. Token-based semantic & text search across all elements on the page
-          const cleanText = s
+          // 5. High-Precision Scored Semantic Matching across interactive & leaf elements
+          const wantsButton = /\\b(button|btn|submit|toggle|reset|play|playback)\\b/i.test(s);
+          const wantsInput = /\\b(input|field|search|textbox|textarea)\\b/i.test(s);
+          const wantsHeading = /\\b(heading|title|header|h1|h2|h3)\\b/i.test(s);
+
+          // Normalize search tokens
+          const cleanQuery = s
             .toLowerCase()
             .replace(/^[#\\.]/, '')
             .replace(/([a-z])([A-Z])/g, '$1 $2')
             .replace(/[-_]/g, ' ')
-            .replace(/\\b(the|button|btn|input|field|link|div|element|selector)\\b/gi, '')
+            .replace(/\\b(the|button|btn|input|field|link|div|element|selector|node)\\b/gi, '')
             .trim();
 
-          const all = Array.from(document.querySelectorAll('button, a, input, select, textarea, div, span, p, h1, h2, h3, h4, h5, h6, label, canvas, header, nav, main, footer, section, article, aside, img, form, [role="button"], [role="search"], [role="heading"]'));
+          const qTokens = cleanQuery.split(/\\s+/).filter(t => t.length > 1);
 
-          // 5A. Text, Value, Title, Aria-label, Name, or ID exact/substring match
-          for (const el of all) {
+          // Query candidate elements, prioritizing leaf interactive elements over large containers
+          const candidates = Array.from(document.querySelectorAll(
+            'button, input, [role="button"], a, select, textarea, h1, h2, h3, h4, h5, h6, label, p, span, div'
+          ));
+
+          let bestMatch = null;
+          let highestScore = 0;
+
+          for (const el of candidates) {
+            const tag = el.tagName;
+            const isButtonNode = tag === 'BUTTON' || el.getAttribute('role') === 'button' || tag === 'INPUT' && /^(button|submit|reset)$/i.test(el.type) || el.classList.contains('btn');
+            const isInputNode = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+            const isHeadingNode = /^(H1|H2|H3|H4|H5|H6)$/i.test(tag);
+            const isContainer = (tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE' || tag === 'MAIN') && !isButtonNode;
+
             const text = (el.innerText || el.textContent || '').trim().toLowerCase();
             const valAttr = (el.value || '').trim().toLowerCase();
             const id = (el.id || '').toLowerCase();
             const name = (el.getAttribute('name') || '').toLowerCase();
             const title = (el.getAttribute('title') || '').toLowerCase();
             const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-            const testid = (el.getAttribute('data-testid') || '').toLowerCase();
+            const testid = (el.getAttribute('data-testid') || el.getAttribute('data-id') || '').toLowerCase();
 
-            if (cleanText && (
-              text.includes(cleanText) ||
-              valAttr.includes(cleanText) ||
-              id.includes(cleanText.replace(/\\s+/g, '')) ||
-              name.includes(cleanText.replace(/\\s+/g, '')) ||
-              title.includes(cleanText) ||
-              aria.includes(cleanText) ||
-              testid.includes(cleanText.replace(/\\s+/g, ''))
-            )) {
-              return el.closest('button, a, [role="button"]') || el;
+            // Skip large containers if user explicitly targets a button or input
+            if (isContainer && (wantsButton || wantsInput) && text.length > 150) continue;
+
+            let score = 0;
+
+            // Role alignment weighting
+            if (wantsButton) {
+              if (isButtonNode) score += 300;
+              else if (isContainer) score -= 250;
+            } else if (wantsInput) {
+              if (isInputNode) score += 300;
+              else if (isContainer) score -= 250;
+            } else if (wantsHeading) {
+              if (isHeadingNode) score += 300;
+              else if (isContainer) score -= 200;
             }
-          }
 
-          // 5B. Word token matching (all keywords present)
-          const tokens = cleanText.split(/\\s+/).filter(t => t.length > 1);
-          if (tokens.length > 0) {
-            for (const el of all) {
-              const combined = [
-                el.innerText || '',
-                el.value || '',
-                el.id || '',
-                el.getAttribute('name') || '',
-                el.getAttribute('title') || '',
-                el.getAttribute('aria-label') || '',
-                el.getAttribute('data-testid') || ''
-              ].join(' ').toLowerCase();
+            // Exact text, ID, or attribute match (highest confidence)
+            if (cleanQuery && (text === cleanQuery || valAttr === cleanQuery || id === cleanQuery || aria === cleanQuery || testid === cleanQuery)) {
+              score += 600;
+            } else if (qTokens.length > 0) {
+              // Token matching across all identifiers
+              let matchedCount = 0;
+              const combined = [text, valAttr, id, name, title, aria, testid].join(' ');
+              for (const tok of qTokens) {
+                if (combined.includes(tok)) matchedCount++;
+              }
+              const ratio = matchedCount / qTokens.length;
+              score += ratio * 400;
 
-              if (tokens.every(token => combined.includes(token))) {
-                return el.closest('button, a, [role="button"]') || el;
+              // Proximity bonus: shorter text closer to query length wins over huge ancestor containers
+              if (text && qTokens.every(tok => text.includes(tok))) {
+                score += 200;
+                const lenDiff = Math.abs(text.length - cleanQuery.length);
+                if (lenDiff < 10) score += 200;
+                else if (lenDiff < 30) score += 100;
+                else score -= 100;
               }
             }
+
+            if (score > highestScore) {
+              highestScore = score;
+              bestMatch = isButtonNode ? el : (el.closest('button, [role="button"]') || el);
+            }
           }
 
-          // 6. Generic button/input fallback if "button" or "input" was in selector
-          if (/button|btn/i.test(s)) {
-            const firstBtn = document.querySelector('button.btn, button[type="submit"], input[type="submit"], button');
-            if (firstBtn) return firstBtn;
-          }
-          if (/input|search/i.test(s)) {
-            const firstInput = document.querySelector('input[type="text"], input[type="search"], textarea');
-            if (firstInput) return firstInput;
+          // Validation Threshold: Minimum score required to prevent false-positive hijacking
+          if (bestMatch && highestScore >= 350) {
+            return bestMatch;
           }
 
           return null;
