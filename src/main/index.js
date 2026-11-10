@@ -5,6 +5,14 @@ const store = require('./store');
 const TabManager = require('./tabManager');
 const ControlPlane = require('../control-plane/controlPlane');
 
+// Single instance lock to prevent multi-process database and cache lock conflicts
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  console.log('[Adion Process] Another instance of Adion Browse is already active. Quitting duplicate process...');
+  app.quit();
+  process.exit(0);
+}
+
 // Silence non-critical Chromium C++ net warnings
 app.commandLine.appendSwitch('log-level', '3');
 
@@ -12,6 +20,60 @@ app.commandLine.appendSwitch('log-level', '3');
 let mainWindow = null;
 let tabManager = null;
 let controlPlane = null;
+let isShuttingDown = false;
+
+/**
+ * Graceful process termination and flush handler
+ */
+function gracefulShutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`[Adion Process] Intercepted ${signal}. Performing clean shutdown and flushing profile data...`);
+  try {
+    store.flush();
+  } catch (err) {
+    console.error('[Adion Process] Error flushing profile on shutdown:', err.message);
+  }
+  if (controlPlane) {
+    try {
+      controlPlane.destroy();
+    } catch (_) {}
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.destroy();
+  }
+  app.quit();
+  setTimeout(() => process.exit(0), 400);
+}
+
+// Process signal & error management
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+process.on('uncaughtException', (err) => {
+  console.error('[Adion Process] Uncaught Exception caught by process manager:', err);
+  try { store.flush(); } catch (_) {}
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Adion Process] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// Chromium child process stability monitors
+app.on('render-process-gone', (event, webContents, details) => {
+  console.warn(`[Adion Process] Render process exited: ${details.reason} (exitCode: ${details.exitCode})`);
+});
+
+app.on('child-process-gone', (event, details) => {
+  console.warn(`[Adion Process] Chromium child process exited: ${details.type} (${details.reason}, exitCode: ${details.exitCode})`);
+});
+
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+});
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -147,16 +209,30 @@ function setupIPC() {
 
   // Bookmarks
   ipcMain.handle('get-bookmarks', () => {
-    return store.get('bookmarks');
+    try {
+      return store.get('bookmarks') || [];
+    } catch (err) {
+      console.error('[Store IPC] Error reading bookmarks:', err.message);
+      return [];
+    }
   });
 
-  ipcMain.handle('toggle-bookmark', (e, { title, url }) => {
-    if (store.isBookmarked(url)) {
-      store.removeBookmark(url);
-      return { isBookmarked: false, bookmarks: store.get('bookmarks') };
-    } else {
-      store.addBookmark({ title, url });
-      return { isBookmarked: true, bookmarks: store.get('bookmarks') };
+  ipcMain.handle('toggle-bookmark', (e, payload) => {
+    try {
+      if (!payload || !payload.url) {
+        return { isBookmarked: false, bookmarks: store.get('bookmarks') || [] };
+      }
+      const { title, url } = payload;
+      if (store.isBookmarked(url)) {
+        store.removeBookmark(url);
+        return { isBookmarked: false, bookmarks: store.get('bookmarks') || [] };
+      } else {
+        store.addBookmark({ title, url });
+        return { isBookmarked: true, bookmarks: store.get('bookmarks') || [] };
+      }
+    } catch (err) {
+      console.error('[Store IPC] Error toggling bookmark:', err.message);
+      return { isBookmarked: false, bookmarks: store.get('bookmarks') || [], error: err.message };
     }
   });
 

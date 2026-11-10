@@ -355,7 +355,10 @@ class AgentRuntime extends EventEmitter {
     if (/(open settings|show settings|settings button|gear icon)/i.test(lower)) {
       return { type: ActionType.OPEN_SETTINGS };
     }
-    if (/(open bookmarks|show bookmarks|bookmarks)/i.test(lower)) {
+    if (/(bookmark this page|add bookmark|bookmark page|save bookmark|star page|bookmark current)/i.test(lower)) {
+      return { type: ActionType.TOGGLE_BOOKMARK };
+    }
+    if (/(open bookmarks|show bookmarks|view bookmarks|bookmarks menu|bookmarks list)/i.test(lower)) {
       return { type: ActionType.OPEN_BOOKMARKS };
     }
     if (/(open history|show history|history)/i.test(lower)) {
@@ -498,6 +501,24 @@ class AgentRuntime extends EventEmitter {
         break;
       }
 
+      case ActionType.TOGGLE_BOOKMARK: {
+        const store = require('../main/store');
+        if (activeTab && activeTab.url && !activeTab.url.startsWith('adion://')) {
+          const isBm = store.isBookmarked(activeTab.url);
+          if (isBm) {
+            store.removeBookmark(activeTab.url);
+            this.emit('feedback', { message: `Removed bookmark for: ${activeTab.title || activeTab.url}`, level: 'info' });
+          } else {
+            store.addBookmark({ title: activeTab.title || activeTab.url, url: activeTab.url });
+            this.emit('feedback', { message: `Bookmarked: ${activeTab.title || activeTab.url}`, level: 'success' });
+          }
+          this.emit('shell-action', { action: 'BOOKMARK_TOGGLED', isBookmarked: !isBm, url: activeTab.url });
+        } else {
+          this.emit('feedback', { message: 'Cannot bookmark internal or empty page', level: 'warning' });
+        }
+        break;
+      }
+
       case ActionType.OPEN_HISTORY: {
         this.emit('shell-action', { action: 'OPEN_HISTORY' });
         this.emit('feedback', { message: 'Opened History', level: 'success' });
@@ -517,7 +538,10 @@ class AgentRuntime extends EventEmitter {
           this.emit('feedback', { message: 'Opened Settings', level: 'success' });
           break;
         }
-        if (/(bookmark)/i.test(targetLower)) {
+        if (/(bookmark button|star button|toggle bookmark|add bookmark)/i.test(targetLower)) {
+          return this.executeIntent({ type: ActionType.TOGGLE_BOOKMARK });
+        }
+        if (/(bookmark menu|bookmarks list|open bookmarks|show bookmarks)/i.test(targetLower)) {
           this.emit('shell-action', { action: 'OPEN_BOOKMARKS' });
           this.emit('feedback', { message: 'Opened Bookmarks', level: 'success' });
           break;

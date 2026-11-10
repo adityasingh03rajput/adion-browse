@@ -47,10 +47,20 @@ Available Action Types and their parameters:
 - "OPEN_SETTINGS": {} - opens browser settings (the gear icon)
 - "OPEN_HISTORY": {} - opens browsing history
 - "OPEN_BOOKMARKS": {} - opens bookmarks
+- "TOGGLE_BOOKMARK": {} - bookmarks or unbookmarks the current page (star/bookmark button)
 - "CAPTURE_VIEWPORT": {}
 - "ANALYZE_IMAGES": { "criteria": "image search criteria" }
 
 Examples:
+User: "Bookmark this page" or "add bookmark"
+Output:
+{
+  "thought": "Bookmark current active page",
+  "actions": [
+    { "type": "TOGGLE_BOOKMARK", "params": {} }
+  ]
+}
+
 User: "Tap on the developer tools button" or "click on the code button"
 Output:
 {

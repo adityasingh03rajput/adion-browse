@@ -53,6 +53,18 @@ document.addEventListener('DOMContentLoaded', () => {
     currentActiveTabId = activeId;
     tabsContainer.innerHTML = '';
 
+    const activeTab = tabs.find(t => t.id === activeId);
+    if (activeTab) {
+      currentActiveUrl = activeTab.url || '';
+      currentActiveTitle = activeTab.title || '';
+      currentDomain = extractDomain(currentActiveUrl);
+      if (activeTab.isBookmarked) {
+        btnBookmark.classList.add('bookmarked');
+      } else {
+        btnBookmark.classList.remove('bookmarked');
+      }
+    }
+
     tabs.forEach(tab => {
       const tabEl = document.createElement('div');
       tabEl.className = `tab-item ${tab.id === activeId ? 'active' : ''}`;
@@ -219,12 +231,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Bookmarking
   btnBookmark.addEventListener('click', async () => {
-    if (!currentActiveUrl || currentActiveUrl === 'adion://newtab') return;
-    const res = await window.adionAPI.toggleBookmark(currentActiveTitle, currentActiveUrl);
-    if (res.isBookmarked) {
-      btnBookmark.classList.add('bookmarked');
-    } else {
-      btnBookmark.classList.remove('bookmarked');
+    try {
+      if (!currentActiveUrl || currentActiveUrl.startsWith('adion://')) return;
+      const res = await window.adionAPI.toggleBookmark(currentActiveTitle || currentActiveUrl, currentActiveUrl);
+      if (res && res.isBookmarked) {
+        btnBookmark.classList.add('bookmarked');
+      } else {
+        btnBookmark.classList.remove('bookmarked');
+      }
+    } catch (err) {
+      console.error('[Bookmark UI] Error toggling bookmark:', err);
     }
   });
 
@@ -673,6 +689,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (data.action === 'OPEN_SETTINGS' && btnSettings) btnSettings.click();
       if (data.action === 'OPEN_BOOKMARKS' && btnBookmarksMenu) btnBookmarksMenu.click();
       if (data.action === 'OPEN_HISTORY' && btnHistory) btnHistory.click();
+      if (data.action === 'BOOKMARK_TOGGLED') {
+        if (data.isBookmarked) {
+          btnBookmark.classList.add('bookmarked');
+        } else {
+          btnBookmark.classList.remove('bookmarked');
+        }
+      }
       if (data.action === 'STOP_VOICE') {
         stopMicrophoneStream();
         showAgentHud('IDLE', 'Voice mode stopped', false);

@@ -10,6 +10,7 @@ test_keys.txt
 
 # Build and runtime data
 .cache/
+.data/
 dist/
 out/
 build/

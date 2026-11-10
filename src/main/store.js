@@ -6,24 +6,23 @@ class Store {
   constructor() {
     this.initialized = false;
     this.data = this.getDefaults();
+    this.saveTimeout = null;
+    this.userDataPath = path.join(process.cwd(), '.data');
+    this.filePath = path.join(this.userDataPath, 'adion-profile.json');
+    this.tempFilePath = path.join(this.userDataPath, 'adion-profile.tmp');
   }
 
   init() {
     if (this.initialized) return;
     try {
-      const app = electron.app;
-      this.userDataPath = (app && app.getPath) ? app.getPath('userData') : path.join(process.cwd(), '.data');
-    } catch (e) {
-      this.userDataPath = path.join(process.cwd(), '.data');
-    }
-
-    if (!fs.existsSync(this.userDataPath)) {
-      try {
+      // Ensure workspace data directory on D: drive exists with full user permissions
+      if (!fs.existsSync(this.userDataPath)) {
         fs.mkdirSync(this.userDataPath, { recursive: true });
-      } catch (e) {}
+      }
+    } catch (e) {
+      console.error('[Store] Failed to create data directory:', e.message);
     }
 
-    this.filePath = path.join(this.userDataPath, 'adion-profile.json');
     this.data = this.loadData();
     this.initialized = true;
   }
@@ -76,12 +75,40 @@ class Store {
     return this.getDefaults();
   }
 
-  save() {
+  save(immediate = false) {
+    if (immediate) {
+      this.flush();
+    } else {
+      this.scheduleSave();
+    }
+  }
+
+  scheduleSave() {
+    if (this.saveTimeout) return;
+    this.saveTimeout = setTimeout(() => {
+      this.saveTimeout = null;
+      this.flush();
+    }, 400); // 400ms debounce prevents disk thrashing on heavy ad/tracker loads
+  }
+
+  flush() {
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+      this.saveTimeout = null;
+    }
     this.init();
     try {
-      fs.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), 'utf-8');
+      const serialized = JSON.stringify(this.data, null, 2);
+      // Atomic write: write to temp file then rename to avoid corruption during interrupts/SIGINT
+      fs.writeFileSync(this.tempFilePath, serialized, 'utf-8');
+      fs.renameSync(this.tempFilePath, this.filePath);
     } catch (e) {
-      console.error('Failed to save store:', e);
+      // Fallback direct write
+      try {
+        fs.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), 'utf-8');
+      } catch (err) {
+        console.error('[Store] Failed to save profile data:', err.message);
+      }
     }
   }
 
@@ -93,7 +120,7 @@ class Store {
   set(key, val) {
     this.init();
     this.data[key] = val;
-    this.save();
+    this.save(true);
   }
 
   getSetting(name) {
@@ -104,7 +131,7 @@ class Store {
   setSetting(name, val) {
     this.init();
     this.data.settings[name] = val;
-    this.save();
+    this.save(true);
   }
 
   getSiteShield(domain) {
@@ -118,39 +145,55 @@ class Store {
 
   setSiteShield(domain, options) {
     if (!domain) return;
+    this.init();
     this.data.siteShields[domain] = Object.assign(this.getSiteShield(domain), options);
-    this.save();
+    this.save(true);
   }
 
   recordBlocked(count = 1) {
+    this.init();
     this.data.stats.totalBlocked += count;
     this.data.stats.estimatedBandwidthSavedKB += count * 50; // ~50 KB per blocked ad/tracker
     this.data.stats.estimatedTimeSavedSec += count * 0.05; // ~50ms per ad/tracker
-    this.save();
+    this.scheduleSave(); // Debounced
   }
 
   addBookmark(item) {
-    const exists = this.data.bookmarks.find(b => b.url === item.url);
+    this.init();
+    if (!item || !item.url) return false;
+    const url = String(item.url).trim();
+    if (!url || url.startsWith('adion://') || url.startsWith('about:')) return false;
+
+    if (!Array.isArray(this.data.bookmarks)) {
+      this.data.bookmarks = [];
+    }
+
+    const exists = this.data.bookmarks.find(b => b.url === url);
     if (!exists) {
       this.data.bookmarks.push({
         id: Date.now().toString(),
-        title: item.title || item.url,
-        url: item.url,
+        title: (item.title || url).trim(),
+        url: url,
         createdAt: Date.now()
       });
-      this.save();
+      this.flush(); // Immediate atomic save for bookmarks
       return true;
     }
     return false;
   }
 
   removeBookmark(url) {
-    this.data.bookmarks = this.data.bookmarks.filter(b => b.url !== url);
-    this.save();
+    this.init();
+    if (!url || !Array.isArray(this.data.bookmarks)) return;
+    this.data.bookmarks = this.data.bookmarks.filter(b => b.url !== String(url).trim());
+    this.flush(); // Immediate atomic save
   }
 
   isBookmarked(url) {
-    return this.data.bookmarks.some(b => b.url === url);
+    this.init();
+    if (!url || !Array.isArray(this.data.bookmarks)) return false;
+    const normalized = String(url).trim();
+    return this.data.bookmarks.some(b => b.url === normalized);
   }
 
   addHistory(item) {
