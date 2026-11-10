@@ -188,23 +188,7 @@ class QueryPreprocessor {
       }
     }
 
-    // 2. Direct platform navigation: "search youtube", "open youtube", "go to youtube", "search for youtube"
-    if (/^(?:search\s+(?:for\s+)?|open\s+|go\s+to\s+|navigate\s+to\s+)?youtube(?:\.com)?$/i.test(lower.trim())) {
-      return {
-        type: ActionType.NAVIGATE,
-        url: 'https://www.youtube.com',
-        thought: 'Navigate to https://www.youtube.com'
-      };
-    }
-    if (/^(?:search\s+(?:for\s+)?|open\s+|go\s+to\s+|navigate\s+to\s+)?(?:whatsapp\s+web|whatsapp)(?:\.com)?$/i.test(lower.trim())) {
-      return {
-        type: ActionType.NAVIGATE,
-        url: 'https://web.whatsapp.com',
-        thought: 'Navigate to https://web.whatsapp.com'
-      };
-    }
-
-    // 3. General Search Queries: e.g. "search for wireless mouse", "search weather in tokyo", "search google for cats"
+    // 2. Direct platform query search: e.g. "search on google for music", "search youtube for cats"
     const googleQueryMatch = lower.match(/search\s+(?:on\s+)?google\s+for\s+(.+)/i);
     if (googleQueryMatch) {
       const q = googleQueryMatch[1].trim();
@@ -215,11 +199,20 @@ class QueryPreprocessor {
       };
     }
 
+    // 3. General Search Queries: e.g. "search for wireless mouse", "search weather in tokyo"
     const generalSearchMatch = lower.match(/^(?:search\s+for|search)\s+(.+)$/i);
     if (generalSearchMatch) {
       const target = generalSearchMatch[1].trim();
       if (target === 'youtube' || target === 'youtube.com') {
         return { type: ActionType.NAVIGATE, url: 'https://www.youtube.com', thought: 'Navigate to https://www.youtube.com' };
+      }
+      // If user said domain name, navigate directly to that domain
+      if (/^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}/.test(target)) {
+        return {
+          type: ActionType.NAVIGATE,
+          url: `https://${target}`,
+          thought: `Navigate to https://${target}`
+        };
       }
       return {
         type: ActionType.NAVIGATE,
@@ -236,16 +229,6 @@ class QueryPreprocessor {
       if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('file://') && !url.startsWith('adion://')) {
         if (target === 'youtube' || target === 'youtube.com' || target === 'www.youtube.com') {
           url = 'https://www.youtube.com';
-        } else if (target === 'instagram' || target === 'instagram.com' || target === 'www.instagram.com') {
-          url = 'https://www.instagram.com';
-        } else if (target === 'google' || target === 'google.com' || target === 'www.google.com') {
-          url = 'https://www.google.com';
-        } else if (target === 'github' || target === 'github.com' || target === 'www.github.com') {
-          url = 'https://www.github.com';
-        } else if (target === 'twitter' || target === 'twitter.com' || target === 'x' || target === 'x.com') {
-          url = 'https://x.com';
-        } else if (target === 'whatsapp' || target === 'whatsapp web' || target === 'web.whatsapp.com' || target === 'whatsapp.com') {
-          url = 'https://web.whatsapp.com';
         } else if (/^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}/.test(url)) {
           url = `https://${url}`;
         } else {

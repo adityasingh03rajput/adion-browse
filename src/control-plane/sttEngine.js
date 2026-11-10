@@ -105,19 +105,14 @@ class STTEngine {
       .replace(/\bbase\s+boost\b/gi, 'bass boost')
       .replace(/\bbase\s+frequency\b/gi, 'bass frequency')
       .replace(/\bcolour\b/gi, 'color')
-      .replace(/\byoutube\s*dot\s*com\b/gi, 'youtube.com')
-      .replace(/\binstagram\s*dot\s*com\b/gi, 'instagram.com')
-      .replace(/\bgoogle\s*dot\s*com\b/gi, 'google.com')
+      // Universal spoken domain normalization: e.g. "something dot com" -> "something.com"
+      .replace(/(\w+)\s*dot\s*(com|org|net|edu|gov|io|ai|co|app)\b/gi, '$1.$2')
+      // Acoustic tab command slips ("tap" -> "tab")
       .replace(/\b(?:close|shut|kill)\s+(?:the|this)?\s*tap\b/gi, 'close tab')
       .replace(/\bnew\s+tap\b/gi, 'new tab')
       .replace(/\bswitch\s+(?:to\s+)?tap\b/gi, 'switch tab')
       .replace(/\bthe\s+tap\b/gi, 'the tab')
-      .replace(/\bthis\s+tap\b/gi, 'this tab')
-      .replace(/\byou\s+tube\b/gi, 'youtube')
-      .replace(/\bnew\s+year\s+to\s+you\b/gi, 'open youtube')
-      .replace(/\b(?:what'?s\s+up|what\s+app)\s+web\b/gi, 'whatsapp web')
-      .replace(/\bwhat'?s\s+up\s+there\b/gi, 'whatsapp web')
-      .replace(/\bwhat'?s\s+up\b/gi, 'whatsapp');
+      .replace(/\bthis\s+tap\b/gi, 'this tab');
 
     return text.trim();
   }
@@ -134,7 +129,7 @@ class STTEngine {
     formData.append('response_format', 'json');
     formData.append('language', 'en');
     formData.append('temperature', '0.0');
-    formData.append('prompt', 'Browser commands: search WhatsApp Web, open WhatsApp Web, search YouTube, open YouTube, open google, search, close tab, new tab, scroll down, click, go back, WhatsApp, YouTube, Google, Reddit, GitHub, Wikipedia, Twitter, ChatGPT.');
+    formData.append('prompt', 'Browser voice commands, web search, page navigation, and tab management.');
 
     const res = await fetch(config.groqWhisperUrl, {
       method: 'POST',

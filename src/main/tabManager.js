@@ -163,6 +163,16 @@ class TabManager {
       return { action: 'deny' };
     });
 
+    // Keyboard shortcut handler for DevTools from within page webContents
+    wc.on('before-input-event', (event, input) => {
+      if (input.type === 'keyDown') {
+        if (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i')) {
+          event.preventDefault();
+          this.toggleDevTools('detach');
+        }
+      }
+    });
+
     const canGoBack = (wc) => (wc.navigationHistory ? wc.navigationHistory.canGoBack() : (wc.canGoBack ? wc.canGoBack() : false));
     const canGoForward = (wc) => (wc.navigationHistory ? wc.navigationHistory.canGoForward() : (wc.canGoForward ? wc.canGoForward() : false));
 
@@ -358,17 +368,18 @@ class TabManager {
     }
   }
 
-  toggleDevTools(mode = 'right') {
-    if (!this.activeTabId) return;
-    const tab = this.tabs.get(this.activeTabId);
-    if (!tab || !tab.view) return;
-    const wc = tab.view.webContents;
+  toggleDevTools(mode = 'detach') {
+    const tab = this.activeTabId ? this.tabs.get(this.activeTabId) : null;
+    const targetWc = (tab && tab.view && !tab.view.webContents.isDestroyed())
+      ? tab.view.webContents
+      : (this.mainWindow && !this.mainWindow.isDestroyed() ? this.mainWindow.webContents : null);
+
+    if (!targetWc) return;
     try {
-      if (wc.isDevToolsOpened()) {
-        wc.closeDevTools();
-        wc.focus();
+      if (targetWc.isDevToolsOpened()) {
+        targetWc.closeDevTools();
       } else {
-        wc.openDevTools({ mode, activate: true });
+        targetWc.openDevTools({ mode, activate: true });
       }
     } catch (e) {
       console.warn('[TabManager] Error toggling DevTools:', e.message);

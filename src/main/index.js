@@ -125,7 +125,8 @@ async function createWindow() {
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown') {
       if (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i')) {
-        if (tabManager) tabManager.toggleDevTools();
+        event.preventDefault();
+        if (tabManager) tabManager.toggleDevTools('detach');
       }
     }
   });

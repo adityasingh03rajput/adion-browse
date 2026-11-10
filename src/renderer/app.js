@@ -601,11 +601,13 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // --- DEVTOOLS TOGGLE ---
-  btnDevTools.addEventListener('click', (e) => {
-    e.stopPropagation();
-    window.adionAPI.toggleDevTools();
-    showJarvisToast('Developer Tools toggled.');
-  });
+  if (btnDevTools) {
+    btnDevTools.addEventListener('click', (e) => {
+      e.stopPropagation();
+      window.adionAPI.toggleDevTools();
+      showJarvisToast('Developer Tools toggled.');
+    });
+  }
 
   // Close overlays on clicking outside
   window.addEventListener('click', (e) => {
