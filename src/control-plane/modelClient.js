@@ -209,6 +209,24 @@ Output:
   ]
 }
 
+User: "text hi to 9424831233 in whatsapp" or "say thankyou to safal in whatsapp"
+Output:
+{
+  "thought": "Search for contact or number on WhatsApp Web, open conversation, type and send message",
+  "actions": [
+    { "type": "WHATSAPP_CHAT_SEND", "params": { "contact": "9424831233", "message": "hi" } }
+  ]
+}
+
+User: "open unread message in whatsapp" or "check unread messages"
+Output:
+{
+  "thought": "Open first chat with unread messages on WhatsApp Web",
+  "actions": [
+    { "type": "WHATSAPP_UNREAD_CLICK", "params": {} }
+  ]
+}
+
 User: "scroll down"
 Output:
 {

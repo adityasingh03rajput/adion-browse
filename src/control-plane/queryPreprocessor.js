@@ -229,6 +229,18 @@ class QueryPreprocessor {
       if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('file://') && !url.startsWith('adion://')) {
         if (target === 'youtube' || target === 'youtube.com' || target === 'www.youtube.com') {
           url = 'https://www.youtube.com';
+        } else if (target === 'whatsapp' || target === 'whatsapp.com' || target === 'web.whatsapp.com') {
+          url = 'https://web.whatsapp.com';
+        } else if (target === 'chatgpt' || target === 'chatgpt.com') {
+          url = 'https://chatgpt.com';
+        } else if (target === 'github' || target === 'github.com') {
+          url = 'https://github.com';
+        } else if (target === 'google' || target === 'google.com') {
+          url = 'https://www.google.com';
+        } else if (target === 'reddit' || target === 'reddit.com') {
+          url = 'https://reddit.com';
+        } else if (target === 'twitter' || target === 'x' || target === 'x.com' || target === 'twitter.com') {
+          url = 'https://x.com';
         } else if (/^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}/.test(url)) {
           url = `https://${url}`;
         } else {

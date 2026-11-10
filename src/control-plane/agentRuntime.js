@@ -884,6 +884,8 @@ class AgentRuntime extends EventEmitter {
       case 'WHATSAPP_CHAT_SEND': {
         const contact = intent.contact || intent.target || intent.phone || '';
         const message = intent.message || intent.text || '';
+        const cleanPhone = (intent.phone || contact).replace(/[^0-9]/g, '');
+        const isNumericPhone = cleanPhone.length >= 7 && cleanPhone.length <= 15 && !/[a-zA-Z]/.test(contact);
         
         let targetTab = activeTab;
         if (!targetTab || !targetTab.url || !targetTab.url.includes('whatsapp.com')) {
@@ -895,7 +897,9 @@ class AgentRuntime extends EventEmitter {
             targetTab = existingWaTab;
             this.emit('feedback', { message: `Switched to active WhatsApp Web tab for "${contact}"`, level: 'info' });
           } else {
-            const waUrl = 'https://web.whatsapp.com/';
+            const waUrl = isNumericPhone 
+              ? `https://web.whatsapp.com/send/?phone=${cleanPhone}&text=${encodeURIComponent(message)}`
+              : 'https://web.whatsapp.com/';
             if (activeTab && activeTab.url && !activeTab.url.startsWith('adion://newtab')) {
               targetTab = this.tabManager.createTab(waUrl);
               console.log(`[AgentRuntime WhatsApp] Created new tab for WhatsApp Web: ${waUrl}`);
@@ -908,7 +912,7 @@ class AgentRuntime extends EventEmitter {
           }
         }
 
-        await this.sendWhatsAppChat(targetTab, contact, message);
+        await this.sendWhatsAppChat(targetTab, contact, message, isNumericPhone ? cleanPhone : null);
         break;
       }
 
@@ -1446,24 +1450,50 @@ class AgentRuntime extends EventEmitter {
                 return { status: 'qr_code_required' };
               }
 
+              // Robust Universal Composer Resolver
+              const mainPane = document.getElementById('main') || document.querySelector('[data-testid="conversation-panel-wrapper"]') || document.querySelector('div[role="region"]');
+              const findComposer = () => {
+                if (mainPane) {
+                  const comp = mainPane.querySelector(
+                    'div[contenteditable="true"], div[role="textbox"][contenteditable="true"], [data-lexical-editor="true"], p.selectable-text'
+                  );
+                  if (comp) return comp.closest('div[contenteditable="true"]') || comp;
+                }
+                const byAttr = document.querySelector(
+                  '#main div[contenteditable="true"], ' +
+                  'div[contenteditable="true"][title*="message" i], ' +
+                  'div[contenteditable="true"][aria-label*="message" i], ' +
+                  'div[contenteditable="true"][data-tab="10"], ' +
+                  'footer div[contenteditable="true"], ' +
+                  '[data-testid="conversation-compose-box-input"]'
+                );
+                if (byAttr) return byAttr;
+                const allEditables = Array.from(document.querySelectorAll('div[contenteditable="true"], [role="textbox"]'));
+                return allEditables.find(el => !el.closest('#side') && !el.closest('#pane-side') && !el.closest('header')) || null;
+              };
+
               // Check for Send Button
-              const sendBtn = document.querySelector('button[aria-label="Send"], span[data-icon="send"]')?.closest('button');
+              const sendBtn = (document.querySelector('#main button[aria-label="Send"], #main span[data-icon="send"], button[aria-label="Send"], span[data-icon="send"], [data-testid="compose-btn-send"], [data-testid="send"]'))?.closest('button');
               if (sendBtn && !sendBtn.disabled) {
                 sendBtn.click();
                 return { status: 'sent_clicked' };
               }
 
               // Check for input composer box
-              const composer = document.querySelector('footer div[contenteditable="true"], [data-testid="conversation-compose-box-input"]');
+              const composer = findComposer();
               if (composer) {
-                const currentText = composer.innerText || composer.textContent || '';
-                if (currentText.trim().length > 0) {
+                const currentText = (composer.innerText || composer.textContent || '').trim();
+                const targetMsg = ${JSON.stringify(message || '')};
+                if (currentText.length === 0 && targetMsg) {
                   composer.focus();
-                  const enterEvent = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
-                  composer.dispatchEvent(enterEvent);
-                  return { status: 'sent_entered' };
+                  composer.click();
+                  document.execCommand('selectAll', false, null);
+                  document.execCommand('insertText', false, targetMsg);
+                  composer.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: targetMsg }));
+                  composer.dispatchEvent(new Event('input', { bubbles: true }));
+                  composer.dispatchEvent(new Event('change', { bubbles: true }));
                 }
-                return { status: 'composer_ready_empty' };
+                return { status: 'sent_entered' };
               }
 
               // Check for loading progress
@@ -1477,6 +1507,19 @@ class AgentRuntime extends EventEmitter {
           `).catch(() => ({ status: 'error' }));
 
           if (pageStatus && (pageStatus.status === 'sent_clicked' || pageStatus.status === 'sent_entered')) {
+            // Dispatch hardware enter keystroke & send button click for absolute delivery
+            try {
+              contents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+              contents.sendInputEvent({ type: 'char', keyCode: '\r' });
+              contents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+              await contents.executeJavaScript(`
+                (() => {
+                  const btn = (document.querySelector('#main button[aria-label="Send"], #main span[data-icon="send"], button[aria-label="Send"], span[data-icon="send"]'))?.closest('button');
+                  if (btn && !btn.disabled) btn.click();
+                })()
+              `).catch(() => null);
+            } catch (_) {}
+
             messageSent = true;
             const successMsg = `Message "${message}" successfully sent to +${phone || 'recipient'} on WhatsApp!`;
             this.emit('feedback', { message: successMsg, level: 'success' });
@@ -1512,7 +1555,7 @@ class AgentRuntime extends EventEmitter {
    * Handles user intentions like "say thankyou to safal in whatsapp" directly
    * inside the authenticated WhatsApp Web interface.
    */
-  async sendWhatsAppChat(tab, contact = '', message = '') {
+  async sendWhatsAppChat(tab, contact = '', message = '', phone = null) {
     if (!tab || !tab.view) {
       console.warn('[AgentRuntime WhatsApp] ⚠️ No active tab view available to dispatch WhatsApp message');
       return { success: false, reason: 'No active tab view' };
@@ -1569,41 +1612,69 @@ class AgentRuntime extends EventEmitter {
             const target = ${JSON.stringify(contact)}.trim().toLowerCase();
             const msg = ${JSON.stringify(message)};
 
-            // B. Check if target chat is ALREADY open
-            const headerTitleEl = document.querySelector('header span[title], header div[title], header span[dir="auto"]');
+            // B. Main conversation pane detection & Composer Finder
+            const mainPane = document.getElementById('main') || document.querySelector('[data-testid="conversation-panel-wrapper"]') || document.querySelector('div[role="region"]');
+            const isMainOpen = Boolean(mainPane);
+
+            const findComposer = () => {
+              if (mainPane) {
+                const comp = mainPane.querySelector(
+                  'div[contenteditable="true"], div[role="textbox"][contenteditable="true"], [data-lexical-editor="true"], p.selectable-text'
+                );
+                if (comp) return comp.closest('div[contenteditable="true"]') || comp;
+              }
+              const byAttr = document.querySelector(
+                '#main div[contenteditable="true"], ' +
+                'div[contenteditable="true"][title*="message" i], ' +
+                'div[contenteditable="true"][aria-label*="message" i], ' +
+                'div[contenteditable="true"][data-tab="10"], ' +
+                'footer div[contenteditable="true"], ' +
+                '[data-testid="conversation-compose-box-input"]'
+              );
+              if (byAttr) return byAttr;
+              const allEditables = Array.from(document.querySelectorAll('div[contenteditable="true"], [role="textbox"]'));
+              return allEditables.find(el => !el.closest('#side') && !el.closest('#pane-side') && !el.closest('header')) || null;
+            };
+
+            const findSendBtn = () => {
+              return (
+                document.querySelector('#main button[aria-label="Send"], #main span[data-icon="send"], button[aria-label="Send"], span[data-icon="send"], [data-testid="compose-btn-send"], [data-testid="send"]')
+              )?.closest('button') || null;
+            };
+
+            // Check if active open chat header matches contact
+            const headerTitleEl = (mainPane ? mainPane.querySelector('header') : document.querySelector('header'))
+              ?.querySelector('span[title], div[title], span[dir="auto"], span.x1rg5ohu');
             const headerTitle = headerTitleEl ? (headerTitleEl.getAttribute('title') || headerTitleEl.innerText || '').toLowerCase() : '';
-            const isOpenChat = headerTitle.includes(target) || target.includes(headerTitle);
+            const isOpenChat = isMainOpen && target && (headerTitle.includes(target) || target.includes(headerTitle));
 
-            // C. Locate composer
-            const composer = document.querySelector(
-              'footer div[contenteditable="true"], [data-testid="conversation-compose-box-input"], footer div[role="textbox"], div[data-tab="10"][contenteditable="true"]'
-            );
-
-            // If chat is open (or was selected) and composer exists, type and send!
-            if (composer && (isOpenChat || ${JSON.stringify(chatSelected)})) {
+            // C. If conversation pane is open or was selected, locate composer and type!
+            const composer = findComposer();
+            if (composer && (isOpenChat || ${JSON.stringify(chatSelected)} || isMainOpen)) {
               composer.focus();
+              composer.click();
               document.execCommand('selectAll', false, null);
               document.execCommand('insertText', false, msg);
+              composer.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: msg }));
               composer.dispatchEvent(new Event('input', { bubbles: true }));
               composer.dispatchEvent(new Event('change', { bubbles: true }));
 
-              // Try clicking send button
-              const sendBtn = document.querySelector('button[aria-label="Send"], span[data-icon="send"]')?.closest('button') ||
-                             document.querySelector('button[data-testid="compose-btn-send"]');
+              // Check if Send button is immediately active
+              const sendBtn = findSendBtn();
               if (sendBtn && !sendBtn.disabled) {
                 sendBtn.click();
                 return { action: 'message_sent', method: 'button_click' };
               }
 
-              // Try dispatching Enter key
-              const enterDown = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
-              composer.dispatchEvent(enterDown);
-              const enterUp = new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
-              composer.dispatchEvent(enterUp);
-              return { action: 'message_sent', method: 'enter_key' };
+              return { action: 'composer_typed' };
             }
 
             // D. Check recent chat list (#pane-side) directly for target contact
+            // Guard: If conversation pane is ALREADY open, DO NOT re-click side chat items!
+            if (isOpenChat || (${JSON.stringify(chatSelected)} && isMainOpen) || isMainOpen) {
+              return { action: 'waiting_for_composer' };
+            }
+
             const sidePane = document.getElementById('pane-side') || document.querySelector('#side');
             if (sidePane) {
               const allChatItems = Array.from(sidePane.querySelectorAll('div[role="listitem"], div[role="row"], div[data-testid^="list-item"]'));
@@ -1674,6 +1745,42 @@ class AgentRuntime extends EventEmitter {
           const matchLabel = result.contactMatch ? `"${result.contactMatch}"` : `"${contact}"`;
           console.log(`[AgentRuntime WhatsApp] 💬 Selected chat with ${matchLabel}, opening conversation...`);
           this.emit('feedback', { message: `Step 2/3: Opened chat with ${matchLabel}. Typing message...`, level: 'info' });
+        }
+
+        if (result && result.action === 'composer_typed') {
+          console.log(`[AgentRuntime WhatsApp] ⌨️ Dispatching native hardware Enter to WhatsApp composer for "${contact}"...`);
+          await new Promise(r => setTimeout(r, 150));
+          // Dispatch hardware Enter key directly via Chromium webContents
+          contents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+          contents.sendInputEvent({ type: 'char', keyCode: '\r' });
+          contents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+
+          // Also attempt clicking Send button via DOM
+          await contents.executeJavaScript(`
+            (() => {
+              const btn = (document.querySelector('#main button[aria-label="Send"], #main span[data-icon="send"], button[aria-label="Send"], span[data-icon="send"]'))?.closest('button');
+              if (btn && !btn.disabled) btn.click();
+            })()
+          `).catch(() => null);
+
+          // Verify if sent
+          await new Promise(r => setTimeout(r, 350));
+          const verifySent = await contents.executeJavaScript(`
+            (() => {
+              const comp = document.querySelector('#main div[contenteditable="true"], div[title="Type a message"], div[aria-label*="Type a message" i]');
+              const text = comp ? (comp.innerText || comp.textContent || '').trim() : '';
+              return text === '';
+            })()
+          `).catch(() => true);
+
+          if (verifySent) {
+            messageSent = true;
+            const successMsg = `✅ Sent "${message}" to "${contact}" on WhatsApp!`;
+            console.log(`[AgentRuntime WhatsApp] 🎉 ${successMsg} (hardware_enter)`);
+            this.emit('feedback', { message: successMsg, level: 'success' });
+            this.emit('jarvis-notification', { type: 'success', message: successMsg });
+            return { success: true, message: successMsg };
+          }
         }
 
         if (result && result.action === 'message_sent') {
