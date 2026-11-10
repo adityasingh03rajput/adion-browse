@@ -1490,6 +1490,108 @@ input:checked+.slider:before {
   font-family: ui-monospace, monospace;
 }
 
+/* Jarvis Component Control Strip */
+.jarvis-component-strip {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 18px;
+  background: rgba(15, 23, 42, 0.45);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.jarvis-strip-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 1;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 6px 10px;
+  transition: all 0.2s ease;
+}
+
+.jarvis-strip-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(0, 242, 254, 0.25);
+}
+
+.strip-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.strip-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.strip-status {
+  font-size: 10px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-dot.dot-on {
+  background: #10b981;
+  box-shadow: 0 0 6px #10b981;
+}
+
+.status-dot.dot-off {
+  background: #64748b;
+}
+
+/* Stylish Toggle Switch */
+.btn-toggle-switch {
+  width: 32px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9px;
+  position: relative;
+  cursor: pointer;
+  border: none;
+  outline: none;
+  padding: 2px;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+  touch-action: manipulation;
+}
+
+.btn-toggle-switch:focus {
+  outline: none;
+}
+
+.toggle-knob {
+  width: 14px;
+  height: 14px;
+  background: #ffffff;
+  border-radius: 50%;
+  display: block;
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.btn-toggle-switch.active {
+  background: #00f2fe;
+  box-shadow: 0 0 8px rgba(0, 242, 254, 0.4);
+}
+
+.btn-toggle-switch.active .toggle-knob {
+  transform: translateX(14px);
+  background: #0f172a;
+}
+
 /* Timeline of Session Memory Interactions */
 .jarvis-timeline {
   flex: 1;

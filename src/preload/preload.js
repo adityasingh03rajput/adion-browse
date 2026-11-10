@@ -95,5 +95,18 @@ contextBridge.exposeInMainWorld('adionAPI', {
     onUpdated: (callback) => ipcRenderer.on('session:updated', (e, data) => callback(data)),
     onCleared: (callback) => ipcRenderer.on('session:cleared', (e, data) => callback(data)),
     onNotification: (callback) => ipcRenderer.on('jarvis:notification', (e, data) => callback(data))
+  },
+
+  // Optional Model Context Protocol (MCP) Server Control
+  mcp: {
+    getStatus: () => ipcRenderer.invoke('mcp:get-status'),
+    toggle: (enable) => ipcRenderer.invoke('mcp:toggle', enable),
+    onStatusChange: (callback) => ipcRenderer.on('mcp:status-change', (e, data) => callback(data))
+  },
+
+  // Continuous Diagnostic Logging & Telemetry Configuration
+  diagnostics: {
+    getConfig: () => ipcRenderer.invoke('diagnostics:get-config'),
+    updateConfig: (cfg) => ipcRenderer.invoke('diagnostics:update-config', cfg)
   }
 });

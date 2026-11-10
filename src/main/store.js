@@ -36,7 +36,10 @@ class Store {
         upgradeHttps: true,
         blockScripts: false,
         theme: 'dark',
-        showBookmarksBar: true
+        showBookmarksBar: true,
+        mcpServerEnabled: false, // Optional component: off by default on startup
+        diagnosticLogging: true, // Continuous structured telemetry and diagnostic monitoring
+        logLevel: 'structured'   // 'structured' | 'verbose' | 'minimal'
       },
       stats: {
         totalBlocked: 0,

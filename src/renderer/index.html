@@ -294,6 +294,26 @@
             <span class="status-pill active">Active</span>
           </div>
         </div>
+        <div class="settings-group">
+          <label class="settings-label">Model Context Protocol (MCP) Server</label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="settingMcpServer">
+            <span>Launch MCP server automatically on startup (Port 9224)</span>
+          </label>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+            Optional component for external agents (Claude, Cursor, Antigravity). Leave unchecked to keep MCP server dormant on startup.
+          </div>
+        </div>
+        <div class="settings-group">
+          <label class="settings-label">System Diagnostics & Monitoring</label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="settingDiagnosticLogging" checked>
+            <span>Persist continuous structured telemetry and system monitoring</span>
+          </label>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+            Maintains structured logging and performance metrics across restarts without terminal buffering lockups.
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -406,6 +426,28 @@
       <div class="jarvis-session-meta">
         <span id="jarvisSessionId">Session: Initializing...</span>
         <span id="jarvisInteractionCount">0 Interactions</span>
+      </div>
+
+      <!-- Jarvis Component Controls: Optional MCP Server Toggle & Diagnostic Monitoring -->
+      <div class="jarvis-component-strip">
+        <div class="jarvis-strip-item">
+          <div class="strip-item-info">
+            <span class="strip-label">MCP Server (External AI)</span>
+            <span class="strip-status" id="jarvisMcpStatus"><span class="status-dot dot-off"></span> Standby</span>
+          </div>
+          <button class="btn-toggle-switch" id="btnToggleMcp" title="Toggle Model Context Protocol Server (Optional Component)">
+            <span class="toggle-knob"></span>
+          </button>
+        </div>
+        <div class="jarvis-strip-item">
+          <div class="strip-item-info">
+            <span class="strip-label">Continuous Diagnostics</span>
+            <span class="strip-status" id="jarvisDiagStatus"><span class="status-dot dot-on"></span> Active</span>
+          </div>
+          <button class="btn-toggle-switch active" id="btnToggleDiagnostics" title="Toggle Real-Time System Diagnostic Monitoring">
+            <span class="toggle-knob"></span>
+          </button>
+        </div>
       </div>
 
       <!-- Session Interactions Timeline -->

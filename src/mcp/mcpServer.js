@@ -1123,18 +1123,47 @@ class MCPServer extends EventEmitter {
    * Stop MCP Server and clean up connections
    */
   stop() {
-    if (!this.isRunning) return;
-    for (const client of this.sseClients) {
-      try { client.res.end(); } catch (_) {}
-    }
-    this.sseClients.clear();
+    return new Promise((resolve) => {
+      if (!this.isRunning) {
+        return resolve();
+      }
+      for (const client of this.sseClients) {
+        try { client.res.end(); } catch (_) {}
+      }
+      this.sseClients.clear();
 
-    if (this.server) {
-      this.server.close(() => {
+      if (this.server) {
+        this.server.close(() => {
+          this.isRunning = false;
+          this.server = null;
+          this.updateDiscoveryFileOffline();
+          console.log('[MCPServer] MCP server cleanly shut down.');
+          resolve();
+        });
+      } else {
         this.isRunning = false;
-        console.log('[MCPServer] MCP server cleanly shut down.');
-      });
-    }
+        this.updateDiscoveryFileOffline();
+        resolve();
+      }
+    });
+  }
+
+  /**
+   * Update discovery file to offline state
+   */
+  updateDiscoveryFileOffline() {
+    try {
+      const dataDir = path.resolve(__dirname, '../../.data');
+      const discoveryPath = path.join(dataDir, 'mcp_server.json');
+      if (fs.existsSync(discoveryPath)) {
+        fs.writeFileSync(discoveryPath, JSON.stringify({
+          status: 'offline',
+          server: this.serverInfo.name,
+          port: this.port,
+          stoppedAt: new Date().toISOString()
+        }, null, 2), 'utf-8');
+      }
+    } catch (_) {}
   }
 }
 

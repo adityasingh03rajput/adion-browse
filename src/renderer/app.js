@@ -40,6 +40,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingSearchEngine = document.getElementById('settingSearchEngine');
   const settingShieldsDefault = document.getElementById('settingShieldsDefault');
   const settingUpgradeHttps = document.getElementById('settingUpgradeHttps');
+  const settingMcpServer = document.getElementById('settingMcpServer');
+  const settingDiagnosticLogging = document.getElementById('settingDiagnosticLogging');
 
   let currentTabs = [];
   let currentActiveTabId = null;
@@ -539,6 +541,8 @@ document.addEventListener('DOMContentLoaded', () => {
     settingSearchEngine.value = settings.searchEngine || 'brave';
     settingShieldsDefault.checked = settings.shieldsEnabled !== false;
     settingUpgradeHttps.checked = settings.upgradeHttps !== false;
+    if (settingMcpServer) settingMcpServer.checked = Boolean(settings.mcpServerEnabled);
+    if (settingDiagnosticLogging) settingDiagnosticLogging.checked = settings.diagnosticLogging !== false;
     settingsModal.classList.add('show');
     updateOverlayState();
   });
@@ -560,6 +564,30 @@ document.addEventListener('DOMContentLoaded', () => {
   settingUpgradeHttps.addEventListener('change', async () => {
     await window.adionAPI.updateSetting('upgradeHttps', settingUpgradeHttps.checked);
   });
+
+  if (settingMcpServer) {
+    settingMcpServer.addEventListener('change', async () => {
+      const willEnable = settingMcpServer.checked;
+      await window.adionAPI.updateSetting('mcpServerEnabled', willEnable);
+      if (window.adionAPI && window.adionAPI.mcp) {
+        const res = await window.adionAPI.mcp.toggle(willEnable);
+        updateMcpUI(res.running, res.port);
+        showJarvisToast(res.running ? `MCP server started on port ${res.port}` : 'MCP server stopped', res.running ? 'success' : 'alert');
+      }
+    });
+  }
+
+  if (settingDiagnosticLogging) {
+    settingDiagnosticLogging.addEventListener('change', async () => {
+      const willEnable = settingDiagnosticLogging.checked;
+      await window.adionAPI.updateSetting('diagnosticLogging', willEnable);
+      if (window.adionAPI && window.adionAPI.diagnostics) {
+        const res = await window.adionAPI.diagnostics.updateConfig({ diagnosticLogging: willEnable });
+        updateDiagUI(res.diagnosticLogging);
+        showJarvisToast(`Continuous diagnostics ${res.diagnosticLogging ? 'active & persisted' : 'paused'}`, 'success');
+      }
+    });
+  }
 
   // --- DEVTOOLS TOGGLE ---
   btnDevTools.addEventListener('click', (e) => {
@@ -1048,6 +1076,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const jarvisChatInput = document.getElementById('jarvisChatInput');
   const btnJarvisSend = document.getElementById('btnJarvisSend');
   const btnJarvisVoice = document.getElementById('btnJarvisVoice');
+  const btnToggleMcp = document.getElementById('btnToggleMcp');
+  const jarvisMcpStatus = document.getElementById('jarvisMcpStatus');
+  const btnToggleDiagnostics = document.getElementById('btnToggleDiagnostics');
+  const jarvisDiagStatus = document.getElementById('jarvisDiagStatus');
 
   let jarvisState = 'IDLE'; // IDLE | LISTENING | THINKING | EXECUTING | SUCCESS | ALERT
   let jarvisAudioLevel = 0;
@@ -1385,6 +1417,104 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // --- Optional Component Toggles (MCP Server & Continuous Diagnostics) ---
+  function updateMcpUI(running, port = 9224) {
+    if (btnToggleMcp) {
+      if (running) {
+        btnToggleMcp.classList.add('active');
+      } else {
+        btnToggleMcp.classList.remove('active');
+      }
+    }
+    if (jarvisMcpStatus) {
+      if (running) {
+        jarvisMcpStatus.innerHTML = `<span class="status-dot dot-on"></span> Online (:${port})`;
+        jarvisMcpStatus.style.color = '#10b981';
+      } else {
+        jarvisMcpStatus.innerHTML = `<span class="status-dot dot-off"></span> Standby`;
+        jarvisMcpStatus.style.color = 'var(--text-muted)';
+      }
+    }
+    if (settingMcpServer) {
+      settingMcpServer.checked = Boolean(running);
+    }
+  }
+
+  function updateDiagUI(active) {
+    if (btnToggleDiagnostics) {
+      if (active) {
+        btnToggleDiagnostics.classList.add('active');
+      } else {
+        btnToggleDiagnostics.classList.remove('active');
+      }
+    }
+    if (jarvisDiagStatus) {
+      if (active) {
+        jarvisDiagStatus.innerHTML = `<span class="status-dot dot-on"></span> Active`;
+        jarvisDiagStatus.style.color = '#10b981';
+      } else {
+        jarvisDiagStatus.innerHTML = `<span class="status-dot dot-off"></span> Paused`;
+        jarvisDiagStatus.style.color = 'var(--text-muted)';
+      }
+    }
+    if (settingDiagnosticLogging) {
+      settingDiagnosticLogging.checked = Boolean(active);
+    }
+  }
+
+  if (btnToggleMcp) {
+    btnToggleMcp.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!window.adionAPI || !window.adionAPI.mcp) return;
+      try {
+        const res = await window.adionAPI.mcp.toggle();
+        updateMcpUI(res.running, res.port);
+        if (res.running) {
+          showJarvisToast(`MCP Server online on port ${res.port} (Claude/Agents connected)`, 'success');
+        } else {
+          showJarvisToast('MCP Server offline. Browser running in lightweight standalone mode.', 'alert');
+        }
+      } catch (err) {
+        showJarvisToast('MCP toggle failed: ' + err.message, 'alert');
+      }
+    });
+  }
+
+  if (btnToggleDiagnostics) {
+    btnToggleDiagnostics.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!window.adionAPI || !window.adionAPI.diagnostics) return;
+      try {
+        const cfg = await window.adionAPI.diagnostics.getConfig();
+        const nextState = !cfg.diagnosticLogging;
+        const res = await window.adionAPI.diagnostics.updateConfig({ diagnosticLogging: nextState });
+        updateDiagUI(res.diagnosticLogging);
+        showJarvisToast(`Continuous diagnostics ${res.diagnosticLogging ? 'active & persisted' : 'paused'}`, 'success');
+      } catch (err) {
+        showJarvisToast('Diagnostics toggle failed: ' + err.message, 'alert');
+      }
+    });
+  }
+
+  async function initComponentToggles() {
+    if (window.adionAPI && window.adionAPI.mcp) {
+      try {
+        const mcpStatus = await window.adionAPI.mcp.getStatus();
+        updateMcpUI(mcpStatus.running, mcpStatus.port);
+        window.adionAPI.mcp.onStatusChange((status) => {
+          updateMcpUI(status.running, status.port);
+        });
+      } catch (_) {}
+    }
+    if (window.adionAPI && window.adionAPI.diagnostics) {
+      try {
+        const diagCfg = await window.adionAPI.diagnostics.getConfig();
+        updateDiagUI(diagCfg.diagnosticLogging);
+      } catch (_) {}
+    }
+  }
+  initComponentToggles();
 
   // Initial toast greeting on startup
   setTimeout(() => {

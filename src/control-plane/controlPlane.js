@@ -8,6 +8,7 @@ const MultiAgentPool = require('./multiAgentPool');
 const DataSynthesizer = require('./dataSynthesizer');
 const ZKPMesh = require('./zkpMesh');
 const MCPServer = require('../mcp/mcpServer');
+const store = require('../main/store');
 const { IPCChannels, AgentState } = require('./protocol');
 
 /**
@@ -50,10 +51,22 @@ class ControlPlane {
     this.bindRuntimeEvents();
     this.registerIPCHandlers();
 
-    // Start Model Context Protocol server on local loopback
-    this.mcpServer.start().catch((err) => {
-      console.warn('[ControlPlane] MCP server startup notice:', err.message);
-    });
+    // Persist and apply continuous diagnostic logging configuration
+    const isDiagEnabled = store.getSetting('diagnosticLogging') !== false;
+    this.runtime.verboseAudioLogging = isDiagEnabled;
+    console.log(`[Diagnostics] Continuous monitoring initialized (diagnosticLogging=${isDiagEnabled}, level=${store.getSetting('logLevel') || 'structured'})`);
+
+    // MCP Server is an OPTIONAL component: do NOT force-launch on every startup.
+    // Only launch if the user explicitly enabled it in the Jarvis GUI or Settings.
+    const shouldStartMcp = Boolean(store.getSetting('mcpServerEnabled'));
+    if (shouldStartMcp) {
+      console.log('[ControlPlane] Launching MCP server per saved user configuration...');
+      this.mcpServer.start().catch((err) => {
+        console.warn('[ControlPlane] MCP server startup notice:', err.message);
+      });
+    } else {
+      console.log('[ControlPlane] MCP server is in standby (optional component, toggle on in Jarvis GUI or Settings).');
+    }
   }
 
   /**
@@ -208,6 +221,69 @@ class ControlPlane {
     // Decentralized Enterprise Analytics Synthesis
     ipcMain.handle('enterprise:get-telemetry', () => {
       return this.synthesizer.exportSynthesizedTelemetry();
+    });
+
+    // Optional Model Context Protocol (MCP) Server Status & Toggle
+    ipcMain.handle('mcp:get-status', () => {
+      return {
+        running: Boolean(this.mcpServer && this.mcpServer.isRunning),
+        port: this.mcpServer ? this.mcpServer.port : 9224,
+        url: this.mcpServer && this.mcpServer.isRunning ? `http://127.0.0.1:${this.mcpServer.port}` : null,
+        endpoint: this.mcpServer && this.mcpServer.isRunning ? `http://127.0.0.1:${this.mcpServer.port}/mcp` : null,
+        sse: this.mcpServer && this.mcpServer.isRunning ? `http://127.0.0.1:${this.mcpServer.port}/sse` : null,
+        toolsCount: this.mcpServer ? this.mcpServer.tools.length : 0
+      };
+    });
+
+    ipcMain.handle('mcp:toggle', async (event, requestedState) => {
+      const willEnable = requestedState !== undefined ? Boolean(requestedState) : !this.mcpServer.isRunning;
+      store.setSetting('mcpServerEnabled', willEnable);
+
+      if (willEnable && !this.mcpServer.isRunning) {
+        console.log('[ControlPlane] Starting MCP Server on demand via Jarvis GUI...');
+        await this.mcpServer.start();
+      } else if (!willEnable && this.mcpServer.isRunning) {
+        console.log('[ControlPlane] Stopping MCP Server via Jarvis GUI...');
+        await this.mcpServer.stop();
+      }
+
+      const status = {
+        running: Boolean(this.mcpServer.isRunning),
+        port: this.mcpServer.port,
+        url: this.mcpServer.isRunning ? `http://127.0.0.1:${this.mcpServer.port}` : null,
+        endpoint: this.mcpServer.isRunning ? `http://127.0.0.1:${this.mcpServer.port}/mcp` : null,
+        sse: this.mcpServer.isRunning ? `http://127.0.0.1:${this.mcpServer.port}/sse` : null,
+        toolsCount: this.mcpServer.tools.length
+      };
+
+      this.sendToUI('mcp:status-change', status);
+      return status;
+    });
+
+    // Persistent Diagnostic Logging & Continuous Monitoring Configuration
+    ipcMain.handle('diagnostics:get-config', () => {
+      return {
+        diagnosticLogging: store.getSetting('diagnosticLogging') !== false,
+        logLevel: store.getSetting('logLevel') || 'structured',
+        continuousMonitoring: true
+      };
+    });
+
+    ipcMain.handle('diagnostics:update-config', (event, cfg) => {
+      if (cfg && cfg.diagnosticLogging !== undefined) {
+        const enabled = Boolean(cfg.diagnosticLogging);
+        store.setSetting('diagnosticLogging', enabled);
+        this.runtime.verboseAudioLogging = enabled;
+        console.log(`[Diagnostics] Diagnostic logging toggled: ${enabled ? 'ENABLED' : 'DISABLED'}`);
+      }
+      if (cfg && cfg.logLevel) {
+        store.setSetting('logLevel', cfg.logLevel);
+      }
+      return {
+        diagnosticLogging: store.getSetting('diagnosticLogging') !== false,
+        logLevel: store.getSetting('logLevel') || 'structured',
+        continuousMonitoring: true
+      };
     });
 
     // Session Memory & Interaction State Logging
