@@ -44,6 +44,10 @@ Available Action Types and their parameters:
 - "CLICK_SELECTOR": { "target": "button label, link text, or selector" }
 - "INPUT_TEXT": { "selector": "input or search box selector", "text": "text to type" }
 - "TOGGLE_DEVTOOLS": {} - opens/toggles developer tools (the code <> button on top right)
+- "SWITCH_TAB": { "target": "Wikipedia" | 1 | "tab_id" } - switches to matching tab by title, index, or query
+- "DEVTOOLS_SWITCH_PANEL": { "panel": "console" | "elements" | "network" | "sources" | "application" } - switches between panel tabs in Developer Tools
+- "FOCUS_PAGE": {} - focuses the active webpage content
+- "FOCUS_DEVTOOLS": {} - focuses the Developer Tools console/window
 - "OPEN_SETTINGS": {} - opens browser settings (the gear icon)
 - "OPEN_HISTORY": {} - opens browsing history
 - "OPEN_BOOKMARKS": {} - opens bookmarks
@@ -58,6 +62,24 @@ Output:
   "thought": "Bookmark current active page",
   "actions": [
     { "type": "TOGGLE_BOOKMARK", "params": {} }
+  ]
+}
+
+User: "Switch to console in developer tools" or "open network tab in devtools"
+Output:
+{
+  "thought": "Switch Developer Tools panel tab",
+  "actions": [
+    { "type": "DEVTOOLS_SWITCH_PANEL", "params": { "panel": "console" } }
+  ]
+}
+
+User: "Switch tab to Wikipedia"
+Output:
+{
+  "thought": "Switch active tab to Wikipedia",
+  "actions": [
+    { "type": "SWITCH_TAB", "params": { "target": "Wikipedia" } }
   ]
 }
 

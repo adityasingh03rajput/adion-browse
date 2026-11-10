@@ -11,6 +11,10 @@ contextBridge.exposeInMainWorld('adionAPI', {
   goBack: () => ipcRenderer.send('go-back'),
   goForward: () => ipcRenderer.send('go-forward'),
   toggleDevTools: () => ipcRenderer.send('toggle-devtools'),
+  switchDevToolsPanel: (panel) => ipcRenderer.send('devtools-switch-panel', panel),
+  focusDevTools: () => ipcRenderer.send('devtools-focus'),
+  focusPage: () => ipcRenderer.send('page-focus'),
+  switchTabByQuery: (query) => ipcRenderer.send('tab-switch-query', query),
 
   // Event Listeners from Main
   onTabUpdated: (callback) => {

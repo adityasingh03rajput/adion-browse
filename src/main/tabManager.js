@@ -176,9 +176,16 @@ class TabManager {
     const tab = this.tabs.get(id);
     if (!tab) return;
 
+    let devToolsWasOpen = false;
     if (this.activeTabId && this.tabs.has(this.activeTabId)) {
       const prevTab = this.tabs.get(this.activeTabId);
       if (prevTab && prevTab.view) {
+        try {
+          devToolsWasOpen = prevTab.view.webContents.isDevToolsOpened();
+          if (devToolsWasOpen) {
+            prevTab.view.webContents.closeDevTools();
+          }
+        } catch (_) {}
         this.mainWindow.removeBrowserView(prevTab.view);
       }
     }
@@ -186,6 +193,18 @@ class TabManager {
     this.activeTabId = id;
     this.mainWindow.setBrowserView(tab.view);
     tab.view.setBounds(this.getBounds());
+
+    // Accurately focus the web contents of the newly active tab
+    try {
+      tab.view.webContents.focus();
+    } catch (_) {}
+
+    // Maintain developer tools continuity if open on the previous tab
+    if (devToolsWasOpen) {
+      try {
+        tab.view.webContents.openDevTools({ mode: 'right', activate: false });
+      } catch (_) {}
+    }
 
     this.sendTabsList();
     this.sendTabUpdate(tab);
@@ -277,12 +296,161 @@ class TabManager {
     }
   }
 
-  toggleDevTools() {
+  toggleDevTools(mode = 'right') {
     if (!this.activeTabId) return;
     const tab = this.tabs.get(this.activeTabId);
-    if (tab) {
-      tab.view.webContents.toggleDevTools();
+    if (!tab || !tab.view) return;
+    const wc = tab.view.webContents;
+    try {
+      if (wc.isDevToolsOpened()) {
+        wc.closeDevTools();
+        wc.focus();
+      } else {
+        wc.openDevTools({ mode, activate: true });
+      }
+    } catch (e) {
+      console.warn('[TabManager] Error toggling DevTools:', e.message);
     }
+  }
+
+  /**
+   * Accurately focus and switch between developer tools panel tabs (Console, Elements, Network, Sources, etc.)
+   */
+  switchDevToolsPanel(panelName = 'console') {
+    if (!this.activeTabId) return;
+    const tab = this.tabs.get(this.activeTabId);
+    if (!tab || !tab.view) return;
+    const wc = tab.view.webContents;
+
+    if (!wc.isDevToolsOpened()) {
+      wc.openDevTools({ mode: 'right', activate: true });
+    }
+
+    const normalized = (panelName || 'console').toLowerCase().trim();
+    const panelMap = {
+      'console': 'console',
+      'elements': 'elements',
+      'inspector': 'elements',
+      'network': 'network',
+      'sources': 'sources',
+      'debugger': 'sources',
+      'application': 'resources',
+      'resources': 'resources',
+      'storage': 'resources',
+      'performance': 'timeline',
+      'timeline': 'timeline',
+      'memory': 'heap_profiler',
+      'security': 'security'
+    };
+    const targetPanel = panelMap[normalized] || normalized;
+
+    const dispatchSwitch = () => {
+      try {
+        if (wc.devToolsWebContents && !wc.devToolsWebContents.isDestroyed()) {
+          wc.devToolsWebContents.executeJavaScript(`
+            (function(pName) {
+              try {
+                if (window.DevToolsAPI && window.DevToolsAPI.showPanel) {
+                  window.DevToolsAPI.showPanel(pName);
+                  return true;
+                }
+                if (window.UI && window.UI.viewManager) {
+                  window.UI.viewManager.showView(pName);
+                  return true;
+                }
+                const el = document.getElementById('tab-' + pName);
+                if (el) { el.click(); return true; }
+              } catch(e) {}
+              return false;
+            })(${JSON.stringify(targetPanel)})
+          `).catch(() => {});
+          wc.devToolsWebContents.focus();
+        }
+      } catch (err) {
+        console.warn('[TabManager] DevTools switch error:', err.message);
+      }
+    };
+
+    if (wc.devToolsWebContents) {
+      dispatchSwitch();
+    } else {
+      wc.once('devtools-opened', () => {
+        setTimeout(dispatchSwitch, 250);
+      });
+    }
+  }
+
+  /**
+   * Focus developer tools window / console
+   */
+  focusDevTools() {
+    if (!this.activeTabId) return;
+    const tab = this.tabs.get(this.activeTabId);
+    if (!tab || !tab.view) return;
+    const wc = tab.view.webContents;
+    if (!wc.isDevToolsOpened()) {
+      wc.openDevTools({ mode: 'right', activate: true });
+    }
+    if (wc.devToolsWebContents && !wc.devToolsWebContents.isDestroyed()) {
+      wc.devToolsWebContents.focus();
+    }
+  }
+
+  /**
+   * Accurately focus the active webpage content
+   */
+  focusPage() {
+    if (!this.activeTabId) return;
+    const tab = this.tabs.get(this.activeTabId);
+    if (tab && tab.view) {
+      tab.view.webContents.focus();
+    }
+  }
+
+  /**
+   * Switch tab by index, title, or query
+   */
+  switchTabByQuery(query) {
+    if (!query) return null;
+    const q = String(query).toLowerCase().trim();
+
+    // 1. Direct index e.g. "1", "tab 2", "first"
+    const indexMatch = q.match(/^(?:tab\s+)?(\d+)$/);
+    if (indexMatch) {
+      const idx = parseInt(indexMatch[1], 10) - 1;
+      const tabList = Array.from(this.tabs.values());
+      if (idx >= 0 && idx < tabList.length) {
+        this.switchTab(tabList[idx].id);
+        return tabList[idx];
+      }
+    }
+
+    if (q === 'first' || q === 'first tab') {
+      const tabList = Array.from(this.tabs.values());
+      if (tabList.length > 0) {
+        this.switchTab(tabList[0].id);
+        return tabList[0];
+      }
+    }
+    if (q === 'last' || q === 'last tab') {
+      const tabList = Array.from(this.tabs.values());
+      if (tabList.length > 0) {
+        this.switchTab(tabList[tabList.length - 1].id);
+        return tabList[tabList.length - 1];
+      }
+    }
+
+    // 2. Title or URL matching
+    for (const tab of this.tabs.values()) {
+      const title = (tab.title || '').toLowerCase();
+      const url = (tab.url || '').toLowerCase();
+      if (title.includes(q) || url.includes(q)) {
+        this.switchTab(tab.id);
+        return tab;
+      }
+    }
+
+    return null;
   }
 
   getActiveTab() {

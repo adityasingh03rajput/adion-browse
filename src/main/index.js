@@ -47,7 +47,30 @@ function gracefulShutdown(signal) {
 }
 
 // Process signal & error management
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+let sigintCount = 0;
+let sigintResetTimer = null;
+
+process.on('SIGINT', () => {
+  sigintCount++;
+  console.log(`[Adion Process] Intercepted SIGINT (${sigintCount}/2). Auto-flushed profile data to disk.`);
+  try { store.flush(); } catch (_) {}
+
+  // If browser window is already closed or destroyed, shut down immediately
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return gracefulShutdown('SIGINT');
+  }
+
+  // Require consecutive double SIGINT within 1.5s to shut down an active GUI browser from terminal
+  if (sigintCount >= 2) {
+    gracefulShutdown('SIGINT (Confirmed)');
+  } else {
+    if (sigintResetTimer) clearTimeout(sigintResetTimer);
+    sigintResetTimer = setTimeout(() => {
+      sigintCount = 0;
+    }, 1500);
+  }
+});
+
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 process.on('uncaughtException', (err) => {
@@ -175,6 +198,22 @@ function setupIPC() {
 
   ipcMain.on('toggle-devtools', () => {
     tabManager.toggleDevTools();
+  });
+
+  ipcMain.on('devtools-switch-panel', (e, panel) => {
+    tabManager.switchDevToolsPanel(panel);
+  });
+
+  ipcMain.on('devtools-focus', () => {
+    tabManager.focusDevTools();
+  });
+
+  ipcMain.on('page-focus', () => {
+    tabManager.focusPage();
+  });
+
+  ipcMain.on('tab-switch-query', (e, query) => {
+    tabManager.switchTabByQuery(query);
   });
 
   // Adion Shields IPC

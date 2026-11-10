@@ -437,9 +437,31 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (e.ctrlKey && e.key === 'h') {
       e.preventDefault();
       btnHistory.click();
-    } else if (e.key === 'F12') {
+    } else if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i'))) {
       e.preventDefault();
       window.adionAPI.toggleDevTools();
+    } else if (e.ctrlKey && e.shiftKey && (e.key === 'J' || e.key === 'j')) {
+      e.preventDefault();
+      window.adionAPI.switchDevToolsPanel('console');
+    } else if (e.ctrlKey && e.shiftKey && (e.key === 'C' || e.key === 'c')) {
+      e.preventDefault();
+      window.adionAPI.switchDevToolsPanel('elements');
+    } else if (e.ctrlKey && e.key === 'Tab') {
+      e.preventDefault();
+      // Switch to next tab
+      if (currentTabs && currentTabs.length > 1) {
+        const currentIdx = currentTabs.findIndex(t => t.id === currentActiveTabId);
+        const nextIdx = e.shiftKey
+          ? (currentIdx - 1 + currentTabs.length) % currentTabs.length
+          : (currentIdx + 1) % currentTabs.length;
+        window.adionAPI.switchTab(currentTabs[nextIdx].id);
+      }
+    } else if (e.ctrlKey && /^[1-9]$/.test(e.key)) {
+      e.preventDefault();
+      const targetIdx = parseInt(e.key, 10) - 1;
+      if (currentTabs && targetIdx < currentTabs.length) {
+        window.adionAPI.switchTab(currentTabs[targetIdx].id);
+      }
     }
   });
 

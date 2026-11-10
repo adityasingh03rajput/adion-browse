@@ -348,6 +348,30 @@ class AgentRuntime extends EventEmitter {
       return { type: ActionType.CLOSE_TAB };
     }
 
+    // Developer Tools Panel Switching & Focus
+    const devtoolsPanelMatch = lower.match(/(?:switch to|open|show|inspect)\s+(console|elements|network|sources|debugger|application|storage|performance|security)\s*(?:tab|panel|view)?\s*(?:in|on)?\s*(?:devtools|developer tools)?/i) ||
+      lower.match(/(?:devtools|developer tools)\s+(console|elements|network|sources|application|performance)/i);
+    if (devtoolsPanelMatch) {
+      const panel = devtoolsPanelMatch[1].toLowerCase();
+      return { type: ActionType.DEVTOOLS_SWITCH_PANEL, panel };
+    }
+
+    if (/(focus devtools|focus developer tools|focus console)/i.test(lower)) {
+      return { type: ActionType.FOCUS_DEVTOOLS };
+    }
+    if (/(focus page|focus web|focus content)/i.test(lower)) {
+      return { type: ActionType.FOCUS_PAGE };
+    }
+
+    // Switch Tab by title or number (e.g. "switch tab to Wikipedia", "switch to tab 2", "go to tab 1")
+    const switchTabMatch = lower.match(/(?:switch\s+(?:tab\s+to|to\s+tab|to)|go\s+to\s+tab|select\s+tab)\s+([a-z0-9\s\.\-_]+?)(?:\s+tab)?$/i);
+    if (switchTabMatch && !/(next|previous|new|close|devtools|console|settings)/i.test(switchTabMatch[1])) {
+      const target = switchTabMatch[1].trim();
+      if (target) {
+        return { type: ActionType.SWITCH_TAB, target };
+      }
+    }
+
     // Browser Chrome Controls
     if (/(developer tools|devtools|dev tools|code button|developer button|inspect)/i.test(lower)) {
       return { type: ActionType.TOGGLE_DEVTOOLS };
@@ -486,6 +510,36 @@ class AgentRuntime extends EventEmitter {
       case ActionType.TOGGLE_DEVTOOLS: {
         this.tabManager.toggleDevTools();
         this.emit('feedback', { message: 'Toggled Developer Tools', level: 'success' });
+        break;
+      }
+
+      case ActionType.DEVTOOLS_SWITCH_PANEL: {
+        const panel = intent.panel || 'console';
+        this.tabManager.switchDevToolsPanel(panel);
+        this.emit('feedback', { message: `Switched Developer Tools to "${panel}" panel`, level: 'success' });
+        break;
+      }
+
+      case ActionType.FOCUS_DEVTOOLS: {
+        this.tabManager.focusDevTools();
+        this.emit('feedback', { message: 'Focused Developer Tools', level: 'success' });
+        break;
+      }
+
+      case ActionType.FOCUS_PAGE: {
+        this.tabManager.focusPage();
+        this.emit('feedback', { message: 'Focused webpage content', level: 'success' });
+        break;
+      }
+
+      case ActionType.SWITCH_TAB: {
+        const target = intent.target || intent.query || intent.id;
+        const switched = this.tabManager.switchTabByQuery(target);
+        if (switched) {
+          this.emit('feedback', { message: `Switched to tab: ${switched.title || switched.url}`, level: 'success' });
+        } else {
+          this.emit('feedback', { message: `Could not find tab matching: "${target}"`, level: 'warning' });
+        }
         break;
       }
 
