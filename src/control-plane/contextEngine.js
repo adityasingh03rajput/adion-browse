@@ -7,7 +7,7 @@ const path = require('path');
  * active tabs, and visited page contexts. Enables predictive navigation and proactive tab clustering.
  */
 class ContextEngine {
-  constructor(storageDir = 'D:\\build-cache\\context') {
+  constructor(storageDir = path.join(__dirname, '../../.cache/context')) {
     this.storageDir = storageDir;
     this.sessionGraph = {
       nodes: new Map(), // url/id -> NodeMetadata
@@ -145,3 +145,4 @@ class ContextEngine {
 }
 
 module.exports = ContextEngine;
+

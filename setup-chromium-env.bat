@@ -1,17 +1,17 @@
 @echo off
-:: Chromium Source & Toolchain Environment Configuration (D: Drive Locked)
-:: Prevents C: drive exhaustion during git fetch, depot_tools, and gn/ninja builds
+:: Chromium Source & Toolchain Environment Configuration (D: Drive Project-Local)
+:: Uses workspace .cache to ensure full write permissions without administrative elevation
 
-set "CHROMIUM_ROOT=D:\chromium"
-set "DEPOT_TOOLS_PATH=D:\chromium\depot_tools"
+set "PROJECT_ROOT=%~dp0"
+set "CHROMIUM_ROOT=%PROJECT_ROOT%chromium"
+set "DEPOT_TOOLS_PATH=%PROJECT_ROOT%chromium\depot_tools"
 
-:: Redirect all build caches and temporary object files to D:
-set "TMP=D:\build-cache\tmp"
-set "TEMP=D:\build-cache\tmp"
-set "SCCACHE_DIR=D:\build-cache\sccache"
+:: Redirect all build caches and temporary object files to project-local .cache
+set "TMP=%PROJECT_ROOT%.cache\tmp"
+set "TEMP=%PROJECT_ROOT%.cache\tmp"
+set "SCCACHE_DIR=%PROJECT_ROOT%.cache\sccache"
 set "NINJA_STATUS=[%%f/%%t - %%e] "
 set "DEPOT_TOOLS_WIN_TOOLCHAIN=0"
 
 echo [Adion Engine] Chromium D: Drive environment variables configured.
-echo Target Root: %CHROMIUM_ROOT%
-echo Caches:      D:\build-cache\
+echo Project Cache: %PROJECT_ROOT%.cache

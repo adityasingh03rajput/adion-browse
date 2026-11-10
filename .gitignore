@@ -9,6 +9,7 @@ package-lock.json
 test_keys.txt
 
 # Build and runtime data
+.cache/
 dist/
 out/
 build/

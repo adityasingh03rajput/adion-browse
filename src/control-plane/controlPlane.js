@@ -16,7 +16,7 @@ class ControlPlane {
     this.mainWindow = mainWindow;
     this.tabManager = tabManager;
     this.cdp = new CDPBridge();
-    this.context = new ContextEngine('D:\\build-cache\\context');
+    this.context = new ContextEngine();
     this.vision = new VisionGrounder(this.cdp);
     this.vault = new SecurityVault();
 
