@@ -312,6 +312,97 @@ class CDPBridge {
     `;
     return this.evaluate(expr);
   }
+
+  /**
+   * Modify the Document Object Model (DOM) of the active page/local file in real-time
+   * Supports setting text, innerHTML, style properties, and attributes with render verification
+   */
+  async modifyDOM(selector, action = 'setText', value = '', attribute = '') {
+    if (!this.isAttached) throw new Error('CDP not attached to active tab');
+
+    const expr = `
+      (() => {
+        const el = document.querySelector(${JSON.stringify(selector)});
+        if (!el) {
+          return { success: false, error: 'Element not found for selector: ' + ${JSON.stringify(selector)} };
+        }
+
+        const prevContent = el.innerText || el.value || el.innerHTML || '';
+        const actionType = ${JSON.stringify(action)};
+        const val = ${JSON.stringify(value)};
+        const attr = ${JSON.stringify(attribute)};
+
+        if (actionType === 'setText' || actionType === 'text') {
+          el.innerText = val;
+        } else if (actionType === 'setHTML' || actionType === 'html') {
+          el.innerHTML = val;
+        } else if (actionType === 'setStyle' || actionType === 'style') {
+          el.style.cssText += ';' + val;
+        } else if (actionType === 'setAttribute' || actionType === 'attr') {
+          el.setAttribute(attr || 'data-ai-modified', val);
+        } else if (actionType === 'append') {
+          el.innerHTML += val;
+        }
+
+        // Trigger reactive DOM updates & dispatch events
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+
+        // Flash temporary highlight to verify render update
+        const origOutline = el.style.outline;
+        const origTransition = el.style.transition;
+        el.style.transition = 'outline 0.3s ease';
+        el.style.outline = '3px solid #00f2fe';
+        setTimeout(() => {
+          el.style.outline = origOutline;
+          el.style.transition = origTransition;
+        }, 1200);
+
+        return {
+          success: true,
+          selector: ${JSON.stringify(selector)},
+          action: actionType,
+          previous: prevContent.slice(0, 80),
+          current: (el.innerText || el.value || el.innerHTML || '').slice(0, 80),
+          renderedTag: el.tagName
+        };
+      })()
+    `;
+
+    return this.evaluate(expr);
+  }
+
+  /**
+   * Inspect a specific DOM element and return bounding box, tag name, and classes
+   */
+  async inspectElement(selector) {
+    if (!this.isAttached) throw new Error('CDP not attached to active tab');
+
+    const expr = `
+      (() => {
+        const el = document.querySelector(${JSON.stringify(selector)});
+        if (!el) return { found: false };
+        const rect = el.getBoundingClientRect();
+        return {
+          found: true,
+          tagName: el.tagName,
+          id: el.id,
+          className: el.className,
+          text: (el.innerText || '').slice(0, 100),
+          x: Math.round(rect.left + rect.width / 2),
+          y: Math.round(rect.top + rect.height / 2),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height)
+        };
+      })()
+    `;
+
+    const result = await this.evaluate(expr);
+    if (result && result.found) {
+      await this.highlightElement(result.x, result.y, result.width, result.height, `Inspect: ${selector}`);
+    }
+    return result;
+  }
 }
 
 module.exports = CDPBridge;

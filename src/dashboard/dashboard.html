@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Adion Telemetry & Performance Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <div class="dashboard-header">
+    <div class="brand">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#00f2fe" stroke-width="2.5">
+        <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+        <polyline points="2 17 12 22 22 17"></polyline>
+        <polyline points="2 12 12 17 22 12"></polyline>
+      </svg>
+      <div>
+        <h1>Adion Telemetry Dashboard</h1>
+        <p>Live Network Diagnostics, Resource Allocation & Autonomous Agent Grounding</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="btn-primary" id="btnRunTestQuery">⚡ Run Test Diagnostics Query</button>
+      <button class="btn-secondary" id="btnRefreshMetrics">↻ Refresh Data</button>
+    </div>
+  </div>
+
+  <!-- Key Metrics Row -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <span class="kpi-label">Network Ping & Latency</span>
+      <div class="kpi-value-row">
+        <span class="kpi-value" id="kpiLatency">14 ms</span>
+        <span class="kpi-badge badge-green">OPTIMAL</span>
+      </div>
+      <span class="kpi-subtext" id="kpiTargetUrl">Target: Google / Wikipedia</span>
+    </div>
+
+    <div class="kpi-card">
+      <span class="kpi-label">Process Memory Heap</span>
+      <div class="kpi-value-row">
+        <span class="kpi-value" id="kpiMemory">86.4 MB</span>
+        <span class="kpi-badge badge-blue">ELECTRON V8</span>
+      </div>
+      <span class="kpi-subtext">Peak allocated: 124.0 MB</span>
+    </div>
+
+    <div class="kpi-card">
+      <span class="kpi-label">Ad & Tracker Shields</span>
+      <div class="kpi-value-row">
+        <span class="kpi-value" id="kpiBlocked">0</span>
+        <span class="kpi-badge badge-orange">EASYLIST</span>
+      </div>
+      <span class="kpi-subtext" id="kpiBandwidth">Bandwidth saved: 0 KB</span>
+    </div>
+
+    <div class="kpi-card">
+      <span class="kpi-label">CDP Bridge & Agent Sync</span>
+      <div class="kpi-value-row">
+        <span class="kpi-value" id="kpiAgentState">LISTENING</span>
+        <span class="kpi-badge badge-green" id="kpiAgentBadge">CONNECTED</span>
+      </div>
+      <span class="kpi-subtext">VAD Endpointing: 600ms pause</span>
+    </div>
+  </div>
+
+  <!-- Main Grid: Latency Chart & Resource Meter -->
+  <div class="content-grid">
+    <!-- Latency & Network Diagnostics -->
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Live Network Diagnostics & Latency Graph</h2>
+        <span class="live-indicator"><span class="pulse-dot"></span> LIVE 60 FPS</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="latencyCanvas"></canvas>
+      </div>
+      <div class="network-stats-row">
+        <div class="net-item"><span>DNS Resolution:</span> <strong>3.2 ms</strong></div>
+        <div class="net-item"><span>TCP Connect:</span> <strong>5.1 ms</strong></div>
+        <div class="net-item"><span>TLS Handshake:</span> <strong>7.4 ms</strong></div>
+        <div class="net-item"><span>Time to First Byte:</span> <strong id="ttfbVal">18.6 ms</strong></div>
+      </div>
+    </div>
+
+    <!-- Structured Performance Logs -->
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Structured Performance Logs & Action Receipts</h2>
+        <button class="btn-sm" id="btnClearLogs">Clear</button>
+      </div>
+      <div class="logs-container" id="logsContainer">
+        <!-- Live performance log stream -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Real-Time DOM Inspection & Modification Workbench -->
+  <div class="panel" style="margin-top: 24px;">
+    <div class="panel-header">
+      <h2>Web Development Workflows: DOM Inspection & Modification</h2>
+      <span style="font-size: 13px; color: var(--text-muted);">Inspect, modify, and verify render updates in real time</span>
+    </div>
+    <div class="dom-workbench">
+      <div class="workbench-input-group">
+        <label>Target Page Selector:</label>
+        <input type="text" id="domSelectorInput" value="#audioTitle" placeholder="e.g. #audioTitle, .metric-value, h1">
+      </div>
+      <div class="workbench-input-group">
+        <label>Modification Action:</label>
+        <select id="domActionSelect">
+          <option value="setText">Set Text Content</option>
+          <option value="setHTML">Set Inner HTML</option>
+          <option value="setStyle">Set Style (CSS)</option>
+          <option value="setAttribute">Set Attribute</option>
+        </select>
+      </div>
+      <div class="workbench-input-group" style="flex:2;">
+        <label>Value / Content:</label>
+        <input type="text" id="domValueInput" value="⚡ Enhanced Live Acoustic Stream Matrix" placeholder="New text or style value">
+      </div>
+      <button class="btn-primary" id="btnApplyDomMod" style="align-self: flex-end;">Apply Modification & Verify</button>
+    </div>
+    <div id="domVerificationReceipt" class="verification-receipt">
+      Click "Apply Modification & Verify" to apply DOM changes across the active page via CDP.
+    </div>
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>

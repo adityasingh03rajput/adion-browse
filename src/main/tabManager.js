@@ -13,6 +13,7 @@ class TabManager {
     this.activeTabId = null;
     this.nextTabId = 1;
     this.newTabPath = path.join(__dirname, '../newtab/newtab.html');
+    this.dashboardPath = path.join(__dirname, '../dashboard/dashboard.html');
     this.tabSwitchedCallback = null;
 
     // Handle window resize
@@ -45,7 +46,15 @@ class TabManager {
       return `file://${this.newTabPath}?blocked=${stats.totalBlocked}&kb=${stats.estimatedBandwidthSavedKB}&sec=${stats.estimatedTimeSavedSec}&reward=14.50`;
     }
 
+    if (input === 'adion://dashboard' || input === 'adion://metrics' || input === 'adion://telemetry') {
+      return `file://${this.dashboardPath}`;
+    }
+
     const trimmed = input.trim();
+    // Check if targeting local audio.html file
+    if (trimmed.toLowerCase() === 'audio.html' || trimmed.toLowerCase() === 'audio') {
+      return `file://${path.join(process.cwd(), 'audio.html')}`;
+    }
     // Check if it's already a valid url with protocol
     if (/^[a-zA-Z]+:\/\//.test(trimmed)) {
       return trimmed;

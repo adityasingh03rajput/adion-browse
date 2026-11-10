@@ -136,6 +136,12 @@
             <polyline points="8 6 2 12 8 18"></polyline>
           </svg>
         </button>
+        <button class="btn-icon" id="btnTelemetryOverlay" title="Live Telemetry & Diagnostics Dashboard (adion://dashboard)">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#00f2fe" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
+          </svg>
+        </button>
       </div>
     </div>
   </header>
@@ -282,6 +288,44 @@
             <span class="status-pill active">Active</span>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LIVE TELEMETRY & DIAGNOSTICS OVERLAY GUI (Real-Time Metrics & Test Query Runner) -->
+  <div class="telemetry-overlay" id="telemetryOverlay">
+    <div class="telemetry-panel">
+      <div class="telemetry-panel-header">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span class="live-dot"></span>
+          <h3 style="margin:0; font-size:15px; color:#00f2fe;">Live Telemetry & Diagnostics GUI</h3>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-overlay-action" id="btnOverlayTestQuery">⚡ Run Test Query</button>
+          <button class="btn-overlay-action" id="btnOverlayFullDashboard">↗ Open Full Tab</button>
+          <button class="btn-overlay-close" id="btnCloseTelemetry">&times;</button>
+        </div>
+      </div>
+      <div class="telemetry-stats-row">
+        <div class="overlay-stat-box">
+          <span class="label">RTT Latency</span>
+          <span class="val" id="overlayLatencyVal">14.2 ms</span>
+        </div>
+        <div class="overlay-stat-box">
+          <span class="label">Memory Heap</span>
+          <span class="val" id="overlayMemVal">88.4 MB</span>
+        </div>
+        <div class="overlay-stat-box">
+          <span class="label">Shields Blocked</span>
+          <span class="val" id="overlayBlockedVal">0 Trackers</span>
+        </div>
+        <div class="overlay-stat-box">
+          <span class="label">VAD State</span>
+          <span class="val" id="overlayVadVal" style="color:#10b981;">LISTENING</span>
+        </div>
+      </div>
+      <div class="telemetry-query-result" id="overlayQueryResult">
+        <span style="color:#8b949e;">Status:</span> Live Display Format Ready. Click <strong>"Run Test Query"</strong> to verify real-time performance output.
       </div>
     </div>
   </div>

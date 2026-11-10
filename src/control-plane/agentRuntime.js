@@ -348,6 +348,32 @@ class AgentRuntime extends EventEmitter {
       return { type: ActionType.CLOSE_TAB };
     }
 
+    // Dashboard & Live Telemetry Overlay
+    if (/(dashboard|site metrics|network diagnostics|live requested data|live telemetry)/i.test(lower)) {
+      return { type: ActionType.OPEN_DASHBOARD };
+    }
+    if (/(overlay gui|show overlay|live metrics overlay|telemetry overlay|test query)/i.test(lower)) {
+      return { type: ActionType.SHOW_METRICS_OVERLAY };
+    }
+
+    // DOM Inspection & Modification in Local Files / Pages
+    const domModMatch = lower.match(/(?:modify dom|change dom|edit dom|update dom)\s+(?:selector\s+)?([#\.\w\-_]+)?\s*(?:action\s+)?(\w+)?\s*(?:value\s+)?(["'].+?["']|.+)?/i);
+    if (domModMatch) {
+      return {
+        type: ActionType.MODIFY_DOM,
+        selector: domModMatch[1] || '#audioTitle',
+        action: domModMatch[2] || 'setText',
+        value: (domModMatch[3] || 'Enhanced Live Acoustic Stream Matrix').replace(/^["']|["']$/g, '')
+      };
+    }
+    if (/(inspect element|inspect dom)/i.test(lower)) {
+      const inspectMatch = lower.match(/(?:inspect element|inspect dom)\s+([#\.\w\-_]+)/i);
+      return {
+        type: ActionType.INSPECT_ELEMENT,
+        selector: inspectMatch ? inspectMatch[1] : '#visualizerCanvas'
+      };
+    }
+
     // Developer Tools Panel Switching & Focus
     const devtoolsPanelMatch = lower.match(/(?:switch to|open|show|inspect)\s+(console|elements|network|sources|debugger|application|storage|performance|security)\s*(?:tab|panel|view)?\s*(?:in|on)?\s*(?:devtools|developer tools)?/i) ||
       lower.match(/(?:devtools|developer tools)\s+(console|elements|network|sources|application|performance)/i);
@@ -539,6 +565,59 @@ class AgentRuntime extends EventEmitter {
           this.emit('feedback', { message: `Switched to tab: ${switched.title || switched.url}`, level: 'success' });
         } else {
           this.emit('feedback', { message: `Could not find tab matching: "${target}"`, level: 'warning' });
+        }
+        break;
+      }
+
+      case ActionType.OPEN_DASHBOARD: {
+        this.tabManager.createTab('adion://dashboard');
+        this.emit('feedback', { message: 'Opened live Telemetry & Diagnostics Dashboard', level: 'success' });
+        break;
+      }
+
+      case ActionType.SHOW_METRICS_OVERLAY: {
+        this.emit('shell-action', { action: 'SHOW_METRICS_OVERLAY' });
+        this.emit('feedback', { message: 'Active: Telemetry & Live Diagnostics Overlay GUI', level: 'success' });
+        break;
+      }
+
+      case ActionType.MODIFY_DOM: {
+        const selector = intent.selector || '#audioTitle';
+        const action = intent.action || 'setText';
+        const value = intent.value || '⚡ Enhanced Live Acoustic Stream Matrix';
+        const attribute = intent.attribute || '';
+        if (activeTab && activeTab.view) {
+          await this.cdp.attach(activeTab.view.webContents);
+          const res = await this.cdp.modifyDOM(selector, action, value, attribute);
+          if (res && res.success) {
+            this.emit('feedback', {
+              message: `DOM Updated: "${selector}" -> "${res.current}". Render verified!`,
+              level: 'success'
+            });
+          } else {
+            this.emit('feedback', {
+              message: `DOM modification notice: ${res?.error || 'Element not found on active page'}`,
+              level: 'warning'
+            });
+          }
+        }
+        break;
+      }
+
+      case ActionType.INSPECT_ELEMENT: {
+        const selector = intent.selector || intent.target || 'body';
+        if (activeTab && activeTab.view) {
+          await this.cdp.attach(activeTab.view.webContents);
+          const res = await this.cdp.inspectElement(selector);
+          this.tabManager.switchDevToolsPanel('elements');
+          if (res && res.found) {
+            this.emit('feedback', {
+              message: `Inspected <${res.tagName.toLowerCase()}> in Developer Tools Elements panel`,
+              level: 'success'
+            });
+          } else {
+            this.emit('feedback', { message: `Element not found: "${selector}"`, level: 'warning' });
+          }
         }
         break;
       }

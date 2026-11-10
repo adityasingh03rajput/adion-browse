@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audio Processing & Visualizer Lab - Adion Browse</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --card-bg: #1a1d26;
+      --primary: #00f2fe;
+      --accent: #4facfe;
+      --text: #f0f2f5;
+      --text-muted: #8b949e;
+      --border: #2d333b;
+      --success: #10b981;
+    }
+    body {
+      margin: 0;
+      padding: 30px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 20px;
+      margin-bottom: 30px;
+    }
+    .title-box h1 {
+      margin: 0 0 8px 0;
+      font-size: 24px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .title-box p {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid var(--success);
+      color: var(--success);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 24px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    .card h2 {
+      margin-top: 0;
+      font-size: 18px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+    }
+    #visualizerCanvas {
+      width: 100%;
+      height: 220px;
+      background: #090a0f;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      display: block;
+    }
+    .controls {
+      display: flex;
+      gap: 12px;
+      margin-top: 18px;
+    }
+    button.btn {
+      background: linear-gradient(135deg, var(--accent), var(--primary));
+      border: none;
+      color: #0f1117;
+      font-weight: 700;
+      padding: 10px 18px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    button.btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 14px rgba(0, 242, 254, 0.4);
+    }
+    .eq-bar {
+      margin-bottom: 16px;
+    }
+    .eq-bar label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--primary);
+    }
+    .metric-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      font-size: 13px;
+    }
+    .metric-value {
+      font-weight: 700;
+      color: var(--primary);
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="title-box">
+      <h1 id="audioTitle">Real-Time Acoustic & DSP Lab</h1>
+      <p id="audioSubtitle">Target DOM Inspection & Modification Environment for Adion Browse</p>
+    </div>
+    <div class="status-badge" id="streamStatus">
+      <span>●</span> DSP Engine Active (16 kHz PCM)
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card" id="visualizerCard">
+      <h2>Acoustic Spectral Waveform</h2>
+      <canvas id="visualizerCanvas"></canvas>
+      <div class="controls" id="audioControls">
+        <button class="btn" id="btnTogglePlayback">Generate Test Tone (440Hz)</button>
+        <button class="btn" id="btnResetDsp" style="background:#2d333b; color:var(--text);">Reset Filter</button>
+      </div>
+    </div>
+
+    <div class="card" id="dspCard">
+      <h2>Audio DSP Parameters</h2>
+      <div class="eq-bar">
+        <label><span>Bass Frequency Boost</span><span id="valBass">0 dB</span></label>
+        <input type="range" id="sliderBass" min="-12" max="12" value="0">
+      </div>
+      <div class="eq-bar">
+        <label><span>Voice Activity Threshold</span><span id="valVad">0.012 RMS</span></label>
+        <input type="range" id="sliderVad" min="0" max="100" value="12">
+      </div>
+      <div class="eq-bar">
+        <label><span>Noise Suppression</span><span id="valNoise">High (-24dB)</span></label>
+        <input type="range" id="sliderNoise" min="0" max="40" value="24">
+      </div>
+
+      <div style="margin-top:20px;">
+        <div class="metric-row">
+          <span>Sample Rate</span>
+          <span class="metric-value" id="valSampleRate">16,000 Hz</span>
+        </div>
+        <div class="metric-row">
+          <span>Audio Latency</span>
+          <span class="metric-value" id="valLatency">18.4 ms</span>
+        </div>
+        <div class="metric-row">
+          <span>STT Pipeline</span>
+          <span class="metric-value" id="valPipeline">Groq LPU Whisper-v3</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Live animated sine visualizer simulation
+    const canvas = document.getElementById('visualizerCanvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = canvas.offsetWidth;
+    canvas.height = canvas.offsetHeight;
+
+    let phase = 0;
+    function draw() {
+      ctx.fillStyle = '#090a0f';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.beginPath();
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = '#00f2fe';
+
+      const sliceWidth = canvas.width / 100;
+      let x = 0;
+
+      for (let i = 0; i < 100; i++) {
+        const v = Math.sin(i * 0.15 + phase) * Math.sin(i * 0.05 + phase * 0.5) * 45;
+        const y = canvas.height / 2 + v;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+        x += sliceWidth;
+      }
+
+      ctx.stroke();
+      phase += 0.06;
+      requestAnimationFrame(draw);
+    }
+    draw();
+
+    window.addEventListener('resize', () => {
+      canvas.width = canvas.offsetWidth;
+      canvas.height = canvas.offsetHeight;
+    });
+  </script>
+</body>
+</html>

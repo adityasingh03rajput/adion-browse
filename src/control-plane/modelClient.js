@@ -52,8 +52,32 @@ Available Action Types and their parameters:
 - "OPEN_HISTORY": {} - opens browsing history
 - "OPEN_BOOKMARKS": {} - opens bookmarks
 - "TOGGLE_BOOKMARK": {} - bookmarks or unbookmarks the current page (star/bookmark button)
+- "OPEN_DASHBOARD": {} - opens the real-time Network Diagnostics, Latency Graph & Resource Allocation Dashboard (adion://dashboard)
+- "SHOW_METRICS_OVERLAY": {} - displays the live telemetry overlay GUI with real-time performance logs and actionable suggestions
+- "MODIFY_DOM": { "selector": "#audioTitle", "action": "setText" | "setHTML" | "setStyle" | "setAttribute", "value": "value" } - modifies DOM of active page or local file (e.g. audio.html) and verifies render update
+- "INSPECT_ELEMENT": { "selector": "#visualizerCanvas" } - locates, highlights, and inspects element in Developer Tools
 - "CAPTURE_VIEWPORT": {}
 - "ANALYZE_IMAGES": { "criteria": "image search criteria" }
+
+Examples:
+User: "Tell Aiden browse to switch to a dashboard or overlay GUI that displays live requested data clearly. After updating the interface, run a test query to verify the new display format."
+Output:
+{
+  "thought": "Open live telemetry dashboard and display structured performance metrics",
+  "actions": [
+    { "type": "OPEN_DASHBOARD", "params": {} },
+    { "type": "SHOW_METRICS_OVERLAY", "params": {} }
+  ]
+}
+
+User: "Modify DOM in audio.html change audioTitle to Enhanced Acoustic Matrix"
+Output:
+{
+  "thought": "Inspect and modify DOM element in audio.html",
+  "actions": [
+    { "type": "MODIFY_DOM", "params": { "selector": "#audioTitle", "action": "setText", "value": "Enhanced Acoustic Matrix" } }
+  ]
+}
 
 Examples:
 User: "Bookmark this page" or "add bookmark"
@@ -183,23 +207,49 @@ JSON Action Plan:
    * Query Groq Cloud chat completions
    */
   async queryGroq(prompt) {
-    const res = await fetch(this.groqUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.groqKey}`
-      },
-      body: JSON.stringify({
-        model: this.groqModel,
-        messages: [
-          { role: 'system', content: this.systemPrompt },
-          { role: 'user', content: prompt }
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.1,
-        max_tokens: 600
-      })
-    });
+    let res = null;
+    try {
+      res = await fetch(this.groqUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.groqKey}`
+        },
+        body: JSON.stringify({
+          model: this.groqModel,
+          messages: [
+            { role: 'system', content: this.systemPrompt },
+            { role: 'user', content: prompt }
+          ],
+          response_format: { type: 'json_object' },
+          temperature: 0.1,
+          max_tokens: 600
+        })
+      });
+    } catch (e) {
+      // Network retry
+    }
+
+    // If HTTP 400 json_validate_failed or empty response, fallback to direct unconstrained JSON with gpt-oss-120b
+    if (!res || !res.ok) {
+      console.warn('[ModelClient] Retrying Groq with direct unconstrained JSON payload on 120b...');
+      res = await fetch(this.groqUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.groqKey}`
+        },
+        body: JSON.stringify({
+          model: 'openai/gpt-oss-120b',
+          messages: [
+            { role: 'system', content: this.systemPrompt + '\nIMPORTANT: Respond with RAW JSON ONLY. No markdown.' },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.1,
+          max_tokens: 600
+        })
+      });
+    }
 
     if (!res.ok) {
       const text = await res.text();
