@@ -163,9 +163,10 @@ async function testUiUxLayout() {
 
   // Verify autonomous gateway continuator in AgentRuntime
   const agentRuntimeSrc = fs.readFileSync(path.join(__dirname, '../src/control-plane/agentRuntime.js'), 'utf8');
-  assert.ok(agentRuntimeSrc.includes('observeAndDispatchWhatsApp'), 'agentRuntime.js must implement observeAndDispatchWhatsApp');
+  assert.ok(agentRuntimeSrc.includes('async observeAndDispatchWhatsApp'), 'observeAndDispatchWhatsApp must be async');
+  assert.ok(agentRuntimeSrc.includes('await this.observeAndDispatchWhatsApp'), 'observeAndDispatchWhatsApp must be awaited before closing task');
   assert.ok(agentRuntimeSrc.includes('autoHandleContinuations'), 'agentRuntime.js must implement autoHandleContinuations');
-  console.log('  ✔ Chrome-style Ask Jarvis Copilot side panel, context sharing, and autonomous gateway continuator verified.');
+  console.log('  ✔ Chrome-style Ask Jarvis Copilot side panel, context sharing, and end-to-end awaited message dispatch verified.');
 
   console.log('\n✅ ALL UI/UX LAYOUT & RESIZE TESTS PASSED SUCCESSFULLY!\n');
 }

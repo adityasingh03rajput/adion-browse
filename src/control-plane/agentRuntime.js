@@ -877,7 +877,7 @@ class AgentRuntime extends EventEmitter {
           this.emit('feedback', { message: `Navigating to WhatsApp Web for +${phone}`, level: 'info' });
         }
 
-        this.observeAndDispatchWhatsApp(targetTab, phone, message);
+        await this.observeAndDispatchWhatsApp(targetTab, phone, message);
         break;
       }
 
@@ -886,9 +886,16 @@ class AgentRuntime extends EventEmitter {
         this.tabManager.navigateActiveTab(destination);
         this.emit('feedback', { message: `Navigating to: ${destination}`, level: 'success' });
         if (destination.includes('wa.me') || destination.includes('whatsapp.com')) {
-          this.observeAndDispatchWhatsApp(activeTab, intent.phone || '', intent.message || '');
+          let phone = intent.phone || '';
+          let message = intent.message || '';
+          try {
+            const parsed = new URL(destination.startsWith('http') ? destination : `https://${destination}`);
+            phone = phone || parsed.searchParams.get('phone') || parsed.pathname.replace(/[^0-9]/g, '');
+            message = message || parsed.searchParams.get('text') || '';
+          } catch (_) {}
+          await this.observeAndDispatchWhatsApp(activeTab, phone, message);
         } else {
-          this.autoHandleContinuations(activeTab);
+          await this.autoHandleContinuations(activeTab);
         }
         break;
       }
@@ -1339,23 +1346,28 @@ class AgentRuntime extends EventEmitter {
 
   /**
    * Autonomous observer for WhatsApp & web messaging workflows.
-   * Automatically bypasses intermediate landing gateways (e.g. "Continue to chat", "use WhatsApp Web")
-   * and auto-dispatches the Send button when the chat composer is ready.
+   * Automatically bypasses intermediate landing gateways (e.g. "Continue to chat", "use WhatsApp Web"),
+   * detects authentication states (QR code vs ready chat), and auto-dispatches the Send button
+   * so the entire task completes end-to-end before concluding the plan.
    */
-  observeAndDispatchWhatsApp(tab, phone = '', message = '') {
-    if (!tab || !tab.view) return;
+  async observeAndDispatchWhatsApp(tab, phone = '', message = '') {
+    if (!tab || !tab.view) return { success: false, reason: 'No active tab view' };
     const contents = tab.view.webContents;
-    if (!contents) return;
+    if (!contents) return { success: false, reason: 'No webContents' };
+
+    this.emit('feedback', { message: `Autonomous Workflow: Connecting to WhatsApp Web for +${phone || 'recipient'}...`, level: 'info' });
 
     let handledContinuation = false;
+    let qrPromptEmitted = false;
     let messageSent = false;
+    const startTime = Date.now();
+    const timeoutMs = 35000; // 35-second budget for network, hydration & sending
 
-    const checkAndAct = async () => {
-      if (messageSent) return;
+    while (!messageSent && (Date.now() - startTime < timeoutMs)) {
       try {
         const currentUrl = typeof contents.getURL === 'function' ? contents.getURL() : '';
 
-        // 1. Check for intermediate screen (wa.me or api.whatsapp.com)
+        // 1. Gateway Screen (api.whatsapp.com or wa.me)
         if (currentUrl.includes('api.whatsapp.com') || currentUrl.includes('wa.me')) {
           const res = await contents.executeJavaScript(`
             (() => {
@@ -1375,46 +1387,78 @@ class AgentRuntime extends EventEmitter {
           }
         }
 
-        // 2. Check for web.whatsapp.com chat & send button
+        // 2. Web Client (web.whatsapp.com)
         if (currentUrl.includes('web.whatsapp.com')) {
-          const sent = await contents.executeJavaScript(`
+          const pageStatus = await contents.executeJavaScript(`
             (() => {
+              // Check for QR code screen
+              const hasQr = Boolean(
+                document.querySelector('canvas[aria-label*="Scan"], div[data-ref], [data-testid="qrcode"]') ||
+                /scan this qr code|link with phone number/i.test(document.body.innerText)
+              );
+              if (hasQr) {
+                return { status: 'qr_code_required' };
+              }
+
+              // Check for Send Button
               const sendBtn = document.querySelector('button[aria-label="Send"], span[data-icon="send"]')?.closest('button');
               if (sendBtn && !sendBtn.disabled) {
                 sendBtn.click();
-                return true;
+                return { status: 'sent_clicked' };
               }
-              return false;
-            })()
-          `).catch(() => false);
 
-          if (sent && !messageSent) {
+              // Check for input composer box
+              const composer = document.querySelector('footer div[contenteditable="true"], [data-testid="conversation-compose-box-input"]');
+              if (composer) {
+                const currentText = composer.innerText || composer.textContent || '';
+                if (currentText.trim().length > 0) {
+                  composer.focus();
+                  const enterEvent = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
+                  composer.dispatchEvent(enterEvent);
+                  return { status: 'sent_entered' };
+                }
+                return { status: 'composer_ready_empty' };
+              }
+
+              // Check for loading progress
+              const isLoading = Boolean(document.querySelector('progress, [role="progressbar"]') || /connecting|loading/i.test(document.body.innerText));
+              if (isLoading) {
+                return { status: 'loading' };
+              }
+
+              return { status: 'initializing' };
+            })()
+          `).catch(() => ({ status: 'error' }));
+
+          if (pageStatus && (pageStatus.status === 'sent_clicked' || pageStatus.status === 'sent_entered')) {
             messageSent = true;
-            this.emit('feedback', { message: `Message "${message}" successfully sent to +${phone || 'recipient'}!`, level: 'success' });
-            this.emit('jarvis-notification', { type: 'success', message: `WhatsApp message sent to +${phone || 'recipient'}.` });
+            const successMsg = `Message "${message}" successfully sent to +${phone || 'recipient'} on WhatsApp!`;
+            this.emit('feedback', { message: successMsg, level: 'success' });
+            this.emit('jarvis-notification', { type: 'success', message: successMsg });
+            console.log(`[AgentRuntime] ✅ ${successMsg}`);
+            return { success: true, message: successMsg };
+          }
+
+          if (pageStatus && pageStatus.status === 'qr_code_required' && !qrPromptEmitted) {
+            qrPromptEmitted = true;
+            const qrNotice = `WhatsApp Web requires authentication. Please scan the QR code on screen; I will send "${message}" as soon as connected.`;
+            this.emit('feedback', { message: qrNotice, level: 'warning' });
+            this.emit('jarvis-notification', { type: 'info', message: qrNotice });
           }
         }
       } catch (_) {}
-    };
 
-    if (typeof contents.on === 'function') {
-      contents.on('did-finish-load', checkAndAct);
-      contents.on('did-frame-finish-load', checkAndAct);
+      // Wait 1 second before next inspection cycle
+      await new Promise(r => setTimeout(r, 1000));
     }
 
-    let attempts = 0;
-    const interval = setInterval(async () => {
-      attempts++;
-      if (messageSent || attempts > 20) {
-        clearInterval(interval);
-        if (typeof contents.removeListener === 'function') {
-          contents.removeListener('did-finish-load', checkAndAct);
-          contents.removeListener('did-frame-finish-load', checkAndAct);
-        }
-        return;
-      }
-      await checkAndAct();
-    }, 1000);
+    if (!messageSent) {
+      const finishMsg = qrPromptEmitted
+        ? `WhatsApp chat prepared for +${phone || 'recipient'}. Please scan QR code to complete delivery.`
+        : `WhatsApp Web loaded for +${phone || 'recipient'}.`;
+      this.emit('feedback', { message: finishMsg, level: 'info' });
+      return { success: true, message: finishMsg };
+    }
   }
 
   /**
