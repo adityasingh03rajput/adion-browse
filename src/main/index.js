@@ -135,11 +135,16 @@ async function createWindow() {
   // Load the browser chrome UI
   await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 
-  // Forward renderer voice and navigation logs to terminal
-  mainWindow.webContents.on('console-message', (event, level, message) => {
-    if (message.includes('Electron Security Warning') || message.includes('Autofill.')) return;
-    if (message.includes('[Voice') || message.includes('[Microphone') || message.includes('Speech') || message.includes('[AgentRuntime') || message.includes('Heard:') || message.includes('[STT') || message.includes('[Nav]')) {
-      console.log(`[Renderer Voice] ${message}`);
+  // Forward renderer voice and navigation logs to terminal (compatible with Electron 45+ and legacy)
+  mainWindow.webContents.on('console-message', (event, ...args) => {
+    const rawMsg = (event && typeof event.message === 'string')
+      ? event.message
+      : (typeof args[1] === 'string' ? args[1] : (typeof event === 'string' ? event : ''));
+
+    if (!rawMsg) return;
+    if (rawMsg.includes('Electron Security Warning') || rawMsg.includes('Autofill.')) return;
+    if (rawMsg.includes('[Voice') || rawMsg.includes('[Microphone') || rawMsg.includes('Speech') || rawMsg.includes('[AgentRuntime') || rawMsg.includes('Heard:') || rawMsg.includes('[STT') || rawMsg.includes('[Nav]')) {
+      console.log(`[Renderer Voice] ${rawMsg}`);
     }
   });
 

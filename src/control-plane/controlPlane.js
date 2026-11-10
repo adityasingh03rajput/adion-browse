@@ -149,6 +149,7 @@ class ControlPlane {
 
     // Voice stream initiated from microphone HUD
     ipcMain.on(IPCChannels.AGENT_VOICE_STREAM_START, () => {
+      console.log('[ControlPlane] 🎙️ Received voice stream start signal from UI');
       this.runtime.startAudioSession();
     });
 
