@@ -22,11 +22,11 @@ async function testUiUxLayout() {
   let mockWidth = 1920;
   let mockHeight = 1080;
   const mockWindow = {
-    on: () => {},
+    on: () => { },
     getContentBounds: () => ({ x: 0, y: 0, width: mockWidth, height: mockHeight }),
     getContentSize: () => [mockWidth, mockHeight],
-    removeBrowserView: () => {},
-    setBrowserView: () => {}
+    removeBrowserView: () => { },
+    setBrowserView: () => { }
   };
 
   const tm = new TabManager(mockWindow);
@@ -103,6 +103,23 @@ async function testUiUxLayout() {
   assert.ok(css.includes('.agent-hud-card'), '.agent-hud-card must be defined');
   console.log('  ✔ Omnibox voice pill, listening glow, and HUD card styles verified.');
 
+  // --- Test 7: Modern Chrome 100+ User-Agent & Header Compatibility (WhatsApp Web) ---
+  console.log('\nTest 7: Modern Chrome 100+ User-Agent (WhatsApp Web Compatibility)...');
+  const indexSrc = fs.readFileSync(path.join(__dirname, '../src/main/index.js'), 'utf8');
+
+  assert.ok(indexSrc.includes('CHROME_USER_AGENT'), 'index.js must define CHROME_USER_AGENT');
+  assert.ok(tabManagerSrc.includes('CHROME_USER_AGENT'), 'tabManager.js must define CHROME_USER_AGENT');
+
+  // Verify Chrome version is >= 100
+  const uaMatch = indexSrc.match(/Chrome\/(\d+)/);
+  assert.ok(uaMatch, 'User-Agent must specify Chrome version');
+  const chromeVer = parseInt(uaMatch[1], 10);
+  assert.ok(chromeVer >= 100, `Chrome version must be >= 100 for WhatsApp Web (actual: ${chromeVer})`);
+
+  // Verify sec-ch-ua Client Hints
+  assert.ok(indexSrc.includes('sec-ch-ua'), 'index.js must set sec-ch-ua headers');
+  console.log('  ✔ Standard Chrome 100+ User-Agent and Client Hints verified for WhatsApp Web & external services.');
+
   console.log('\n✅ ALL UI/UX LAYOUT & RESIZE TESTS PASSED SUCCESSFULLY!\n');
 }
 
@@ -110,3 +127,4 @@ testUiUxLayout().catch((err) => {
   console.error('UI/UX Layout test failed:', err);
   process.exit(1);
 });
+

@@ -13,6 +13,10 @@ if (!gotTheLock) {
   process.exit(0);
 }
 
+// Standard modern Google Chrome User-Agent (prevents web apps like WhatsApp Web, Slack, etc. from rejecting Electron)
+const CHROME_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+app.userAgentFallback = CHROME_USER_AGENT;
+
 // Silence non-critical Chromium C++ net warnings and grant continuous media streams
 app.commandLine.appendSwitch('log-level', '3');
 app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
@@ -133,6 +137,17 @@ async function createWindow() {
 
   // Initialize Adion Shield engine
   await shield.init(session.defaultSession);
+
+  // Apply standard Chrome 100+ User-Agent across session and web requests
+  session.defaultSession.setUserAgent(CHROME_USER_AGENT);
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const requestHeaders = { ...details.requestHeaders };
+    requestHeaders['User-Agent'] = CHROME_USER_AGENT;
+    requestHeaders['sec-ch-ua'] = '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"';
+    requestHeaders['sec-ch-ua-mobile'] = '?0';
+    requestHeaders['sec-ch-ua-platform'] = '"Windows"';
+    callback({ requestHeaders });
+  });
 
   // Grant audio/microphone capture permissions for the AI Voice Control Plane
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {

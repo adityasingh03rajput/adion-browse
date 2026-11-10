@@ -6,6 +6,7 @@ const shield = require('./shield');
 const store = require('./store');
 
 const TOP_BAR_HEIGHT = 80;
+const CHROME_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 class TabManager {
   constructor(mainWindow) {
@@ -161,6 +162,10 @@ class TabManager {
         spellcheck: true
       }
     });
+
+    try {
+      view.webContents.setUserAgent(CHROME_USER_AGENT);
+    } catch (_) {}
 
     const tab = {
       id,
