@@ -55,5 +55,27 @@ contextBridge.exposeInMainWorld('adionAPI', {
     getContextStats: () => ipcRenderer.invoke('agent:get-context-stats'),
     getTabClusters: () => ipcRenderer.invoke('agent:get-tab-clusters'),
     verifyBiometric: (vector) => ipcRenderer.invoke('agent:verify-biometric', vector)
+  },
+
+  // Distributed Multi-Agent Pool
+  multiAgent: {
+    spawnResearch: (topic) => ipcRenderer.invoke('multi-agent:spawn-research', topic),
+    spawnShopping: (product, targets) => ipcRenderer.invoke('multi-agent:spawn-shopping', { product, targets }),
+    getAgents: () => ipcRenderer.invoke('multi-agent:get-agents'),
+    onAgentSpawned: (callback) => ipcRenderer.on('multi-agent:spawned', (e, data) => callback(data)),
+    onAgentUpdated: (callback) => ipcRenderer.on('multi-agent:updated', (e, data) => callback(data)),
+    onAgentCompleted: (callback) => ipcRenderer.on('multi-agent:completed', (e, data) => callback(data))
+  },
+
+  // Zero-Knowledge Proof & Privacy Ad Economy
+  zkp: {
+    getWallet: () => ipcRenderer.invoke('zkp:get-wallet'),
+    generateProof: (statement) => ipcRenderer.invoke('zkp:generate-proof', statement),
+    serveReplacementAd: (category) => ipcRenderer.invoke('zkp:serve-replacement-ad', category)
+  },
+
+  // Enterprise Decentralized Analytics
+  enterprise: {
+    getTelemetry: () => ipcRenderer.invoke('enterprise:get-telemetry')
   }
 });

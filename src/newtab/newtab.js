@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const statBlocked = document.getElementById('statBlocked');
   const statBandwidth = document.getElementById('statBandwidth');
   const statTime = document.getElementById('statTime');
+  const statZkpRewards = document.getElementById('statZkpRewards');
 
   // Clock & Date updater
   function updateClock() {

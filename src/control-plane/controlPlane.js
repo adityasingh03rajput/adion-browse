@@ -4,6 +4,9 @@ const AgentRuntime = require('./agentRuntime');
 const ContextEngine = require('./contextEngine');
 const VisionGrounder = require('./visionGrounder');
 const SecurityVault = require('./securityVault');
+const MultiAgentPool = require('./multiAgentPool');
+const DataSynthesizer = require('./dataSynthesizer');
+const ZKPMesh = require('./zkpMesh');
 const { IPCChannels, AgentState } = require('./protocol');
 
 /**
@@ -19,6 +22,9 @@ class ControlPlane {
     this.context = new ContextEngine();
     this.vision = new VisionGrounder(this.cdp);
     this.vault = new SecurityVault();
+    this.multiAgents = new MultiAgentPool(this.tabManager, this.cdp);
+    this.synthesizer = new DataSynthesizer();
+    this.zkpMesh = new ZKPMesh();
 
     this.runtime = new AgentRuntime(
       this.tabManager,
@@ -54,6 +60,18 @@ class ControlPlane {
 
     this.runtime.on('feedback', (data) => {
       this.sendToUI(IPCChannels.AGENT_FEEDBACK_MESSAGE, data);
+    });
+
+    // Multi-Agent Pool events
+    this.multiAgents.on('agent-spawned', (agent) => {
+      this.sendToUI('multi-agent:spawned', agent);
+    });
+    this.multiAgents.on('agent-updated', (agent) => {
+      this.sendToUI('multi-agent:updated', agent);
+    });
+    this.multiAgents.on('agent-completed', (agent) => {
+      this.sendToUI('multi-agent:completed', agent);
+      this.runtime.emit('feedback', { message: `${agent.name} completed successfully`, level: 'success' });
     });
   }
 
@@ -117,6 +135,37 @@ class ControlPlane {
     // Biometric Voice Verification flow
     ipcMain.handle('agent:verify-biometric', (event, vectorSample) => {
       return this.vault.verifyVoiceBiometrics(vectorSample);
+    });
+
+    // Multi-Agent Task Orchestration
+    ipcMain.handle('multi-agent:spawn-research', async (event, topic) => {
+      return this.multiAgents.executeDeepResearch(topic);
+    });
+
+    ipcMain.handle('multi-agent:spawn-shopping', async (event, { product, targets }) => {
+      return this.multiAgents.executeComparativeShopping(product, targets);
+    });
+
+    ipcMain.handle('multi-agent:get-agents', () => {
+      return this.multiAgents.getActiveAgentsList();
+    });
+
+    // Zero-Knowledge Proof & Ad Economy
+    ipcMain.handle('zkp:get-wallet', () => {
+      return this.zkpMesh.getRewardsWallet();
+    });
+
+    ipcMain.handle('zkp:generate-proof', (event, statement) => {
+      return this.zkpMesh.generateZKProof(statement);
+    });
+
+    ipcMain.handle('zkp:serve-replacement-ad', (event, category) => {
+      return this.zkpMesh.servePrivacyPreservingAd(category);
+    });
+
+    // Decentralized Enterprise Analytics Synthesis
+    ipcMain.handle('enterprise:get-telemetry', () => {
+      return this.synthesizer.exportSynthesizedTelemetry();
     });
   }
 

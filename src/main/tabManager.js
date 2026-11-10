@@ -42,7 +42,7 @@ class TabManager {
   resolveUrl(input) {
     if (!input || input === 'adion://newtab' || input === 'about:blank') {
       const stats = store.get('stats');
-      return `file://${this.newTabPath}?blocked=${stats.totalBlocked}&kb=${stats.estimatedBandwidthSavedKB}&sec=${stats.estimatedTimeSavedSec}`;
+      return `file://${this.newTabPath}?blocked=${stats.totalBlocked}&kb=${stats.estimatedBandwidthSavedKB}&sec=${stats.estimatedTimeSavedSec}&reward=14.50`;
     }
 
     const trimmed = input.trim();
