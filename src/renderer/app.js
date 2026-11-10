@@ -808,7 +808,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  let isStartingMicrophone = false;
   async function startMicrophoneStream() {
+    if (isStartingMicrophone) return;
+    isStartingMicrophone = true;
+
+    // Clean up any stale audio stream or context before launching
+    if (scriptProcessor) {
+      try { scriptProcessor.disconnect(); } catch (_) {}
+      scriptProcessor = null;
+    }
+    if (audioContext && audioContext.state !== 'closed') {
+      try { audioContext.close(); } catch (_) {}
+      audioContext = null;
+    }
+    if (audioStream) {
+      try { audioStream.getTracks().forEach(t => t.stop()); } catch (_) {}
+      audioStream = null;
+    }
+
     // Immediate, 0ms tactile visual feedback on button, omnibox, and HUD
     isListening = true;
     if (btnVoiceAgent) btnVoiceAgent.classList.add('listening');
@@ -844,33 +862,62 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       });
 
+      // If user toggled voice off while getUserMedia was prompting, abort cleanly
+      if (!isListening) {
+        audioStream.getTracks().forEach(t => t.stop());
+        audioStream = null;
+        isStartingMicrophone = false;
+        return;
+      }
+
       try { window.adionAPI.log('[Voice UI] ✅ getUserMedia() granted — mic stream open'); } catch(_) {}
 
-      audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
       if (audioContext.state === 'suspended') {
         await audioContext.resume();
       }
 
+      const hardwareRate = audioContext.sampleRate || 48000;
+      const targetRate = 16000;
+      try { window.adionAPI.log(`[Voice UI] 🎙️ Hardware sample rate: ${hardwareRate}Hz -> downsampling to ${targetRate}Hz PCM`); } catch(_) {}
+
       const source = audioContext.createMediaStreamSource(audioStream);
 
-      // 2048 buffer at 16kHz = ~128ms PCM chunk transmission
-      scriptProcessor = audioContext.createScriptProcessor(2048, 1, 1);
+      // 4096 buffer on hardware rate = ~85ms at 48kHz
+      scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
 
       let chunksSent = 0;
       scriptProcessor.onaudioprocess = (e) => {
         if (!isListening) return;
         const inputData = e.inputBuffer.getChannelData(0);
 
+        // High-fidelity linear interpolation downsampling to exact 16000Hz PCM
+        let downsampledData;
+        if (hardwareRate === targetRate) {
+          downsampledData = inputData;
+        } else {
+          const ratio = targetRate / hardwareRate;
+          const newLen = Math.round(inputData.length * ratio);
+          downsampledData = new Float32Array(newLen);
+          for (let i = 0; i < newLen; i++) {
+            const srcPos = i / ratio;
+            const idx = Math.floor(srcPos);
+            const frac = srcPos - idx;
+            const nextIdx = Math.min(inputData.length - 1, idx + 1);
+            downsampledData[i] = inputData[idx] * (1 - frac) + inputData[nextIdx] * frac;
+          }
+        }
+
         // Convert Float32Array to 16-bit signed PCM with 1.35x digital preamp
-        const pcmBuffer = new Int16Array(inputData.length);
+        const pcmBuffer = new Int16Array(downsampledData.length);
         let sumSquares = 0;
-        for (let i = 0; i < inputData.length; i++) {
-          const s = Math.max(-1, Math.min(1, inputData[i] * 1.35));
+        for (let i = 0; i < downsampledData.length; i++) {
+          const s = Math.max(-1, Math.min(1, downsampledData[i] * 1.35));
           pcmBuffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
           sumSquares += s * s;
         }
 
-        const rms = Math.sqrt(sumSquares / inputData.length);
+        const rms = Math.sqrt(sumSquares / downsampledData.length);
 
         // Live visual pulse modulation based on acoustic energy
         jarvisAudioLevel = Math.min(1.0, rms * 4.5);
@@ -916,6 +963,8 @@ document.addEventListener('DOMContentLoaded', () => {
       showOmniboxVoiceStatus(false);
       showJarvisToast('Microphone access denied or busy. Check system settings.', 'error');
       showAgentHud('WARNING', 'Microphone unavailable. Type in chat instead.');
+    } finally {
+      isStartingMicrophone = false;
     }
   }
 
@@ -974,7 +1023,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Instant Tactile Voice Button Handler (0ms latency, pointerdown + click fallback)
+  // Clean Voice Button Handler with 400ms debounce
   let lastVoiceToggleTime = 0;
   function handleVoiceButtonClick(e) {
     if (e) {
@@ -982,20 +1031,18 @@ document.addEventListener('DOMContentLoaded', () => {
       e.stopPropagation();
     }
     const now = Date.now();
-    if (now - lastVoiceToggleTime < 280) return;
+    if (now - lastVoiceToggleTime < 400) return;
     lastVoiceToggleTime = now;
     toggleVoiceAgent();
   }
 
   if (btnVoiceAgent) {
-    btnVoiceAgent.addEventListener('pointerdown', handleVoiceButtonClick);
     btnVoiceAgent.addEventListener('click', handleVoiceButtonClick);
   }
 
   const omniboxVoicePill = document.getElementById('omniboxVoicePill');
   if (omniboxVoicePill) {
     omniboxVoicePill.style.cursor = 'pointer';
-    omniboxVoicePill.addEventListener('pointerdown', handleVoiceButtonClick);
     omniboxVoicePill.addEventListener('click', handleVoiceButtonClick);
   }
 
@@ -1410,7 +1457,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Jarvis Mic Button Sync ---
   if (btnJarvisVoice) {
-    btnJarvisVoice.addEventListener('pointerdown', handleVoiceButtonClick);
     btnJarvisVoice.addEventListener('click', handleVoiceButtonClick);
   }
 
