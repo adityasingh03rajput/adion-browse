@@ -305,6 +305,25 @@ class QueryPreprocessor {
           thought: `Search for contact "${contact}" in WhatsApp and send "${msg}"`
         };
       }
+
+      // Unread messages workflow on WhatsApp Web
+      if (/(?:open|click|view|show|check|read)\s+(?:the\s+)?(?:first\s+|next\s+|another\s+)?unread\s+(?:messages?|chats?)/i.test(lower) || /unread\s+messages?/i.test(lower)) {
+        return {
+          type: 'WHATSAPP_UNREAD_CLICK',
+          thought: 'Click on the first chat with unread messages on WhatsApp Web'
+        };
+      }
+
+      // Hide / Dismiss notification banner on WhatsApp Web
+      if (/(?:hide|close|dismiss|remove)\s+(?:the\s+)?(?:message\s+and\s+call\s+)?notification\s*(?:pop\s*up|banner|bar|alert)?/i.test(lower)) {
+        return {
+          type: ActionType.MODIFY_DOM,
+          selector: 'message and call notification',
+          action: 'hide',
+          value: 'none',
+          thought: 'Hide the message and call notification pop-up on WhatsApp Web'
+        };
+      }
     }
 
     // E. Browser Tabs & History (including "shut down this", "close this tab")

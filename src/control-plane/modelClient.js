@@ -63,6 +63,7 @@ Available Action Types and their parameters:
 - "ANALYZE_IMAGES": { "criteria": "image search criteria" }
 - "PLAY_VIDEO_FROM_THUMBNAIL": { "query": "video topic or thumbnail description" } - provisions zero-cost vision models (Qwen-VL / Groq Vision Free Tier) to analyze YouTube thumbnails and initiate playback
 - "WHATSAPP_CHAT_SEND": { "contact": "contact name or phone number", "message": "message content" } - Automatically searches WhatsApp Web for the specified contact name or number, opens their chat, types the message, and sends it. Use this whenever the user intends to message, text, or say something to a contact on WhatsApp.
+- "WHATSAPP_UNREAD_CLICK": {} - Automatically finds and clicks the first or next chat with unread messages on WhatsApp Web to open unseen messages.
 - "PAGE_ANALYSIS_OR_QA": When the user asks a question about the shared active page (e.g. "explain...", "summarize this page", "what does this say about X", "compare X to Y"), synthesize a direct, helpful, and insightful response from the Shared Page Content in the "thought" field and return an empty actions array ([]).
 
 Examples:

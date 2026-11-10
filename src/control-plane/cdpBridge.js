@@ -378,6 +378,26 @@ class CDPBridge {
             if (landmark) return landmark;
           }
 
+          // 4b. Notification, Banner, Alert & Pop-up Matching across web apps
+          if (/(notification|pop\\s*up|banner|alert|modal|dialog)/i.test(s)) {
+            const banners = Array.from(document.querySelectorAll('div, section, aside, [role="alert"], [role="banner"], [role="dialog"]'));
+            const banner = banners.find(el => {
+              const t = (el.innerText || '').toLowerCase();
+              return (
+                t.includes('message and call notification') ||
+                t.includes('notifications are off') ||
+                (s.includes('notification') && t.includes('notification'))
+              ) && t.length > 5 && t.length < 500;
+            });
+            if (banner) {
+              if (actionType === 'click') {
+                const closeBtn = banner.querySelector('button, [role="button"], span[data-icon="x"], [aria-label*="close" i]');
+                if (closeBtn) return closeBtn;
+              }
+              return banner;
+            }
+          }
+
           // 5. High-Precision Scored Semantic Matching across interactive & leaf elements
           const wantsButton = /\b(button|btn|submit|toggle|reset|play|playback)\b/i.test(s);
           const wantsInput = /\b(input|field|search|textbox|textarea)\b/i.test(s);

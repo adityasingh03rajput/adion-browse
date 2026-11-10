@@ -912,6 +912,21 @@ class AgentRuntime extends EventEmitter {
         break;
       }
 
+      case 'WHATSAPP_UNREAD_CLICK': {
+        let targetTab = activeTab;
+        if (!targetTab || !targetTab.url || !targetTab.url.includes('whatsapp.com')) {
+          const existingWaTab = this.tabManager ? Array.from(this.tabManager.tabs.values()).find(t => t.url && t.url.includes('whatsapp.com')) : null;
+          if (existingWaTab) {
+            console.log(`[AgentRuntime WhatsApp] Found existing WhatsApp Web tab (${existingWaTab.id}), switching to it...`);
+            this.tabManager.switchTab(existingWaTab.id);
+            targetTab = existingWaTab;
+            this.emit('feedback', { message: 'Switched to active WhatsApp Web tab', level: 'info' });
+          }
+        }
+        await this.clickWhatsAppUnreadChat(targetTab);
+        break;
+      }
+
       case ActionType.NAVIGATE: {
         const destination = intent.url || intent.query || '';
         this.tabManager.navigateActiveTab(destination);
@@ -1686,6 +1701,84 @@ class AgentRuntime extends EventEmitter {
     console.log(`[AgentRuntime WhatsApp Completed]: ${finalMsg}`);
     this.emit('feedback', { message: finalMsg, level: messageSent ? 'success' : 'info' });
     return { success: messageSent, message: finalMsg };
+  }
+
+  /**
+   * Autonomous unread message finder & opener on WhatsApp Web
+   */
+  async clickWhatsAppUnreadChat(tab) {
+    if (!tab || !tab.view) return { success: false, reason: 'No active tab view' };
+    const contents = tab.view.webContents;
+    if (!contents) return { success: false, reason: 'No webContents' };
+
+    console.log('[AgentRuntime WhatsApp] 🔍 Locating unread chat in WhatsApp Web...');
+    this.emit('feedback', { message: 'Locating unread chat in WhatsApp...', level: 'info' });
+
+    try {
+      const res = await contents.executeJavaScript(`
+        (() => {
+          const sidePane = document.getElementById('pane-side') || document.querySelector('#side');
+          if (!sidePane) return { success: false, reason: 'side pane not found' };
+
+          // 1. Look for unread badge elements in chat list (#pane-side)
+          const unreadBadges = Array.from(sidePane.querySelectorAll(
+            '[aria-label*="unread" i], [data-testid="unread-count"], [data-testid="icon-unread-count"], span[class*="unread" i]'
+          ));
+          
+          for (const badge of unreadBadges) {
+            const chatItem = badge.closest('div[role="listitem"], div[role="row"], div[data-testid^="list-item"]');
+            if (chatItem) {
+              const chatName = (chatItem.querySelector('span[title]')?.getAttribute('title') || chatItem.innerText || '').split('\\n')[0];
+              chatItem.click();
+              return { success: true, chatName };
+            }
+          }
+
+          // 2. Look for items containing numeric badge counts
+          const allItems = Array.from(sidePane.querySelectorAll('div[role="listitem"], div[role="row"]'));
+          for (const item of allItems) {
+            const spans = Array.from(item.querySelectorAll('span'));
+            const badgeSpan = spans.find(s => /^\\d{1,4}$/.test(s.innerText.trim()) && s.offsetHeight > 10 && s.offsetHeight < 30);
+            if (badgeSpan) {
+              const chatName = (item.querySelector('span[title]')?.getAttribute('title') || item.innerText).split('\\n')[0];
+              item.click();
+              return { success: true, chatName };
+            }
+          }
+
+          // 3. Try clicking the "Unread" filter pill at top of WhatsApp
+          const unreadFilterPill = Array.from(document.querySelectorAll('button, div[role="button"]')).find(b => 
+            /unread/i.test(b.innerText || b.getAttribute('title') || b.getAttribute('aria-label') || '')
+          );
+          if (unreadFilterPill) {
+            unreadFilterPill.click();
+            setTimeout(() => {
+              const firstFiltered = sidePane.querySelector('div[role="listitem"], div[role="row"]');
+              if (firstFiltered) firstFiltered.click();
+            }, 300);
+            return { success: true, chatName: 'First unread filtered chat' };
+          }
+
+          return { success: false, reason: 'No unread chat found' };
+        })()
+      `).catch(err => ({ success: false, reason: err.message }));
+
+      if (res && res.success) {
+        const successMsg = `✅ Opened unread chat with "${res.chatName || 'contact'}" on WhatsApp Web!`;
+        console.log(`[AgentRuntime WhatsApp] ${successMsg}`);
+        this.emit('feedback', { message: successMsg, level: 'success' });
+        this.emit('jarvis-notification', { type: 'success', message: successMsg });
+        return { success: true, message: successMsg };
+      } else {
+        const infoMsg = 'No unread messages found on WhatsApp Web.';
+        console.log(`[AgentRuntime WhatsApp] ℹ️ ${infoMsg}`);
+        this.emit('feedback', { message: infoMsg, level: 'info' });
+        return { success: false, message: infoMsg };
+      }
+    } catch (err) {
+      console.warn('[AgentRuntime WhatsApp Unread Exception]:', err.message);
+      return { success: false, error: err.message };
+    }
   }
 
   /**
