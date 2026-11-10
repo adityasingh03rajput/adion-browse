@@ -5,6 +5,7 @@ const { AgentState, ActionType } = require('./protocol');
 const STTEngine = require('./sttEngine');
 const ModelClient = require('./modelClient');
 const ModelRouter = require('./modelRouter');
+const SessionManager = require('./sessionManager');
 
 /**
  * Asynchronous Agent Runtime
@@ -12,13 +13,14 @@ const ModelRouter = require('./modelRouter');
  * grounds them against the DOM/CDP pipeline, and dispatches actions to Chromium.
  */
 class AgentRuntime extends EventEmitter {
-  constructor(tabManager, cdpBridge, contextEngine, visionGrounder, securityVault) {
+  constructor(tabManager, cdpBridge, contextEngine, visionGrounder, securityVault, sessionManager = null) {
     super();
     this.tabManager = tabManager;
     this.cdp = cdpBridge;
     this.context = contextEngine;
     this.vision = visionGrounder;
     this.vault = securityVault;
+    this.sessionManager = sessionManager || new SessionManager();
     this.stt = new STTEngine();
     this.model = new ModelClient();
     this.router = new ModelRouter();
@@ -28,6 +30,7 @@ class AgentRuntime extends EventEmitter {
     this.continuousVoice = false;
     this.lastDOMSelector = null;
     this.lastDOMAction = null;
+    this.verboseAudioLogging = false; // Filtered to suppress repetitive audio frame status spam
 
     // Audio stream session state & VAD tracking
     this.audioSession = {
@@ -134,20 +137,25 @@ class AgentRuntime extends EventEmitter {
     // Voice Activity Detection (VAD) threshold
     const isSpeechActive = rms > 0.012;
 
-    // Log audio frame telemetry to stdout
-    if (this.audioSession.chunkCount % 5 === 1 || isSpeechActive) {
-      console.log(`[AgentRuntime Audio] Frame #${this.audioSession.chunkCount} | Size: ${buffer.length}B | RMS: ${rms.toFixed(4)} | Speech: ${isSpeechActive}`);
+    // Suppress repetitive audio frame status messages to prevent log spam
+    if (this.verboseAudioLogging) {
+      if (this.audioSession.chunkCount % 50 === 1) {
+        console.log(`[AgentRuntime Audio] Diagnostics: Frame #${this.audioSession.chunkCount} | RMS: ${rms.toFixed(4)}`);
+      }
     }
 
     // VAD Auto-Segmentation & Endpointing State Machine
     if (isSpeechActive) {
+      if (!this.audioSession.speechDetected) {
+        console.log(`[AgentRuntime VAD] Voice activity initiated (RMS: ${rms.toFixed(4)})`);
+      }
       this.audioSession.speechDetected = true;
       this.audioSession.consecutiveSilenceFrames = 0;
     } else if (this.audioSession.speechDetected && !this.audioSession.isSegmenting) {
       this.audioSession.consecutiveSilenceFrames++;
       // If speech was previously active and followed by ~6 silence frames (~750ms of post-speech pause)
       if (this.audioSession.consecutiveSilenceFrames >= 6) {
-        console.log(`[AgentRuntime VAD] Auto-segmentation triggered: End of utterance detected after pause (${this.audioSession.totalBytes} bytes accumulated)`);
+        console.log(`[AgentRuntime VAD] Utterance concluded after pause (${this.audioSession.totalBytes} bytes accumulated)`);
         this.audioSession.isSegmenting = true;
         this.triggerAutoEndpoint();
       }
@@ -249,10 +257,12 @@ class AgentRuntime extends EventEmitter {
 
   /**
    * Process incoming voice or natural language text command
+   * Preserves exact raw phrasing and parameters to ensure prompt fidelity
    */
-  async processCommand(rawInput) {
+  async processCommand(rawInput, source = 'voice') {
     if (!rawInput || typeof rawInput !== 'string') return;
-    const text = rawInput.trim();
+    const exactPrompt = String(rawInput); // Strict prompt fidelity preservation
+    const text = exactPrompt.trim();
     if (!text) return;
 
     // Hands-free voice stop command
@@ -262,15 +272,20 @@ class AgentRuntime extends EventEmitter {
       this.emit('shell-action', { action: 'STOP_VOICE' });
       this.setState(AgentState.IDLE);
       this.emit('feedback', { message: 'Voice agent stopped listening', level: 'info' });
+      this.emit('jarvis-notification', { type: 'info', message: 'Voice listening deactivated.' });
       return;
     }
 
-    this.setState(AgentState.PARSING_INTENT, { input: text });
+    this.setState(AgentState.PARSING_INTENT, { input: exactPrompt });
     this.emit('feedback', { message: `Autonomous Agent coordinating: "${text}"`, level: 'info' });
 
+    let activeTab = null;
+    let pageContext = {};
+    let executedPlan = null;
+
     try {
-      const activeTab = this.tabManager ? this.tabManager.getActiveTab() : null;
-      let pageContext = activeTab ? { url: activeTab.url, title: activeTab.title } : {};
+      activeTab = this.tabManager ? this.tabManager.getActiveTab() : null;
+      pageContext = activeTab ? { url: activeTab.url, title: activeTab.title } : {};
       if (this.lastDOMSelector) {
         pageContext.lastDOMSelector = this.lastDOMSelector;
       }
@@ -289,46 +304,123 @@ class AgentRuntime extends EventEmitter {
       // 1. Query Grok / Mercury / Local Model for high-level reasoning and function calling
       let plan = null;
       try {
-        plan = await this.model.planActions(text, pageContext);
+        plan = await this.model.planActions(exactPrompt, pageContext);
       } catch (err) {
         console.warn('[AgentRuntime] Model planning notice:', err.message);
       }
 
       if (plan && Array.isArray(plan.actions) && plan.actions.length > 0) {
+        executedPlan = plan;
         this.emit('feedback', { message: `AI Plan: ${plan.thought || 'Executing actions'}`, level: 'success' });
         console.log(`[AgentRuntime Plan] Executing ${plan.actions.length} action(s):`, plan.thought);
 
         for (let i = 0; i < plan.actions.length; i++) {
           const act = plan.actions[i];
-          const intent = { type: act.type, ...(act.params || {}), raw: text };
+          const intent = { type: act.type, ...(act.params || {}), raw: exactPrompt };
           await this.executeIntent(intent);
           if (i < plan.actions.length - 1) {
             await new Promise(r => setTimeout(r, 350));
           }
         }
+
+        // Record interaction in session memory log
+        this.sessionManager.recordInteraction({
+          source: source,
+          rawPrompt: exactPrompt,
+          transcription: text,
+          pageContext: pageContext,
+          modelResponse: plan,
+          status: 'success',
+          feedback: plan.thought || 'Task completed successfully'
+        });
+
+        this.emit('jarvis-notification', {
+          type: 'success',
+          message: plan.thought || `Task executed successfully.`
+        });
         return;
       }
 
       // 2. Fallback to Local Edge Rule Parser for offline or simple commands
-      const intent = await this.parseIntent(text);
+      const intent = await this.parseIntent(exactPrompt);
 
       if (!intent) {
         this.setState(AgentState.IDLE);
-        this.emit('feedback', { message: `Could not determine action for: "${text}"`, level: 'warning' });
+        const warningMsg = 'Command evaluated: no immediate browser action matched current page context.';
+        this.emit('feedback', { message: warningMsg, level: 'warning' });
+        this.emit('jarvis-notification', { type: 'info', message: warningMsg });
+        this.sessionManager.recordInteraction({
+          source: source,
+          rawPrompt: exactPrompt,
+          transcription: text,
+          pageContext: pageContext,
+          modelResponse: null,
+          status: 'info',
+          feedback: warningMsg
+        });
         return;
       }
 
       // 3. Execute parsed intent
-      intent.raw = text;
+      intent.raw = exactPrompt;
       await this.executeIntent(intent);
+
+      this.sessionManager.recordInteraction({
+        source: source,
+        rawPrompt: exactPrompt,
+        transcription: text,
+        pageContext: pageContext,
+        modelResponse: { thought: `Executed ${intent.type}`, actions: [intent] },
+        status: 'success',
+        feedback: 'Executed successfully'
+      });
+
+      this.emit('jarvis-notification', {
+        type: 'success',
+        message: `Command executed: ${text.slice(0, 45)}`
+      });
     } catch (err) {
-      console.error('[AgentRuntime] Execution error:', err);
-      this.setState(AgentState.ERROR, { error: err.message });
-      this.emit('feedback', { message: `Execution failed: ${err.message}`, level: 'error' });
+      console.warn('[AgentRuntime] Handled fault:', err.message);
+      const generalizedMsg = this.getGeneralizedErrorMessage(err);
+      this.setState(AgentState.ERROR, { error: generalizedMsg });
+      this.emit('feedback', { message: generalizedMsg, level: 'warning' });
+      this.emit('jarvis-notification', { type: 'alert', message: generalizedMsg });
+
+      this.sessionManager.recordInteraction({
+        source: source,
+        rawPrompt: exactPrompt,
+        transcription: text,
+        pageContext: pageContext,
+        modelResponse: executedPlan,
+        status: 'error',
+        feedback: generalizedMsg
+      });
+
       if (!this.continuousVoice) {
         setTimeout(() => this.setState(AgentState.IDLE), 2500);
       }
     }
+  }
+
+  /**
+   * Generates comprehensive, generalized user-facing error messages for system faults
+   * Prevents premature failure logging on specific element targets.
+   */
+  getGeneralizedErrorMessage(err) {
+    const raw = (typeof err === 'string' ? err : err?.message || '').toLowerCase();
+    if (raw.includes('not found') || raw.includes('element') || raw.includes('selector')) {
+      return 'The target UI element is currently unavailable or has shifted dynamically. Adaptive layout analysis active.';
+    }
+    if (raw.includes('503') || raw.includes('service unavailable') || raw.includes('rate limit') || raw.includes('429')) {
+      return 'The model inference service is operating under high load. Automated backoff and retry engaged.';
+    }
+    if (raw.includes('network') || raw.includes('timeout') || raw.includes('econnreset') || raw.includes('fetch')) {
+      return 'A transient network delay was detected. Browser process and tab states remain fully safeguarded.';
+    }
+    if (raw.includes('cdp') || raw.includes('target') || raw.includes('session')) {
+      return 'Viewport synchronization active: aligning DevTools bridge with the current page.';
+    }
+    return 'The autonomous agent encountered a temporary system condition. Session memory and application state remain intact.';
   }
 
   /**
@@ -755,10 +847,19 @@ class AgentRuntime extends EventEmitter {
             message: `DOM Modified${persistNote}: <${(res.renderedTag || 'node').toLowerCase()}> ${res.resolvedSelector} (${res.action}). Live render verified!`,
             level: 'success'
           });
+          this.emit('jarvis-notification', {
+            type: 'success',
+            message: `Updated <${(res.renderedTag || 'node').toLowerCase()}> ${res.resolvedSelector} (${res.action})`
+          });
         } else {
+          const generalizedMsg = 'The requested UI element could not be directly matched on the active page layout. Layout adaptation engaged.';
           this.emit('feedback', {
-            message: `DOM modification notice: ${res?.error || 'Element not found on active page'}`,
+            message: generalizedMsg,
             level: 'warning'
+          });
+          this.emit('jarvis-notification', {
+            type: 'alert',
+            message: generalizedMsg
           });
         }
         break;

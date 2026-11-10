@@ -801,5 +801,352 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // ==========================================================================
+  // JARVIS INTERACTIVE ASSISTANT & DYNAMIC ANIMATED SPHERE ENGINE
+  // ==========================================================================
+
+  const btnToggleJarvis = document.getElementById('btnToggleJarvis');
+  const jarvisContainer = document.getElementById('jarvisContainer');
+  const jarvisCanvas = document.getElementById('jarvisCanvas');
+  const jarvisToast = document.getElementById('jarvisToast');
+  const jarvisToastText = document.getElementById('jarvisToastText');
+  const jarvisStateDot = document.getElementById('jarvisStateDot');
+  const jarvisPanelOverlay = document.getElementById('jarvisPanelOverlay');
+  const btnCloseJarvis = document.getElementById('btnCloseJarvis');
+  const btnNewSession = document.getElementById('btnNewSession');
+  const jarvisSessionId = document.getElementById('jarvisSessionId');
+  const jarvisInteractionCount = document.getElementById('jarvisInteractionCount');
+  const jarvisTimeline = document.getElementById('jarvisTimeline');
+  const jarvisEmptyState = document.getElementById('jarvisEmptyState');
+  const jarvisChatInput = document.getElementById('jarvisChatInput');
+  const btnJarvisSend = document.getElementById('btnJarvisSend');
+  const btnJarvisVoice = document.getElementById('btnJarvisVoice');
+
+  let jarvisState = 'IDLE'; // IDLE | LISTENING | THINKING | EXECUTING | SUCCESS | ALERT
+  let jarvisAudioLevel = 0;
+  let jarvisToastTimer = null;
+
+  // --- Real-Time Jarvis Toast Confirmation & Alert System ---
+  function showJarvisToast(message, type = 'success', durationMs = 4500) {
+    if (!jarvisToast || !jarvisToastText) return;
+    if (jarvisToastTimer) clearTimeout(jarvisToastTimer);
+
+    jarvisToastText.innerText = message;
+    if (type === 'alert' || type === 'error') {
+      jarvisToast.classList.add('toast-alert');
+    } else {
+      jarvisToast.classList.remove('toast-alert');
+    }
+
+    jarvisToast.classList.add('visible');
+    jarvisToastTimer = setTimeout(() => {
+      jarvisToast.classList.remove('visible');
+    }, durationMs);
+  }
+
+  // --- Jarvis State Synchronizer ---
+  function setJarvisState(state, level = 'info') {
+    jarvisState = state;
+    if (!jarvisStateDot) return;
+
+    if (state === 'LISTENING') {
+      jarvisStateDot.style.background = '#10b981';
+      jarvisStateDot.style.boxShadow = '0 0 10px #10b981';
+      if (btnJarvisVoice) btnJarvisVoice.classList.add('active');
+    } else if (state === 'THINKING' || state === 'PARSING_INTENT') {
+      jarvisStateDot.style.background = '#00f2fe';
+      jarvisStateDot.style.boxShadow = '0 0 12px #00f2fe';
+    } else if (state === 'EXECUTING_ACTION' || state === 'EXECUTING') {
+      jarvisStateDot.style.background = '#4facfe';
+      jarvisStateDot.style.boxShadow = '0 0 12px #4facfe';
+    } else if (state === 'ERROR' || level === 'error') {
+      jarvisStateDot.style.background = '#ff4b4b';
+      jarvisStateDot.style.boxShadow = '0 0 12px #ff4b4b';
+    } else {
+      jarvisStateDot.style.background = '#00f2fe';
+      jarvisStateDot.style.boxShadow = '0 0 8px #00f2fe';
+      if (btnJarvisVoice) btnJarvisVoice.classList.remove('active');
+    }
+  }
+
+  // --- Dynamic 3D Animated Jarvis Sphere (Canvas) ---
+  if (jarvisCanvas && jarvisCanvas.getContext) {
+    const ctx = jarvisCanvas.getContext('2d');
+    let angleY = 0;
+    let angleX = 0.25;
+    let pulseTime = 0;
+
+    function renderJarvisSphere() {
+      ctx.clearRect(0, 0, jarvisCanvas.width, jarvisCanvas.height);
+
+      const cx = jarvisCanvas.width / 2;
+      const cy = jarvisCanvas.height / 2;
+      const baseRadius = 24 + (jarvisAudioLevel * 18);
+      pulseTime += 0.04;
+
+      // Spin rate dynamically scales when thinking / executing
+      const spinMultiplier = (jarvisState === 'THINKING' || jarvisState === 'PARSING_INTENT') ? 2.5 : 1.0;
+      angleY += 0.02 * spinMultiplier;
+
+      // Color scheme based on status
+      let primaryColor = '#00f2fe';
+      let accentColor = '#4facfe';
+      if (jarvisState === 'LISTENING') {
+        primaryColor = '#10b981';
+        accentColor = '#00f2fe';
+      } else if (jarvisState === 'ALERT' || jarvisState === 'ERROR') {
+        primaryColor = '#ff4b4b';
+        accentColor = '#ff8888';
+      }
+
+      // 1. Central Pulsing Holographic Core
+      const corePulse = Math.sin(pulseTime * 2.5) * 3;
+      const coreRadius = Math.max(6, 12 + corePulse + (jarvisAudioLevel * 12));
+      const coreGrad = ctx.createRadialGradient(cx, cy, 2, cx, cy, coreRadius);
+      coreGrad.addColorStop(0, '#ffffff');
+      coreGrad.addColorStop(0.4, primaryColor);
+      coreGrad.addColorStop(1, 'transparent');
+      ctx.fillStyle = coreGrad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, coreRadius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 2. 3D Wireframe Spherical Latitude Rings
+      const latitudes = [-0.6, -0.3, 0, 0.3, 0.6];
+      for (const lat of latitudes) {
+        const rLat = baseRadius * Math.cos(lat);
+        const yLat = cy + baseRadius * Math.sin(lat) * Math.cos(angleX);
+
+        ctx.strokeStyle = primaryColor;
+        ctx.lineWidth = 1.0;
+        ctx.globalAlpha = 0.35 + Math.abs(lat) * 0.2;
+        ctx.beginPath();
+        ctx.ellipse(cx, yLat, rLat, rLat * 0.32, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // 3. 3D Wireframe Spherical Longitude Rings with Orbital Nodes
+      const longitudes = 4;
+      for (let i = 0; i < longitudes; i++) {
+        const phi = (Math.PI / longitudes) * i + angleY;
+        const wLong = baseRadius * Math.cos(phi);
+
+        ctx.strokeStyle = accentColor;
+        ctx.lineWidth = 1.2;
+        ctx.globalAlpha = 0.45;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, Math.abs(wLong), baseRadius, angleX, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Orbital particle nodes on the wireframe
+        const nodeX = cx + wLong * Math.sin(pulseTime + i);
+        const nodeY = cy + baseRadius * Math.cos(pulseTime + i) * 0.9;
+        ctx.fillStyle = '#ffffff';
+        ctx.globalAlpha = 0.85;
+        ctx.beginPath();
+        ctx.arc(nodeX, nodeY, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // 4. Concentric Holographic Arc Ticks
+      ctx.globalAlpha = 0.6;
+      ctx.strokeStyle = primaryColor;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, baseRadius + 7, angleY, angleY + Math.PI * 0.65);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(cx, cy, baseRadius + 7, angleY + Math.PI, angleY + Math.PI * 1.65);
+      ctx.stroke();
+
+      ctx.globalAlpha = 1.0;
+      requestAnimationFrame(renderJarvisSphere);
+    }
+
+    renderJarvisSphere();
+  }
+
+  // --- Session Memory Loader & Timeline Renderer ---
+  async function loadSessionHistory() {
+    if (!window.adionAPI || !window.adionAPI.session) return;
+    try {
+      const history = await window.adionAPI.session.getHistory();
+      if (!history) return;
+
+      if (jarvisSessionId) {
+        jarvisSessionId.innerText = `Session: ${history.sessionId || 'Active'}`;
+      }
+      if (jarvisInteractionCount) {
+        jarvisInteractionCount.innerText = `${history.totalInteractions || 0} Exchanges`;
+      }
+
+      if (!jarvisTimeline) return;
+
+      if (!history.interactions || history.interactions.length === 0) {
+        jarvisTimeline.innerHTML = `
+          <div class="jarvis-empty-state" id="jarvisEmptyState">
+            <div class="empty-icon">⚡</div>
+            <div class="empty-title">Session Memory Initialized</div>
+            <p>No commands executed yet in this session. Speak hands-free or enter a prompt below to interact with JARVIS.</p>
+          </div>
+        `;
+        return;
+      }
+
+      jarvisTimeline.innerHTML = '';
+      history.interactions.forEach((item) => {
+        const card = document.createElement('div');
+        card.className = 'jarvis-interaction-card';
+
+        const timeStr = item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+        const sourceBadge = item.source ? item.source.toUpperCase() : 'VOICE';
+        const rawPrompt = item.prompt?.raw || item.prompt?.transcription || 'Command executed';
+        const thought = item.response?.thought || item.response?.feedback || 'Action completed';
+        const isError = item.response?.status === 'error';
+
+        let actionTags = '';
+        if (Array.isArray(item.response?.actions) && item.response.actions.length > 0) {
+          actionTags = item.response.actions.map(a => `<span class="jarvis-action-tag">${a.type || 'ACTION'}</span>`).join(' ');
+        }
+
+        card.innerHTML = `
+          <div class="jarvis-card-header">
+            <span class="jarvis-source-badge">${sourceBadge}</span>
+            <span>${timeStr}</span>
+          </div>
+          <div class="jarvis-prompt-row">
+            <span class="jarvis-user-label">USER</span>
+            <span class="jarvis-prompt-text">${rawPrompt}</span>
+          </div>
+          <div class="jarvis-response-row" style="${isError ? 'border-left-color:#ff4b4b;' : ''}">
+            <span class="jarvis-bot-label" style="${isError ? 'color:#ff4b4b;' : ''}">JARVIS</span>
+            <div>
+              <div class="jarvis-thought-text">${thought}</div>
+              ${actionTags}
+            </div>
+          </div>
+        `;
+        jarvisTimeline.appendChild(card);
+      });
+
+      // Scroll to bottom of timeline
+      jarvisTimeline.scrollTop = jarvisTimeline.scrollHeight;
+    } catch (err) {
+      console.warn('[Jarvis UI] Could not load session history:', err);
+    }
+  }
+
+  // --- Toggle Jarvis Panel ---
+  if (btnToggleJarvis && jarvisPanelOverlay) {
+    btnToggleJarvis.addEventListener('click', () => {
+      const isOpen = jarvisPanelOverlay.classList.toggle('open');
+      if (isOpen) {
+        loadSessionHistory();
+        if (jarvisChatInput) jarvisChatInput.focus();
+      }
+    });
+  }
+
+  if (btnCloseJarvis && jarvisPanelOverlay) {
+    btnCloseJarvis.addEventListener('click', () => {
+      jarvisPanelOverlay.classList.remove('open');
+    });
+  }
+
+  // --- New Session Action ---
+  if (btnNewSession) {
+    btnNewSession.addEventListener('click', async () => {
+      if (window.adionAPI && window.adionAPI.session) {
+        await window.adionAPI.session.clearSession();
+        showJarvisToast('Session memory cleared. Fresh session started.', 'success');
+        loadSessionHistory();
+      }
+    });
+  }
+
+  // --- Jarvis Quick Chat & Command Submission ---
+  async function submitJarvisChat() {
+    if (!jarvisChatInput) return;
+    const val = jarvisChatInput.value.trim();
+    if (!val) return;
+
+    jarvisChatInput.value = '';
+    setJarvisState('THINKING');
+    showJarvisToast(`JARVIS: Coordinating "${val.slice(0, 35)}..."`, 'success');
+
+    if (window.adionAPI && window.adionAPI.session) {
+      try {
+        await window.adionAPI.session.sendChat(val);
+        await loadSessionHistory();
+      } catch (err) {
+        showJarvisToast('The system is adapting to your command.', 'alert');
+      }
+    }
+  }
+
+  if (btnJarvisSend) {
+    btnJarvisSend.addEventListener('click', submitJarvisChat);
+  }
+
+  if (jarvisChatInput) {
+    jarvisChatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        submitJarvisChat();
+      }
+    });
+  }
+
+  // --- Jarvis Mic Button Sync ---
+  if (btnJarvisVoice) {
+    btnJarvisVoice.addEventListener('click', () => {
+      if (btnVoiceAgent) {
+        btnVoiceAgent.click();
+      }
+    });
+  }
+
+  // --- IPC Event Listeners for Jarvis & Session Updates ---
+  if (window.adionAPI && window.adionAPI.session) {
+    window.adionAPI.session.onNotification((data) => {
+      if (data && data.message) {
+        showJarvisToast(data.message, data.type || 'success');
+      }
+    });
+
+    window.adionAPI.session.onUpdated(() => {
+      if (jarvisPanelOverlay && jarvisPanelOverlay.classList.contains('open')) {
+        loadSessionHistory();
+      }
+    });
+
+    window.adionAPI.session.onCleared(() => {
+      loadSessionHistory();
+    });
+  }
+
+  if (window.adionAPI && window.adionAPI.agent) {
+    window.adionAPI.agent.onStateChange((data) => {
+      setJarvisState(data.state);
+    });
+
+    window.adionAPI.agent.onAudioLevel((data) => {
+      jarvisAudioLevel = data.rms || 0;
+    });
+
+    window.adionAPI.agent.onFeedback((data) => {
+      if (data && data.message) {
+        const isAlert = data.level === 'warning' || data.level === 'error';
+        showJarvisToast(data.message, isAlert ? 'alert' : 'success');
+      }
+    });
+  }
+
+  // Initial toast greeting on startup
+  setTimeout(() => {
+    showJarvisToast('JARVIS Online • Browser Autonomous Control Plane Active', 'success', 5000);
+  }, 1200);
 });
+
 

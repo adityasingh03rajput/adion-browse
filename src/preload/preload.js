@@ -84,5 +84,15 @@ contextBridge.exposeInMainWorld('adionAPI', {
   // Enterprise Decentralized Analytics
   enterprise: {
     getTelemetry: () => ipcRenderer.invoke('enterprise:get-telemetry')
+  },
+
+  // JARVIS Interactive Assistant & Session Memory
+  session: {
+    getHistory: () => ipcRenderer.invoke('session:get-history'),
+    clearSession: () => ipcRenderer.invoke('session:clear'),
+    sendChat: (message) => ipcRenderer.invoke('session:send-chat', message),
+    onUpdated: (callback) => ipcRenderer.on('session:updated', (e, data) => callback(data)),
+    onCleared: (callback) => ipcRenderer.on('session:cleared', (e, data) => callback(data)),
+    onNotification: (callback) => ipcRenderer.on('jarvis:notification', (e, data) => callback(data))
   }
 });

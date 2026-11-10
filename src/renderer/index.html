@@ -346,6 +346,85 @@
     </div>
   </div>
 
+  <!-- JARVIS INTERACTIVE ASSISTANT & DYNAMIC ANIMATED SPHERE WIDGET -->
+  <div class="jarvis-container" id="jarvisContainer">
+    <!-- Floating Real-Time Confirmation & Alert Speech Bubble -->
+    <div class="jarvis-toast" id="jarvisToast">
+      <div class="jarvis-toast-badge">JARVIS</div>
+      <div class="jarvis-toast-text" id="jarvisToastText">System online. Ready for browser commands.</div>
+    </div>
+
+    <!-- Dynamic 3D Jarvis Sphere & Concentric Holographic Rings -->
+    <div class="jarvis-orb-wrapper" id="btnToggleJarvis" title="JARVIS Assistant • Dynamic Sphere (Click to open Session Memory & Small Chat)">
+      <div class="jarvis-ring jarvis-ring-outer"></div>
+      <div class="jarvis-ring jarvis-ring-inner"></div>
+      <div class="jarvis-ring jarvis-ring-pulse"></div>
+      <canvas id="jarvisCanvas" width="80" height="80"></canvas>
+      <div class="jarvis-core-glow" id="jarvisCoreGlow"></div>
+      <div class="jarvis-state-dot" id="jarvisStateDot"></div>
+    </div>
+  </div>
+
+  <!-- JARVIS ASSISTANT & SESSION MEMORY FLYOUT HUD -->
+  <div class="jarvis-panel-overlay" id="jarvisPanelOverlay">
+    <div class="jarvis-panel" id="jarvisPanel">
+      <div class="jarvis-panel-header">
+        <div class="jarvis-panel-identity">
+          <div class="jarvis-mini-sphere">
+            <div class="mini-core"></div>
+          </div>
+          <div>
+            <div class="jarvis-title">JARVIS ASSISTANT</div>
+            <div class="jarvis-subtitle">Autonomous Browser Intelligence & Session Memory</div>
+          </div>
+        </div>
+        <div class="jarvis-header-actions">
+          <button class="btn-jarvis-action" id="btnNewSession" title="Clear current session memory and begin fresh session">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M12 5v14M5 12h14"></path>
+            </svg>
+            New Session
+          </button>
+          <button class="btn-jarvis-close" id="btnCloseJarvis">&times;</button>
+        </div>
+      </div>
+
+      <!-- Session Memory Meta -->
+      <div class="jarvis-session-meta">
+        <span id="jarvisSessionId">Session: Initializing...</span>
+        <span id="jarvisInteractionCount">0 Interactions</span>
+      </div>
+
+      <!-- Session Interactions Timeline -->
+      <div class="jarvis-timeline" id="jarvisTimeline">
+        <div class="jarvis-empty-state" id="jarvisEmptyState">
+          <div class="empty-icon">⚡</div>
+          <div class="empty-title">Session Memory Initialized</div>
+          <p>No commands executed yet in this session. Speak hands-free with your microphone or enter a command below to interact with JARVIS.</p>
+        </div>
+      </div>
+
+      <!-- Quick Chat Input Box -->
+      <div class="jarvis-chat-input-row">
+        <input type="text" id="jarvisChatInput" placeholder="Command browser or chat with Jarvis..." autocomplete="off">
+        <button class="btn-jarvis-mic" id="btnJarvisVoice" title="Toggle Hands-Free Voice Input">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="23"></line>
+            <line x1="8" y1="23" x2="16" y2="23"></line>
+          </svg>
+        </button>
+        <button class="btn-jarvis-send" id="btnJarvisSend" title="Send Command">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 

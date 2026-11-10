@@ -74,6 +74,20 @@ class ControlPlane {
       this.sendToUI('shell:action', data);
     });
 
+    this.runtime.on('jarvis-notification', (data) => {
+      this.sendToUI('jarvis:notification', data);
+    });
+
+    // Session Memory updates
+    if (this.runtime.sessionManager) {
+      this.runtime.sessionManager.on('interaction-recorded', (entry) => {
+        this.sendToUI('session:updated', entry);
+      });
+      this.runtime.sessionManager.on('session-cleared', (data) => {
+        this.sendToUI('session:cleared', data);
+      });
+    }
+
     // Multi-Agent Pool events
     this.multiAgents.on('agent-spawned', (agent) => {
       this.sendToUI('multi-agent:spawned', agent);
@@ -180,6 +194,22 @@ class ControlPlane {
     // Decentralized Enterprise Analytics Synthesis
     ipcMain.handle('enterprise:get-telemetry', () => {
       return this.synthesizer.exportSynthesizedTelemetry();
+    });
+
+    // Session Memory & Interaction State Logging
+    ipcMain.handle('session:get-history', () => {
+      return this.runtime.sessionManager.getHistory();
+    });
+
+    ipcMain.handle('session:clear', () => {
+      const res = this.runtime.sessionManager.clearSession();
+      this.sendToUI('session:cleared', res);
+      return res;
+    });
+
+    ipcMain.handle('session:send-chat', async (event, message) => {
+      await this.runtime.processCommand(message, 'jarvis-chat');
+      return this.runtime.sessionManager.getHistory();
     });
   }
 

@@ -126,3 +126,4 @@ process.on('SIGTERM', () => {
 
 // Start initial browser instance
 startBrowser();
+
