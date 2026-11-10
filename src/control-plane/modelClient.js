@@ -54,8 +54,8 @@ Available Action Types and their parameters:
 - "TOGGLE_BOOKMARK": {} - bookmarks or unbookmarks the current page (star/bookmark button)
 - "OPEN_DASHBOARD": {} - opens the real-time Network Diagnostics, Latency Graph & Resource Allocation Dashboard (adion://dashboard)
 - "SHOW_METRICS_OVERLAY": {} - displays the live telemetry overlay GUI with real-time performance logs and actionable suggestions
-- "MODIFY_DOM": { "selector": "#audioTitle", "action": "setText" | "setHTML" | "setStyle" | "setAttribute", "value": "value" } - modifies DOM of active page or local file (e.g. audio.html) and verifies render update
-- "INSPECT_ELEMENT": { "selector": "#visualizerCanvas" } - locates, highlights, and inspects element in Developer Tools
+- "MODIFY_DOM": { "selector": "CSS selector or semantic query (e.g. 'Google Search button', 'header', 'h1', 'body', '#main', '.btn')", "action": "setStyle" | "setText" | "setHTML" | "setAttribute" | "hide" | "remove", "value": "value or style declaration" } - dynamically manipulates elements across ANY loaded web page or local file with real-time render verification
+- "INSPECT_ELEMENT": { "selector": "CSS selector or element description" } - locates, highlights, and inspects element in Developer Tools
 - "CAPTURE_VIEWPORT": {}
 - "ANALYZE_IMAGES": { "criteria": "image search criteria" }
 
@@ -70,21 +70,48 @@ Output:
   ]
 }
 
-User: "Modify DOM in audio.html change audioTitle to Enhanced Acoustic Matrix"
+User: "Change the color of the Google search button to yellow" or "make the search button yellow"
 Output:
 {
-  "thought": "Inspect and modify DOM element in audio.html",
+  "thought": "Dynamically modify search button color on active page",
   "actions": [
-    { "type": "MODIFY_DOM", "params": { "selector": "#audioTitle", "action": "setText", "value": "Enhanced Acoustic Matrix" } }
+    { "type": "MODIFY_DOM", "params": { "selector": "Google Search button", "action": "setStyle", "value": "background: yellow; color: #000;" } }
   ]
 }
 
-User: "Can you change the color to yellow of generate test tone button?" or "turn generate test tone button yellow"
+User: "Make the Wikipedia header green" or "change title color to green"
 Output:
 {
-  "thought": "Change generate test tone button background color to yellow",
+  "thought": "Modify header text color on active page",
   "actions": [
-    { "type": "MODIFY_DOM", "params": { "selector": "#btnTogglePlayback", "action": "setStyle", "value": "background: yellow; color: #000;" } }
+    { "type": "MODIFY_DOM", "params": { "selector": "header, #firstHeading, h1", "action": "setStyle", "value": "color: #10b981;" } }
+  ]
+}
+
+User: "Hide the sidebar" or "remove the banner"
+Output:
+{
+  "thought": "Hide target element on active page",
+  "actions": [
+    { "type": "MODIFY_DOM", "params": { "selector": "sidebar, aside", "action": "hide", "value": "" } }
+  ]
+}
+
+User: "Make the page background dark" or "turn on dark mode"
+Output:
+{
+  "thought": "Apply dark theme styling to page body",
+  "actions": [
+    { "type": "MODIFY_DOM", "params": { "selector": "body", "action": "setStyle", "value": "background: #121212 !important; color: #f0f0f0 !important;" } }
+  ]
+}
+
+User: "Change the login button text to Continue"
+Output:
+{
+  "thought": "Change button text on active page",
+  "actions": [
+    { "type": "MODIFY_DOM", "params": { "selector": "Sign in button", "action": "setText", "value": "Continue" } }
   ]
 }
 
@@ -169,10 +196,18 @@ Do NOT wrap output in markdown fences. Output raw JSON object only.
    * Plan browser actions for a natural language command using Groq, Mercury, or Local model
    */
   async planActions(userInput, pageContext = {}) {
+    let elementsInfo = '';
+    if (Array.isArray(pageContext.buttons) && pageContext.buttons.length > 0) {
+      elementsInfo += `\n- Visible Interactive Buttons: ${pageContext.buttons.join(', ')}`;
+    }
+    if (Array.isArray(pageContext.headings) && pageContext.headings.length > 0) {
+      elementsInfo += `\n- Key Page Headings: ${pageContext.headings.join(' | ')}`;
+    }
+
     const prompt = `
 Current Active Page:
 - URL: ${pageContext.url || 'adion://newtab'}
-- Title: ${pageContext.title || 'New Tab'}
+- Title: ${pageContext.title || 'New Tab'}${elementsInfo}
 
 User Command: "${userInput}"
 

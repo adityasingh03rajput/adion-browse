@@ -264,7 +264,18 @@ class AgentRuntime extends EventEmitter {
 
     try {
       const activeTab = this.tabManager ? this.tabManager.getActiveTab() : null;
-      const pageContext = activeTab ? { url: activeTab.url, title: activeTab.title } : {};
+      let pageContext = activeTab ? { url: activeTab.url, title: activeTab.title } : {};
+
+      // If active tab has content loaded, retrieve fast structural summary (visible buttons, headings) via CDP
+      if (activeTab && activeTab.view && !activeTab.url.startsWith('adion://newtab')) {
+        try {
+          await this.cdp.attach(activeTab.view.webContents);
+          const summary = await this.cdp.getPageSummary();
+          if (summary) {
+            pageContext = { ...pageContext, ...summary };
+          }
+        } catch (_) {}
+      }
 
       // 1. Query Grok / Mercury / Local Model for high-level reasoning and function calling
       let plan = null;
@@ -357,21 +368,83 @@ class AgentRuntime extends EventEmitter {
       return { type: ActionType.SHOW_METRICS_OVERLAY };
     }
 
-    // DOM Inspection & Modification in Local Files / Pages
+    // Dynamic DOM Manipulation across ANY loaded web page or local file
+    // 1. Text changing: e.g. "change text of button to Submit", "change title to Hello World"
+    const textMatch = lower.match(/(?:change|set)\s+(?:the\s+)?text\s+of\s+(?:the\s+)?(.+?)\s+to\s+["']?(.+?)["']?$/i);
+    if (textMatch) {
+      return {
+        type: ActionType.MODIFY_DOM,
+        selector: textMatch[1].trim(),
+        action: 'setText',
+        value: textMatch[2].trim()
+      };
+    }
+
+    // 2. Hide / Remove elements: e.g. "hide sidebar", "remove banner", "hide header"
+    const hideMatch = lower.match(/(?:hide|remove|delete)\s+(?:the\s+)?([a-z0-9\s\-_#\.]+)/i);
+    if (hideMatch && !/(tab|history|bookmarks|cache|cookies|data)/i.test(hideMatch[1])) {
+      const target = hideMatch[1].trim();
+      const isRemove = lower.startsWith('remove') || lower.startsWith('delete');
+      return {
+        type: ActionType.MODIFY_DOM,
+        selector: target,
+        action: isRemove ? 'remove' : 'hide',
+        value: ''
+      };
+    }
+
+    // 3. Color / Background styling: e.g. "change color of search button to yellow", "make header green", "turn title red"
+    const isKnownColor = /^(yellow|red|green|blue|orange|purple|pink|cyan|white|black|gold|crimson|lime|emerald|teal|gray|grey|indigo|violet|magenta|brown|navy|olive|#([0-9a-f]{3}|[0-9a-f]{6}))$/i;
+    const colorMatch = lower.match(/(?:change|set|make|turn)\s+(?:the\s+)?(?:(background(?:\s+color)?|color|text\s+color)\s+)?(?:of\s+)?(?:the\s+)?(.+?)\s+(?:to\s+|into\s+)?([#a-z0-9]+)$/i);
+    if (colorMatch) {
+      const type = colorMatch[1] ? colorMatch[1].toLowerCase() : '';
+      const target = colorMatch[2].trim();
+      const color = colorMatch[3].trim();
+      if (isKnownColor.test(color) && !/(http|www|tab|page|window|browser|volume|zoom|url)/i.test(target)) {
+        const isTextOnly = type.includes('text');
+        const styleVal = isTextOnly ? `color: ${color};` : `background: ${color};`;
+        return {
+          type: ActionType.MODIFY_DOM,
+          selector: target,
+          action: 'setStyle',
+          value: styleVal
+        };
+      }
+    }
+
+    // 4. Dark / Light mode: e.g. "make page dark", "dark mode", "make background black"
+    if (/(?:make\s+(?:the\s+)?(?:page|background|theme)\s+(dark|black)|turn\s+on\s+dark\s+mode|dark\s+theme)/i.test(lower)) {
+      return {
+        type: ActionType.MODIFY_DOM,
+        selector: 'body',
+        action: 'setStyle',
+        value: 'background: #121212 !important; color: #e0e0e0 !important;'
+      };
+    }
+    if (/(?:make\s+(?:the\s+)?(?:page|background|theme)\s+(light|white)|turn\s+on\s+light\s+mode|light\s+theme)/i.test(lower)) {
+      return {
+        type: ActionType.MODIFY_DOM,
+        selector: 'body',
+        action: 'setStyle',
+        value: 'background: #ffffff !important; color: #111111 !important;'
+      };
+    }
+
+    // 5. Explicit DOM modification command: e.g. "modify dom #search action setStyle value color: red"
     const domModMatch = lower.match(/(?:modify dom|change dom|edit dom|update dom)\s+(?:selector\s+)?([#\.\w\-_]+)?\s*(?:action\s+)?(\w+)?\s*(?:value\s+)?(["'].+?["']|.+)?/i);
     if (domModMatch) {
       return {
         type: ActionType.MODIFY_DOM,
-        selector: domModMatch[1] || '#audioTitle',
+        selector: domModMatch[1] || 'body',
         action: domModMatch[2] || 'setText',
-        value: (domModMatch[3] || 'Enhanced Live Acoustic Stream Matrix').replace(/^["']|["']$/g, '')
+        value: (domModMatch[3] || '').replace(/^["']|["']$/g, '')
       };
     }
     if (/(inspect element|inspect dom)/i.test(lower)) {
       const inspectMatch = lower.match(/(?:inspect element|inspect dom)\s+([#\.\w\-_]+)/i);
       return {
         type: ActionType.INSPECT_ELEMENT,
-        selector: inspectMatch ? inspectMatch[1] : '#visualizerCanvas'
+        selector: inspectMatch ? inspectMatch[1] : 'body'
       };
     }
 
@@ -585,70 +658,37 @@ class AgentRuntime extends EventEmitter {
       }
 
       case ActionType.MODIFY_DOM: {
-        const selector = intent.selector || '#audioTitle';
-        const action = intent.action || 'setText';
-        const value = intent.value || '⚡ Enhanced Live Acoustic Stream Matrix';
+        const selector = intent.selector || intent.target || 'body';
+        const action = intent.action || 'setStyle';
+        const value = intent.value || '';
         const attribute = intent.attribute || '';
 
-        let targetTab = activeTab;
-        let res = null;
-
-        if (targetTab && targetTab.view) {
-          await this.cdp.attach(targetTab.view.webContents);
-          res = await this.cdp.modifyDOM(selector, action, value, attribute);
+        if (!activeTab || !activeTab.view) {
+          throw new Error('No active browser tab found to modify DOM');
         }
 
-        // If not found on active tab, inspect other open tabs (e.g. user has audio.html in another tab)
-        if ((!res || !res.success) && this.tabManager) {
-          const allTabs = Array.from(this.tabManager.tabs.values());
-          for (const tab of allTabs) {
-            if (tab.id !== activeTab?.id && tab.view) {
-              const urlMatch = /audio\.html|dashboard/i.test(tab.url);
-              const titleMatch = /audio|lab|dsp/i.test(tab.title);
-              if (urlMatch || titleMatch) {
-                console.log(`[AgentRuntime DOM] Switching to tab ${tab.id} (${tab.title || tab.url}) to apply DOM modification...`);
-                this.tabManager.switchTab(tab.id);
-                targetTab = tab;
-                await new Promise(r => setTimeout(r, 200));
-                await this.cdp.attach(targetTab.view.webContents);
-                res = await this.cdp.modifyDOM(selector, action, value, attribute);
-                if (res && res.success) break;
-              }
-            }
-          }
-        }
-
-        // If still not found and the user instruction refers to audio/test tone, open audio.html
-        if ((!res || !res.success) && this.tabManager && /(tone|audio|dsp|sound|playback|synthesizer)/i.test(`${selector} ${value} ${intent.raw || ''}`)) {
-          console.log('[AgentRuntime DOM] Target element belongs to audio.html lab. Opening local file tab...');
-          const audioPath = 'file:///' + path.resolve(process.cwd(), 'audio.html').replace(/\\/g, '/');
-          const openedTab = this.tabManager.createTab(audioPath);
-          await new Promise(r => setTimeout(r, 650));
-          if (openedTab && openedTab.view) {
-            await this.cdp.attach(openedTab.view.webContents);
-            res = await this.cdp.modifyDOM(selector, action, value, attribute);
-          }
-        }
+        await this.cdp.attach(activeTab.view.webContents);
+        const res = await this.cdp.modifyDOM(selector, action, value, attribute);
 
         console.log('[AgentRuntime DOM] Result:', res);
 
         if (res && res.success) {
-          // File System Integration: Persist changes directly back into local file on disk
-          const persisted = await this.persistDOMChangeToFile(targetTab?.url, res);
-          const persistNote = persisted ? ' (Saved to disk)' : '';
+          // File System Integration: If active tab is a local file, persist changes to disk
+          let persisted = false;
+          if (activeTab.url && activeTab.url.startsWith('file:///')) {
+            persisted = await this.persistDOMChangeToFile(activeTab.url, res);
+          }
+          const persistNote = persisted ? ' (Persisted to disk)' : '';
 
           // DevTools Deep Integration: sync DevTools panel inspection
           try {
-            if (this.tabManager && targetTab && targetTab.view) {
-              const wc = targetTab.view.webContents;
-              if (wc.isDevToolsOpened()) {
-                this.tabManager.switchDevToolsPanel('elements');
-              }
+            if (activeTab.view && activeTab.view.webContents.isDevToolsOpened()) {
+              this.tabManager.switchDevToolsPanel('elements');
             }
           } catch (_) {}
 
           this.emit('feedback', {
-            message: `DOM Updated${persistNote}: <${res.renderedTag}> (${res.resolvedSelector}) -> "${res.appliedValue || res.current}". Render verified!`,
+            message: `DOM Modified${persistNote}: <${(res.renderedTag || 'node').toLowerCase()}> ${res.resolvedSelector} (${res.action}). Live render verified!`,
             level: 'success'
           });
         } else {

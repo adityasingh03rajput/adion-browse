@@ -328,18 +328,23 @@ class CDPBridge {
         const val = ${JSON.stringify(value || '')};
         const attr = ${JSON.stringify(attribute || '')};
 
-        // Multi-tier Smart Element Resolver
+        // Multi-tier Smart Element Resolver across ANY webpage
         function resolveElement(sel) {
-          if (!sel) return null;
+          if (!sel) return document.body;
+          const s = sel.trim();
 
-          // 1. Exact CSS querySelector
+          // 0. Body / Document / HTML
+          if (/^(body|document|page|screen|window)$/i.test(s)) return document.body;
+          if (/^html$/i.test(s)) return document.documentElement;
+
+          // 1. Exact CSS querySelector (across standard DOM)
           try {
-            const el = document.querySelector(sel);
+            const el = document.querySelector(s);
             if (el) return el;
           } catch(e) {}
 
           // 2. Direct ID or Class lookup (strip leading # or .)
-          const cleanId = sel.replace(/^[#\\.]/, '').trim();
+          const cleanId = s.replace(/^[#\\.]/, '').trim();
           const elById = document.getElementById(cleanId);
           if (elById) return elById;
 
@@ -351,28 +356,54 @@ class CDPBridge {
             if (dataMatch) return dataMatch;
           } catch(e) {}
 
-          // 4. Token-based semantic & text search across all elements
-          const cleanText = sel
+          // 4. Semantic landmarks across any website
+          if (/^(header|navbar|nav)$/i.test(s)) {
+            const landmark = document.querySelector('header, nav, [role="banner"], [role="navigation"]');
+            if (landmark) return landmark;
+          }
+          if (/^footer$/i.test(s)) {
+            const landmark = document.querySelector('footer, [role="contentinfo"]');
+            if (landmark) return landmark;
+          }
+          if (/^(sidebar|aside)$/i.test(s)) {
+            const landmark = document.querySelector('aside, .sidebar, #sidebar, [role="complementary"]');
+            if (landmark) return landmark;
+          }
+          if (/^(search|search\\s*bar|search\\s*box|search\\s*input)$/i.test(s)) {
+            const landmark = document.querySelector('input[type="search"], input[name="q"], input[name="query"], input[placeholder*="search" i], [role="searchbox"]');
+            if (landmark) return landmark;
+          }
+          if (/^(title|main\\s*heading|h1)$/i.test(s)) {
+            const landmark = document.querySelector('h1, [role="heading"][aria-level="1"]');
+            if (landmark) return landmark;
+          }
+
+          // 5. Token-based semantic & text search across all elements on the page
+          const cleanText = s
             .toLowerCase()
             .replace(/^[#\\.]/, '')
             .replace(/([a-z])([A-Z])/g, '$1 $2')
             .replace(/[-_]/g, ' ')
-            .replace(/\\b(button|btn|input|field|link|div|element|selector)\\b/gi, '')
+            .replace(/\\b(the|button|btn|input|field|link|div|element|selector)\\b/gi, '')
             .trim();
 
-          const all = Array.from(document.querySelectorAll('button, a, input, select, textarea, div, span, p, h1, h2, h3, h4, h5, h6, label, canvas, [role="button"]'));
+          const all = Array.from(document.querySelectorAll('button, a, input, select, textarea, div, span, p, h1, h2, h3, h4, h5, h6, label, canvas, header, nav, main, footer, section, article, aside, img, form, [role="button"], [role="search"], [role="heading"]'));
 
-          // 4A. Text, Title, Aria-label, or ID exact/substring match
+          // 5A. Text, Value, Title, Aria-label, Name, or ID exact/substring match
           for (const el of all) {
             const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+            const valAttr = (el.value || '').trim().toLowerCase();
             const id = (el.id || '').toLowerCase();
+            const name = (el.getAttribute('name') || '').toLowerCase();
             const title = (el.getAttribute('title') || '').toLowerCase();
             const aria = (el.getAttribute('aria-label') || '').toLowerCase();
             const testid = (el.getAttribute('data-testid') || '').toLowerCase();
 
             if (cleanText && (
               text.includes(cleanText) ||
+              valAttr.includes(cleanText) ||
               id.includes(cleanText.replace(/\\s+/g, '')) ||
+              name.includes(cleanText.replace(/\\s+/g, '')) ||
               title.includes(cleanText) ||
               aria.includes(cleanText) ||
               testid.includes(cleanText.replace(/\\s+/g, ''))
@@ -381,13 +412,15 @@ class CDPBridge {
             }
           }
 
-          // 4B. Word token matching (all keywords present)
+          // 5B. Word token matching (all keywords present)
           const tokens = cleanText.split(/\\s+/).filter(t => t.length > 1);
           if (tokens.length > 0) {
             for (const el of all) {
               const combined = [
                 el.innerText || '',
+                el.value || '',
                 el.id || '',
+                el.getAttribute('name') || '',
                 el.getAttribute('title') || '',
                 el.getAttribute('aria-label') || '',
                 el.getAttribute('data-testid') || ''
@@ -399,10 +432,14 @@ class CDPBridge {
             }
           }
 
-          // 5. Fallback: if selector was button and there is a primary button
-          if (/button|btn/i.test(sel)) {
-            const firstBtn = document.querySelector('button.btn, button');
+          // 6. Generic button/input fallback if "button" or "input" was in selector
+          if (/button|btn/i.test(s)) {
+            const firstBtn = document.querySelector('button.btn, button[type="submit"], input[type="submit"], button');
             if (firstBtn) return firstBtn;
+          }
+          if (/input|search/i.test(s)) {
+            const firstInput = document.querySelector('input[type="text"], input[type="search"], textarea');
+            if (firstInput) return firstInput;
           }
 
           return null;
@@ -412,7 +449,7 @@ class CDPBridge {
         if (!el) {
           return {
             success: false,
-            error: 'Element not found for selector: ' + rawSelector,
+            error: 'Element not found on active page for: ' + rawSelector,
             triedSelector: rawSelector
           };
         }
@@ -420,9 +457,21 @@ class CDPBridge {
         const prevContent = el.innerText || el.value || el.innerHTML || '';
         const prevStyle = el.getAttribute('style') || '';
 
-        // Apply DOM Action
-        if (actionType === 'setText' || actionType === 'text') {
-          el.innerText = val;
+        // Apply Dynamic DOM Action
+        if (actionType === 'remove' || actionType === 'delete') {
+          el.remove();
+        } else if (actionType === 'hide') {
+          el.style.setProperty('display', 'none', 'important');
+        } else if (actionType === 'show') {
+          el.style.removeProperty('display');
+        } else if (actionType === 'toggle') {
+          el.style.display = (el.style.display === 'none') ? '' : 'none';
+        } else if (actionType === 'setText' || actionType === 'text') {
+          if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+            el.value = val;
+          } else {
+            el.innerText = val;
+          }
         } else if (actionType === 'setHTML' || actionType === 'html') {
           el.innerHTML = val;
         } else if (actionType === 'setStyle' || actionType === 'style' || actionType === 'setColor' || actionType === 'setBackground') {
@@ -563,6 +612,39 @@ class CDPBridge {
       await this.highlightElement(result.x, result.y, result.width, result.height, `Inspect: ${selector}`);
     }
     return result;
+  }
+
+  /**
+   * Extract lightweight structural summary of the active page (title, url, top headings, interactive buttons, inputs)
+   * Provided to LLM planning to ground dynamic DOM actions to actual elements on the loaded page.
+   */
+  async getPageSummary() {
+    if (!this.isAttached) return null;
+    const expr = `
+      (() => {
+        const title = document.title || '';
+        const headings = Array.from(document.querySelectorAll('h1, h2, h3'))
+          .slice(0, 8)
+          .map(h => (h.innerText || '').trim())
+          .filter(t => t.length > 0 && t.length < 80);
+
+        const interactive = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a[role="button"], [role="button"]'))
+          .slice(0, 12)
+          .map(el => (el.innerText || el.value || el.getAttribute('aria-label') || el.id || '').trim())
+          .filter(t => t.length > 0 && t.length < 50);
+
+        return {
+          title,
+          headings: headings.slice(0, 5),
+          buttons: interactive.slice(0, 8)
+        };
+      })()
+    `;
+    try {
+      return await this.evaluate(expr);
+    } catch (_) {
+      return null;
+    }
   }
 }
 
