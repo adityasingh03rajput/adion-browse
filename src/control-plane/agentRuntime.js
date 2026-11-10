@@ -633,8 +633,22 @@ class AgentRuntime extends EventEmitter {
         console.log('[AgentRuntime DOM] Result:', res);
 
         if (res && res.success) {
+          // File System Integration: Persist changes directly back into local file on disk
+          const persisted = await this.persistDOMChangeToFile(targetTab?.url, res);
+          const persistNote = persisted ? ' (Saved to disk)' : '';
+
+          // DevTools Deep Integration: sync DevTools panel inspection
+          try {
+            if (this.tabManager && targetTab && targetTab.view) {
+              const wc = targetTab.view.webContents;
+              if (wc.isDevToolsOpened()) {
+                this.tabManager.switchDevToolsPanel('elements');
+              }
+            }
+          } catch (_) {}
+
           this.emit('feedback', {
-            message: `DOM Updated: <${res.renderedTag}> (${res.resolvedSelector}) -> "${res.appliedValue || res.current}". Render verified!`,
+            message: `DOM Updated${persistNote}: <${res.renderedTag}> (${res.resolvedSelector}) -> "${res.appliedValue || res.current}". Render verified!`,
             level: 'success'
           });
         } else {
@@ -796,6 +810,98 @@ class AgentRuntime extends EventEmitter {
     if (!this.continuousVoice) {
       this.setState(AgentState.IDLE);
     }
+  }
+
+  /**
+   * File System Integration: Persist DOM element mutations directly into the local source file on disk
+   * Writes live styles, inner texts, and HTML changes directly into local workspace files (e.g. audio.html).
+   */
+  async persistDOMChangeToFile(targetUrl, modResult) {
+    if (!targetUrl || !modResult || !modResult.success) return false;
+
+    let targetPath = null;
+
+    // 1. Resolve local file URL
+    if (targetUrl.startsWith('file:///')) {
+      let p = targetUrl.replace(/^file:\/\/\/?/, '');
+      p = decodeURIComponent(p);
+      p = path.normalize(p);
+      if (fs.existsSync(p)) targetPath = p;
+    }
+
+    // 2. Fallback to workspace file lookup
+    if (!targetPath) {
+      if (targetUrl.includes('audio.html')) {
+        targetPath = path.resolve(process.cwd(), 'audio.html');
+      } else if (targetUrl.includes('dashboard.html')) {
+        targetPath = path.resolve(process.cwd(), 'src/dashboard/dashboard.html');
+      }
+    }
+
+    if (!targetPath || !fs.existsSync(targetPath)) {
+      return false;
+    }
+
+    try {
+      let content = fs.readFileSync(targetPath, 'utf8');
+      const elId = modResult.elementId;
+      const finalStyle = modResult.finalStyle;
+      const tag = (modResult.renderedTag || 'button').toLowerCase();
+
+      let modified = false;
+
+      // A. Match by exact element ID in source HTML
+      if (elId) {
+        const tagRegex = new RegExp(`(<${tag}[^>]*\\bid=["']${elId}["'][^>]*>)`, 'i');
+        const match = content.match(tagRegex);
+        if (match) {
+          let openTag = match[1];
+          if (finalStyle) {
+            if (/style=["'][^"']*["']/i.test(openTag)) {
+              openTag = openTag.replace(/style=["'][^"']*["']/i, `style="${finalStyle}"`);
+            } else {
+              openTag = openTag.replace(/>$/, ` style="${finalStyle}">`);
+            }
+          }
+          if (modResult.action === 'setText' && modResult.appliedValue) {
+            const fullTagRegex = new RegExp(`(<${tag}[^>]*\\bid=["']${elId}["'][^>]*>)([\\s\\S]*?)(<\\/${tag}>)`, 'i');
+            content = content.replace(fullTagRegex, `${openTag}${modResult.appliedValue}$3`);
+          } else {
+            content = content.replace(tagRegex, openTag);
+          }
+          modified = true;
+        }
+      }
+
+      // B. Fallback: match by data-id or class
+      if (!modified && modResult.resolvedSelector) {
+        const cleanSel = modResult.resolvedSelector.replace(/^[#\.]/, '');
+        const altRegex = new RegExp(`(<${tag}[^>]*(?:id|data-id|data-testid|class)=["'][^"']*${cleanSel}[^"']*["'][^>]*>)`, 'i');
+        const match = content.match(altRegex);
+        if (match) {
+          let openTag = match[1];
+          if (finalStyle) {
+            if (/style=["'][^"']*["']/i.test(openTag)) {
+              openTag = openTag.replace(/style=["'][^"']*["']/i, `style="${finalStyle}"`);
+            } else {
+              openTag = openTag.replace(/>$/, ` style="${finalStyle}">`);
+            }
+          }
+          content = content.replace(altRegex, openTag);
+          modified = true;
+        }
+      }
+
+      if (modified) {
+        fs.writeFileSync(targetPath, content, 'utf8');
+        console.log(`[AgentRuntime FileSystem] Successfully persisted DOM change directly to file: ${targetPath}`);
+        return true;
+      }
+    } catch (err) {
+      console.warn(`[AgentRuntime FileSystem] Could not persist DOM change to file: ${err.message}`);
+    }
+
+    return false;
   }
 }
 

@@ -426,37 +426,51 @@ class CDPBridge {
         } else if (actionType === 'setHTML' || actionType === 'html') {
           el.innerHTML = val;
         } else if (actionType === 'setStyle' || actionType === 'style' || actionType === 'setColor' || actionType === 'setBackground') {
-          // If val is raw color (e.g. "yellow", "#ff0", "rgb(...)") or contains color/background
+          const isButton = el.tagName === 'BUTTON' || el.getAttribute('role') === 'button' || el.classList.contains('btn');
           const isRawColor = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(val.trim()) ||
-            /^(yellow|red|green|blue|orange|purple|pink|cyan|white|black|gold|crimson)$/i.test(val.trim()) ||
+            /^(yellow|red|green|blue|orange|purple|pink|cyan|white|black|gold|crimson|lime|emerald|teal)$/i.test(val.trim()) ||
             val.trim().startsWith('rgb');
 
           if (isRawColor || actionType === 'setColor' || actionType === 'setBackground') {
-            const color = val.trim().replace(/;$/, '');
+            let color = val.trim().replace(/;$/, '');
+            if (color === 'green') color = '#10b981'; // Modern vivid emerald
+            if (color === 'yellow') color = '#ffeb3b';
+
             el.style.setProperty('background', color, 'important');
             el.style.setProperty('background-color', color, 'important');
             el.style.setProperty('background-image', 'none', 'important');
-            if (/yellow|gold|#ff|#fe|white|cyan/i.test(color)) {
+            if (/yellow|gold|#ff|#fe|white|cyan|lime/i.test(color)) {
               el.style.setProperty('color', '#0f1117', 'important');
+            } else {
+              el.style.setProperty('color', '#ffffff', 'important');
             }
             el.style.setProperty('box-shadow', '0 0 20px ' + color, 'important');
           } else {
-            // Parse CSS property string (e.g. "background-color: yellow; font-size: 14px")
+            // Parse CSS property declarations
             const declarations = val.split(';').map(s => s.trim()).filter(Boolean);
             let hasBgChange = false;
             for (const decl of declarations) {
               const colonIdx = decl.indexOf(':');
               if (colonIdx > 0) {
-                const prop = decl.slice(0, colonIdx).trim();
-                const rawV = decl.slice(colonIdx + 1).replace(/!important/g, '').trim();
-                el.style.setProperty(prop, rawV, 'important');
-                if (prop === 'background' || prop === 'background-color') {
+                const prop = decl.slice(0, colonIdx).trim().toLowerCase();
+                let rawV = decl.slice(colonIdx + 1).replace(/!important/g, '').trim();
+                if (rawV === 'green') rawV = '#10b981';
+                if (rawV === 'yellow') rawV = '#ffeb3b';
+
+                // If user/LLM sets "color: green" on a button or background, make the button background that color
+                if (prop === 'background' || prop === 'background-color' || (prop === 'color' && isButton)) {
                   hasBgChange = true;
+                  el.style.setProperty('background', rawV, 'important');
+                  el.style.setProperty('background-color', rawV, 'important');
                   el.style.setProperty('background-image', 'none', 'important');
-                  if (/yellow|gold|#ff|#fe|white|cyan/i.test(rawV)) {
+                  if (/yellow|gold|#ff|#fe|white|cyan|lime/i.test(rawV)) {
                     el.style.setProperty('color', '#0f1117', 'important');
+                  } else {
+                    el.style.setProperty('color', '#ffffff', 'important');
                   }
                   el.style.setProperty('box-shadow', '0 0 20px ' + rawV, 'important');
+                } else {
+                  el.style.setProperty(prop, rawV, 'important');
                 }
               }
             }
@@ -474,6 +488,16 @@ class CDPBridge {
         el.dispatchEvent(new Event('change', { bubbles: true }));
         el.dispatchEvent(new Event('input', { bubbles: true }));
 
+        // DevTools Console Integration: Log structured mutation details into page DevTools
+        try {
+          console.group('%c[Adion DevTools]%c DOM Element Modified: <' + el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + '>', 'background:#00f2fe;color:#000;font-weight:bold;padding:2px 6px;border-radius:3px;', 'font-weight:bold;');
+          console.log('Action:', actionType);
+          console.log('Value:', val);
+          console.log('Target Node:', el);
+          console.log('Final Applied Style:', el.getAttribute('style'));
+          console.groupEnd();
+        } catch (_) {}
+
         // Scroll into center view smoothly so the user sees the modification
         try {
           el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
@@ -483,7 +507,7 @@ class CDPBridge {
         const origOutline = el.style.outline;
         const origTransition = el.style.transition;
         el.style.transition = 'all 0.3s ease';
-        el.style.outline = '3px solid #ffeb3b';
+        el.style.outline = '3px solid #00f2fe';
         setTimeout(() => {
           el.style.outline = origOutline;
           el.style.transition = origTransition;
@@ -492,9 +516,12 @@ class CDPBridge {
         return {
           success: true,
           resolvedSelector: el.id ? '#' + el.id : el.tagName.toLowerCase(),
+          elementId: el.id || '',
           renderedTag: el.tagName,
           action: actionType,
           appliedValue: val,
+          finalStyle: el.getAttribute('style') || '',
+          finalOuterHTML: el.outerHTML,
           previous: prevContent.slice(0, 80),
           current: (el.innerText || el.value || el.innerHTML || '').slice(0, 80),
           computedBackground: window.getComputedStyle(el).backgroundColor,
