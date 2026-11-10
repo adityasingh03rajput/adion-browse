@@ -107,7 +107,14 @@ class STTEngine {
       .replace(/\bcolour\b/gi, 'color')
       .replace(/\byoutube\s*dot\s*com\b/gi, 'youtube.com')
       .replace(/\binstagram\s*dot\s*com\b/gi, 'instagram.com')
-      .replace(/\bgoogle\s*dot\s*com\b/gi, 'google.com');
+      .replace(/\bgoogle\s*dot\s*com\b/gi, 'google.com')
+      .replace(/\b(?:close|shut|kill)\s+(?:the|this)?\s*tap\b/gi, 'close tab')
+      .replace(/\bnew\s+tap\b/gi, 'new tab')
+      .replace(/\bswitch\s+(?:to\s+)?tap\b/gi, 'switch tab')
+      .replace(/\bthe\s+tap\b/gi, 'the tab')
+      .replace(/\bthis\s+tap\b/gi, 'this tab')
+      .replace(/\byou\s+tube\b/gi, 'youtube')
+      .replace(/\bnew\s+year\s+to\s+you\b/gi, 'open youtube');
 
     return text.trim();
   }
@@ -122,6 +129,9 @@ class STTEngine {
     formData.append('file', blob, 'speech.wav');
     formData.append('model', config.groqWhisperModel || 'whisper-large-v3-turbo');
     formData.append('response_format', 'json');
+    formData.append('language', 'en');
+    formData.append('temperature', '0.0');
+    formData.append('prompt', 'Browser commands: search YouTube, open YouTube, open google, search, close tab, new tab, scroll down, click, go back.');
 
     const res = await fetch(config.groqWhisperUrl, {
       method: 'POST',

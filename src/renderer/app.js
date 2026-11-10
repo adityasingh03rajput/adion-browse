@@ -724,7 +724,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (event.results[0].isFinal) {
           showAgentHud('PROCESSING', `Heard: "${transcript}"`);
-          stopMicrophoneStream(transcript);
+          latestTranscript = transcript;
         }
       };
 
@@ -1016,8 +1016,7 @@ document.addEventListener('DOMContentLoaded', () => {
           agentTranscriptPreview.innerText = `"${data.text}"`;
           agentTranscriptPreview.classList.add('has-text');
         }
-        // Conclude audio capture when recognized command is received
-        stopMicrophoneStream();
+        // Continuous hands-free voice mode: keep microphone open for consecutive commands
       }
     });
 
@@ -1026,7 +1025,6 @@ document.addEventListener('DOMContentLoaded', () => {
         showAgentHud('LISTENING', isListening ? 'Ready for next voice command... (listening)' : 'Listening...', true);
       } else if (data.state === 'IDLE') {
         showAgentHud('IDLE', 'Standing by', false);
-        if (isListening) stopMicrophoneStream();
       } else {
         showAgentHud(data.state, `State: ${data.state}`, isListening);
       }

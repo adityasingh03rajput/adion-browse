@@ -157,8 +157,8 @@ class AgentRuntime extends EventEmitter {
       this.audioSession.consecutiveSilenceFrames = 0;
     } else if (this.audioSession.speechDetected && !this.audioSession.isSegmenting) {
       this.audioSession.consecutiveSilenceFrames++;
-      // If speech was previously active and followed by ~6 silence frames (~750ms of post-speech pause)
-      if (this.audioSession.consecutiveSilenceFrames >= 6) {
+      // Natural speech pause: 9 silence frames (~1.15s of post-speech pause)
+      if (this.audioSession.consecutiveSilenceFrames >= 9 && this.audioSession.chunks.length >= 5) {
         console.log(`[AgentRuntime VAD] Utterance concluded after pause (${this.audioSession.totalBytes} bytes accumulated)`);
         this.audioSession.isSegmenting = true;
         this.triggerAutoEndpoint();
@@ -305,7 +305,9 @@ class AgentRuntime extends EventEmitter {
 
         if (fastIntent.type === 'CONVERSATIONAL_ACKNOWLEDGE') {
           const feedbackMsg = fastIntent.thought || 'Standing by: ready for your browser commands.';
-          this.setState(AgentState.IDLE);
+          if (!this.continuousVoice) {
+            this.setState(AgentState.IDLE);
+          }
           this.emit('feedback', { message: feedbackMsg, level: 'info' });
           this.emit('jarvis-notification', { type: 'info', message: feedbackMsg });
           this.sessionManager.recordInteraction({
