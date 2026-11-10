@@ -29,6 +29,19 @@ function loadEnv() {
   }
 
   return {
+    aiProvider: process.env.AI_PROVIDER || 'auto',
+    openaiApiKey: process.env.OPENAI_API_KEY || '',
+    openaiApiUrl: process.env.OPENAI_API_URL || 'https://api.openai.com/v1/chat/completions',
+    openaiModel: process.env.OPENAI_MODEL || 'gpt-4o',
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
+    anthropicApiUrl: process.env.ANTHROPIC_API_URL || 'https://api.anthropic.com/v1/messages',
+    anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022',
+    geminiApiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '',
+    geminiApiUrl: process.env.GEMINI_API_URL || 'https://generativelanguage.googleapis.com/v1beta/models',
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+    customApiKey: process.env.CUSTOM_API_KEY || '',
+    customApiUrl: process.env.CUSTOM_API_URL || '',
+    customModel: process.env.CUSTOM_MODEL || '',
     groqApiKey: process.env.GROQ_API_KEY || '',
     groqApiUrl: process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions',
     groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',

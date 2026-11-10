@@ -225,6 +225,19 @@ class ControlPlane {
       await this.runtime.processCommand(message, 'jarvis-chat');
       return this.runtime.sessionManager.getHistory();
     });
+
+    // 3rd-Party Model Integration & Provider Management
+    ipcMain.handle('ai:get-providers', () => {
+      return this.runtime.modelClient ? this.runtime.modelClient.listProviders() : { providers: [] };
+    });
+
+    ipcMain.handle('ai:set-provider', (event, providerName) => {
+      return this.runtime.modelClient ? this.runtime.modelClient.setActiveProvider(providerName) : null;
+    });
+
+    ipcMain.handle('ai:configure-provider', (event, { name, apiKey, apiUrl, model }) => {
+      return this.runtime.modelClient ? this.runtime.modelClient.configureProvider(name, { apiKey, apiUrl, model }) : null;
+    });
   }
 
   /**

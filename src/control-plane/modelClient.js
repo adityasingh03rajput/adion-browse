@@ -1,13 +1,16 @@
 const config = require('./config');
 const { ActionType } = require('./protocol');
+const ProviderRegistry = require('./providers/providerRegistry');
 
 /**
  * Autonomous Model Client & Multi-Step LLM Function Calling Coordinator
- * Routes user intents to Groq (LPU accelerated), Mercury, or Local Model (Qwen 2.5 Coder / Llama 3.2)
- * to produce deterministic, structured JSON payloads for browser automation.
+ * Routes user intents to 3rd-party models (ChatGPT, Claude, Gemini/Antigravity, Custom)
+ * or zero-cost Groq models to produce deterministic, structured JSON payloads for browser automation.
  */
 class ModelClient {
   constructor() {
+    this.registry = new ProviderRegistry(config);
+
     this.groqKey = config.groqApiKey;
     this.groqUrl = config.groqApiUrl;
     this.groqModel = config.groqModel;
@@ -235,7 +238,27 @@ User Command: "${userInput}"
 JSON Action Plan:
 `;
 
-    // 1. Try Groq Cloud (Ultra-Fast LPU Inference)
+    // 1. Try Active Model Provider (OpenAI ChatGPT, Anthropic Claude, Gemini, Custom, or Groq)
+    const activeProvider = this.registry ? this.registry.getActiveProvider() : null;
+    if (activeProvider && activeProvider.isConfigured()) {
+      try {
+        console.log(`[ModelClient] Querying active provider: ${activeProvider.displayName} (${activeProvider.model})...`);
+        const result = await activeProvider.plan(prompt, this.systemPrompt);
+        if (result && (Array.isArray(result.actions) || result.thought)) {
+          if (!Array.isArray(result.actions)) result.actions = [];
+          if (result.actions.length > 0) {
+            console.log(`[ModelClient] ${activeProvider.displayName} generated ${result.actions.length} action(s):`, result.thought);
+          } else {
+            console.log(`[ModelClient] ${activeProvider.displayName} conversational evaluation:`, result.thought);
+          }
+          return result;
+        }
+      } catch (err) {
+        console.warn(`[ModelClient] Active provider "${activeProvider.name}" notice:`, err.message);
+      }
+    }
+
+    // 2. Direct Groq Cloud Fallback (Ultra-Fast LPU Inference)
     if (this.groqKey) {
       try {
         console.log(`[ModelClient] Querying Groq Cloud (${this.groqModel})...`);
@@ -254,7 +277,7 @@ JSON Action Plan:
       }
     }
 
-    // 2. Try Mercury AI
+    // 3. Try Mercury AI
     if (this.mercuryKey) {
       try {
         console.log(`[ModelClient] Querying Mercury AI (${this.mercuryModel})...`);
@@ -268,7 +291,7 @@ JSON Action Plan:
       }
     }
 
-    // 3. Try Local Model (Ollama / Qwen 2.5 Coder 3B / Llama 3.2 3B)
+    // 4. Try Local Model (Ollama / Qwen 2.5 Coder 3B / Llama 3.2 3B)
     try {
       const localResult = await this.queryLocalModel(prompt);
       if (localResult && localResult.actions && localResult.actions.length > 0) {
@@ -280,6 +303,34 @@ JSON Action Plan:
     }
 
     return null;
+  }
+
+  /**
+   * Set active AI provider (openai, anthropic, gemini, custom, groq, auto)
+   */
+  setActiveProvider(name) {
+    return this.registry.setActiveProvider(name);
+  }
+
+  /**
+   * Get active AI provider instance
+   */
+  getActiveProvider() {
+    return this.registry.getActiveProvider();
+  }
+
+  /**
+   * List all registered providers and their status
+   */
+  listProviders() {
+    return this.registry.listProviders();
+  }
+
+  /**
+   * Dynamically configure credentials for a provider
+   */
+  configureProvider(name, config) {
+    return this.registry.configureProvider(name, config);
   }
 
   /**

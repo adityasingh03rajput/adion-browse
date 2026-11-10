@@ -245,6 +245,43 @@ class MCPServer extends EventEmitter {
           type: 'object',
           properties: {}
         }
+      },
+      {
+        name: 'ai_list_providers',
+        description: 'List all available 3rd-party AI model providers (ChatGPT/OpenAI, Claude/Anthropic, Gemini/Antigravity, Custom, Groq) and active status.',
+        inputSchema: {
+          type: 'object',
+          properties: {}
+        }
+      },
+      {
+        name: 'ai_set_provider',
+        description: 'Set the active AI model provider to operate Adion Browse directly in place of default models.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            provider: {
+              type: 'string',
+              enum: ['openai', 'anthropic', 'gemini', 'custom', 'groq', 'auto'],
+              description: 'Name of the AI provider to activate'
+            }
+          },
+          required: ['provider']
+        }
+      },
+      {
+        name: 'ai_configure_credentials',
+        description: 'Configure API key, base URL, or active model for a 3rd-party provider (e.g. OpenAI, Anthropic, Gemini, Custom).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            provider: { type: 'string', description: 'Provider name (openai, anthropic, gemini, custom)' },
+            apiKey: { type: 'string', description: 'API Key' },
+            apiUrl: { type: 'string', description: 'Optional custom API endpoint' },
+            model: { type: 'string', description: 'Target model ID (e.g., gpt-4o, claude-3-5-sonnet, gemini-2.0-flash)' }
+          },
+          required: ['provider']
+        }
       }
     ];
   }
@@ -763,6 +800,26 @@ class MCPServer extends EventEmitter {
           shieldsEnabled: store.getSetting('shieldsEnabled'),
           stats: store.get('stats') || { trackersBlocked: 0, adsBlocked: 0, httpsUpgrades: 0 }
         };
+      }
+
+      case 'ai_list_providers': {
+        return this.runtime?.modelClient ? this.runtime.modelClient.listProviders() : { providers: [] };
+      }
+
+      case 'ai_set_provider': {
+        if (!this.runtime?.modelClient) throw new Error('ModelClient unavailable');
+        const active = this.runtime.modelClient.setActiveProvider(args.provider);
+        return { success: true, activeProvider: active ? active.name : args.provider };
+      }
+
+      case 'ai_configure_credentials': {
+        if (!this.runtime?.modelClient) throw new Error('ModelClient unavailable');
+        const updated = this.runtime.modelClient.configureProvider(args.provider, {
+          apiKey: args.apiKey,
+          apiUrl: args.apiUrl,
+          model: args.model
+        });
+        return { success: true, provider: updated };
       }
 
       default:
