@@ -727,7 +727,25 @@ document.addEventListener('DOMContentLoaded', () => {
   /**
    * Start streaming hardware microphone audio directly across IPC to the Control Plane
    */
+  function showOmniboxVoiceStatus(visible, text = 'LISTENING...') {
+    const pill = document.getElementById('omniboxVoicePill');
+    const label = document.getElementById('omniboxVoiceStatusText');
+    if (!pill) return;
+    if (visible) {
+      if (label) label.textContent = text;
+      pill.classList.add('active');
+    } else {
+      pill.classList.remove('active');
+    }
+  }
+
   async function startMicrophoneStream() {
+    // Immediate tactile feedback on button and omnibox status pill
+    if (btnVoiceAgent) btnVoiceAgent.classList.add('listening');
+    showOmniboxVoiceStatus(true, 'LISTENING...');
+    showAgentHud('LISTENING', 'Microphone active - stream capturing...', true);
+    isListening = true;
+
     try {
       latestTranscript = '';
       audioStream = await navigator.mediaDevices.getUserMedia({
@@ -781,18 +799,18 @@ document.addEventListener('DOMContentLoaded', () => {
       source.connect(scriptProcessor);
       scriptProcessor.connect(audioContext.destination);
 
-      isListening = true;
-      btnVoiceAgent.classList.add('listening');
       window.adionAPI.agent.startVoice();
-      showAgentHud('LISTENING', 'Microphone active - stream capturing...', true);
 
       if (recognition) {
         try { recognition.start(); } catch(e){}
       }
     } catch (err) {
       console.warn('[Microphone Stream] Error accessing microphone:', err);
-      showAgentHud('WARNING', 'Microphone access denied. Type command:');
-      promptManualCommand();
+      isListening = false;
+      if (btnVoiceAgent) btnVoiceAgent.classList.remove('listening');
+      showOmniboxVoiceStatus(false);
+      showJarvisToast('Microphone access denied or busy. Check system settings.', 'error');
+      showAgentHud('WARNING', 'Microphone unavailable. Type in chat instead.');
     }
   }
 
@@ -801,7 +819,8 @@ document.addEventListener('DOMContentLoaded', () => {
    */
   function stopMicrophoneStream(transcript = '') {
     isListening = false;
-    btnVoiceAgent.classList.remove('listening');
+    if (btnVoiceAgent) btnVoiceAgent.classList.remove('listening');
+    showOmniboxVoiceStatus(false);
 
     if (scriptProcessor) {
       scriptProcessor.disconnect();
@@ -827,6 +846,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function toggleVoiceAgent() {
     if (isListening) {
       stopMicrophoneStream();
+      showOmniboxVoiceStatus(true, 'PROCESSING...');
+      setTimeout(() => showOmniboxVoiceStatus(false), 1200);
       showAgentHud('PROCESSING', 'Analyzing audio stream...');
     } else {
       startMicrophoneStream();
@@ -842,8 +863,21 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   if (btnVoiceAgent) {
+    btnVoiceAgent.addEventListener('pointerdown', (e) => {
+      // Prevent omnibox input from stealing focus or triggering text selection
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    btnVoiceAgent.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleVoiceAgent();
+    }, { passive: false });
+
     btnVoiceAgent.addEventListener('click', (e) => {
-      if (e) e.stopPropagation();
+      e.preventDefault();
+      e.stopPropagation();
       toggleVoiceAgent();
     });
   }

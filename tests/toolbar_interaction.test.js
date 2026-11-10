@@ -42,10 +42,20 @@ async function testToolbarInteractions() {
   );
   console.log('  ✔ Child SVG pointer-events suppression verified.');
 
-  // Test 2: Verify HTML contains all 8 critical toolbar buttons
-  console.log('\nTest 2: Verifying HTML element declarations for all 8 toolbar buttons...');
+  // Omnibox actions container must have higher z-index than text input
+  assert.ok(
+    css.includes('.omnibox-actions') && css.includes('z-index: 60'),
+    'Omnibox actions must have z-index: 60 so input never steals taps'
+  );
+  console.log('  ✔ .omnibox-actions has z-index: 60 (input focus cannot steal button taps).');
+
+  // Test 2: Verify HTML contains all 8 critical toolbar buttons and Voice Pill
+  console.log('\nTest 2: Verifying HTML element declarations for toolbar buttons & voice pill...');
   const htmlPath = path.join(__dirname, '../src/renderer/index.html');
   const html = fs.readFileSync(htmlPath, 'utf8');
+
+  assert.ok(html.includes('id="omniboxVoicePill"'), 'index.html must contain omniboxVoicePill');
+  console.log('  ✔ Live Omnibox Voice Status Pill confirmed present in DOM.');
 
   const requiredButtons = [
     'btnVoiceAgent',
@@ -127,3 +137,4 @@ testToolbarInteractions().catch((err) => {
   console.error('Toolbar test failed:', err);
   process.exit(1);
 });
+

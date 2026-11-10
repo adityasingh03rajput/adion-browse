@@ -13,8 +13,10 @@ if (!gotTheLock) {
   process.exit(0);
 }
 
-// Silence non-critical Chromium C++ net warnings
+// Silence non-critical Chromium C++ net warnings and grant continuous media streams
 app.commandLine.appendSwitch('log-level', '3');
+app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
+app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer');
 
 // Main Electron process
 let mainWindow = null;
@@ -120,10 +122,14 @@ async function createWindow() {
 
   // Grant audio/microphone capture permissions for the AI Voice Control Plane
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    if (permission === 'media') {
+    if (permission === 'media' || permission === 'microphone' || permission === 'audio-capture') {
       return callback(true);
     }
     callback(false);
+  });
+
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+    return permission === 'media' || permission === 'microphone' || permission === 'audio-capture';
   });
 
   // Load the browser chrome UI
