@@ -114,7 +114,10 @@ class STTEngine {
       .replace(/\bthe\s+tap\b/gi, 'the tab')
       .replace(/\bthis\s+tap\b/gi, 'this tab')
       .replace(/\byou\s+tube\b/gi, 'youtube')
-      .replace(/\bnew\s+year\s+to\s+you\b/gi, 'open youtube');
+      .replace(/\bnew\s+year\s+to\s+you\b/gi, 'open youtube')
+      .replace(/\b(?:what'?s\s+up|what\s+app)\s+web\b/gi, 'whatsapp web')
+      .replace(/\bwhat'?s\s+up\s+there\b/gi, 'whatsapp web')
+      .replace(/\bwhat'?s\s+up\b/gi, 'whatsapp');
 
     return text.trim();
   }
@@ -131,7 +134,7 @@ class STTEngine {
     formData.append('response_format', 'json');
     formData.append('language', 'en');
     formData.append('temperature', '0.0');
-    formData.append('prompt', 'Browser commands: search YouTube, open YouTube, open google, search, close tab, new tab, scroll down, click, go back.');
+    formData.append('prompt', 'Browser commands: search WhatsApp Web, open WhatsApp Web, search YouTube, open YouTube, open google, search, close tab, new tab, scroll down, click, go back, WhatsApp, YouTube, Google, Reddit, GitHub, Wikipedia, Twitter, ChatGPT.');
 
     const res = await fetch(config.groqWhisperUrl, {
       method: 'POST',
@@ -273,9 +276,35 @@ class STTEngine {
   }
 
   /**
+   * Software Automatic Gain Control (AGC) & Volume Normalization
+   * Boosts quiet microphone audio so Whisper acoustic models receive optimal speech levels
+   */
+  normalizePCM(pcmBuffer) {
+    if (!pcmBuffer || pcmBuffer.length < 2) return pcmBuffer;
+    let maxAmp = 0;
+    for (let i = 0; i < pcmBuffer.length - 1; i += 2) {
+      const val = Math.abs(pcmBuffer.readInt16LE(i));
+      if (val > maxAmp) maxAmp = val;
+    }
+    // If audio is quiet (peak under 65% full scale), apply dynamic boost up to 4.5x
+    if (maxAmp > 100 && maxAmp < 22000) {
+      const multiplier = Math.min(4.5, 24000 / maxAmp);
+      const normalized = Buffer.alloc(pcmBuffer.length);
+      for (let i = 0; i < pcmBuffer.length - 1; i += 2) {
+        const sample = pcmBuffer.readInt16LE(i);
+        const boosted = Math.max(-32767, Math.min(32767, Math.round(sample * multiplier)));
+        normalized.writeInt16LE(boosted, i);
+      }
+      return normalized;
+    }
+    return pcmBuffer;
+  }
+
+  /**
    * Package raw 16kHz PCM into a standard 44-byte header WAV buffer
    */
-  createWavBuffer(pcmBuffer) {
+  createWavBuffer(rawPcmBuffer) {
+    const pcmBuffer = this.normalizePCM(rawPcmBuffer);
     const wavHeader = Buffer.alloc(44);
     const numChannels = 1;
     const sampleRate = 16000;

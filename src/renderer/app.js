@@ -839,7 +839,8 @@ document.addEventListener('DOMContentLoaded', () => {
         audio: {
           channelCount: 1,
           echoCancellation: true,
-          noiseSuppression: true
+          noiseSuppression: true,
+          autoGainControl: true
         }
       });
 
@@ -860,11 +861,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isListening) return;
         const inputData = e.inputBuffer.getChannelData(0);
 
-        // Convert Float32Array to 16-bit signed PCM
+        // Convert Float32Array to 16-bit signed PCM with 1.35x digital preamp
         const pcmBuffer = new Int16Array(inputData.length);
         let sumSquares = 0;
         for (let i = 0; i < inputData.length; i++) {
-          const s = Math.max(-1, Math.min(1, inputData[i]));
+          const s = Math.max(-1, Math.min(1, inputData[i] * 1.35));
           pcmBuffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
           sumSquares += s * s;
         }
