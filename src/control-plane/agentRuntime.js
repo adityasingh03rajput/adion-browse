@@ -1,5 +1,6 @@
 const EventEmitter = require('events');
 const { AgentState, ActionType } = require('./protocol');
+const STTEngine = require('./sttEngine');
 
 /**
  * Asynchronous Agent Runtime
@@ -14,18 +15,22 @@ class AgentRuntime extends EventEmitter {
     this.context = contextEngine;
     this.vision = visionGrounder;
     this.vault = securityVault;
+    this.stt = new STTEngine();
     this.state = AgentState.IDLE;
     this.currentTask = null;
     this.actionHistory = [];
 
-    // Audio stream session state
+    // Audio stream session state & VAD tracking
     this.audioSession = {
       active: false,
       chunks: [],
       totalBytes: 0,
       startTime: null,
       chunkCount: 0,
-      peakEnergy: 0
+      peakEnergy: 0,
+      speechDetected: false,
+      consecutiveSilenceFrames: 0,
+      isSegmenting: false
     };
   }
 
@@ -48,7 +53,10 @@ class AgentRuntime extends EventEmitter {
       totalBytes: 0,
       startTime: Date.now(),
       chunkCount: 0,
-      peakEnergy: 0
+      peakEnergy: 0,
+      speechDetected: false,
+      consecutiveSilenceFrames: 0,
+      isSegmenting: false
     };
     this.setState(AgentState.LISTENING);
     console.log('[AgentRuntime Audio] Voice stream session initialized');
@@ -60,7 +68,7 @@ class AgentRuntime extends EventEmitter {
    * Computes acoustic RMS energy and evaluates Voice Activity Detection (VAD)
    */
   processAudioStreamChunk(audioChunk) {
-    if (!this.audioSession.active) return;
+    if (!this.audioSession.active || this.audioSession.isSegmenting) return;
 
     let buffer;
     if (Buffer.isBuffer(audioChunk)) {
@@ -91,11 +99,26 @@ class AgentRuntime extends EventEmitter {
       this.audioSession.peakEnergy = rms;
     }
 
+    // Voice Activity Detection (VAD) threshold
     const isSpeechActive = rms > 0.012;
 
     // Log audio frame telemetry to stdout
     if (this.audioSession.chunkCount % 5 === 1 || isSpeechActive) {
       console.log(`[AgentRuntime Audio] Frame #${this.audioSession.chunkCount} | Size: ${buffer.length}B | RMS: ${rms.toFixed(4)} | Speech: ${isSpeechActive}`);
+    }
+
+    // VAD Auto-Segmentation & Endpointing State Machine
+    if (isSpeechActive) {
+      this.audioSession.speechDetected = true;
+      this.audioSession.consecutiveSilenceFrames = 0;
+    } else if (this.audioSession.speechDetected && !this.audioSession.isSegmenting) {
+      this.audioSession.consecutiveSilenceFrames++;
+      // If speech was previously active and followed by ~6 silence frames (~750ms of post-speech pause)
+      if (this.audioSession.consecutiveSilenceFrames >= 6) {
+        console.log(`[AgentRuntime VAD] Auto-segmentation triggered: End of utterance detected after pause (${this.audioSession.totalBytes} bytes accumulated)`);
+        this.audioSession.isSegmenting = true;
+        this.triggerAutoEndpoint();
+      }
     }
 
     // Emit live audio level for UI visualizer
@@ -105,6 +128,40 @@ class AgentRuntime extends EventEmitter {
       chunkCount: this.audioSession.chunkCount,
       totalBytes: this.audioSession.totalBytes
     });
+  }
+
+  /**
+   * Automatically segment speech buffer, run STT transcription, and dispatch parsed intent
+   */
+  async triggerAutoEndpoint() {
+    if (this.audioSession.chunks.length === 0) {
+      this.audioSession.isSegmenting = false;
+      return;
+    }
+
+    const fullPcm = Buffer.concat(this.audioSession.chunks);
+    this.audioSession.active = false;
+    this.audioSession.isSegmenting = false;
+
+    this.setState(AgentState.PARSING_INTENT);
+    this.emit('feedback', { message: 'Transcribing speech audio with local STT...', level: 'info' });
+
+    try {
+      const transcript = await this.stt.transcribePCM(fullPcm);
+      console.log(`[AgentRuntime Pipeline] Auto-transcribed speech command: "${transcript}"`);
+
+      if (transcript && transcript.trim()) {
+        this.emit('transcript', { text: transcript });
+        await this.processCommand(transcript);
+      } else {
+        this.emit('feedback', { message: 'No clear voice command identified', level: 'warning' });
+        this.setState(AgentState.IDLE);
+      }
+    } catch (err) {
+      console.error('[AgentRuntime Pipeline] STT Error:', err);
+      this.emit('feedback', { message: `STT error: ${err.message}`, level: 'error' });
+      this.setState(AgentState.IDLE);
+    }
   }
 
   /**
@@ -123,20 +180,27 @@ class AgentRuntime extends EventEmitter {
 
     console.log(`[AgentRuntime Audio] Stream closed. Duration: ${durationMs}ms, Chunks: ${chunkCount}, Total Bytes: ${totalBytes}, Peak Energy: ${peakEnergy.toFixed(4)}`);
 
+    const fullPcm = this.audioSession.chunks.length > 0 ? Buffer.concat(this.audioSession.chunks) : Buffer.alloc(0);
     this.audioSession.active = false;
 
     let finalTranscript = (providedTranscript || '').trim();
 
-    if (!finalTranscript && totalBytes > 0) {
-      console.log(`[AgentRuntime Audio] Transmitting ${totalBytes} bytes of audio data to Local STT model`);
+    // If no external transcript was provided, run local STT engine on accumulated PCM
+    if (!finalTranscript && fullPcm.length > 0) {
+      console.log(`[AgentRuntime Audio] Transmitting ${fullPcm.length} bytes of audio data to Local STT engine`);
       if (peakEnergy < 0.005) {
         this.emit('feedback', { message: 'Silence detected (no vocal speech audio recorded)', level: 'warning' });
         this.setState(AgentState.IDLE);
         return { transcript: '' };
       }
+
+      this.setState(AgentState.PARSING_INTENT);
+      finalTranscript = await this.stt.transcribePCM(fullPcm);
+      console.log(`[AgentRuntime STT] Local STT transcribed: "${finalTranscript}"`);
     }
 
     if (finalTranscript) {
+      this.emit('transcript', { text: finalTranscript });
       await this.processCommand(finalTranscript);
       return { transcript: finalTranscript };
     } else {

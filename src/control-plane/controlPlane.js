@@ -62,6 +62,10 @@ class ControlPlane {
       this.sendToUI(IPCChannels.AGENT_FEEDBACK_MESSAGE, data);
     });
 
+    this.runtime.on('transcript', (data) => {
+      this.sendToUI(IPCChannels.AGENT_VOICE_TRANSCRIPT, data);
+    });
+
     this.runtime.on('audio-level', (data) => {
       this.sendToUI('agent:audio-level', data);
     });
