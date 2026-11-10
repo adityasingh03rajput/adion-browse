@@ -810,22 +810,29 @@ document.addEventListener('DOMContentLoaded', () => {
     showAgentHud('LISTENING', 'Microphone active - speak now...', true);
     playAudioFeedbackCue(true);
 
+    // Relay mic activation to main process terminal immediately (before IPC)
+    try { window.adionAPI.log('[Voice UI] 🎙️ startMicrophoneStream() called — mic button pressed'); } catch(_) {}
+
     // Tell Control Plane immediately that speech session has started
     try {
       window.adionAPI.agent.startVoice();
-      console.log('[Voice UI] 🎙️ Microphone button activated: listening started');
-    } catch (_) {}
+      window.adionAPI.log('[Voice UI] ✅ agent:voice-start IPC sent to main process');
+    } catch (e) {
+      try { window.adionAPI.log('[Voice UI] ❌ agent.startVoice() threw: ' + e); } catch(_) {}
+    }
 
     try {
       latestTranscript = '';
+      try { window.adionAPI.log('[Voice UI] Requesting getUserMedia (microphone)...'); } catch(_) {}
       audioStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
-          sampleRate: 16000,
           echoCancellation: true,
           noiseSuppression: true
         }
       });
+
+      try { window.adionAPI.log('[Voice UI] ✅ getUserMedia() granted — mic stream open'); } catch(_) {}
 
       audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       if (audioContext.state === 'suspended') {
@@ -837,6 +844,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // 2048 buffer at 16kHz = ~128ms PCM chunk transmission
       scriptProcessor = audioContext.createScriptProcessor(2048, 1, 1);
 
+      let chunksSent = 0;
       scriptProcessor.onaudioprocess = (e) => {
         if (!isListening) return;
         const inputData = e.inputBuffer.getChannelData(0);
@@ -866,6 +874,12 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         }
 
+        chunksSent++;
+        // Log first chunk and every 5th to terminal via IPC relay
+        if (chunksSent === 1) {
+          try { window.adionAPI.log(`[Voice UI] 🔊 First PCM chunk sent to main (size: ${pcmBuffer.buffer.byteLength}B, RMS: ${rms.toFixed(4)})`); } catch(_) {}
+        }
+
         // Stream raw PCM frame across IPC to Control Plane / Local Model
         window.adionAPI.agent.sendVoiceChunk(pcmBuffer.buffer);
       };
@@ -877,6 +891,8 @@ document.addEventListener('DOMContentLoaded', () => {
         try { recognition.start(); } catch(e){}
       }
     } catch (err) {
+      const errMsg = err && err.message ? err.message : String(err);
+      try { window.adionAPI.log('[Voice UI] ❌ getUserMedia() FAILED: ' + errMsg); } catch(_) {}
       console.warn('[Microphone Stream] Error accessing microphone:', err);
       isListening = false;
       if (btnVoiceAgent) btnVoiceAgent.classList.remove('listening');

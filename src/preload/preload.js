@@ -46,6 +46,9 @@ contextBridge.exposeInMainWorld('adionAPI', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   updateSetting: (key, value) => ipcRenderer.invoke('update-setting', { key, value }),
 
+  // Diagnostic terminal relay — sends renderer-side logs straight to main process stdout
+  log: (msg) => ipcRenderer.send('renderer:log', msg),
+
   // AI Voice & Autonomous Control Plane API
   agent: {
     sendCommand: (commandText) => ipcRenderer.invoke('agent:send-command', commandText),

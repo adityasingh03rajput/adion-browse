@@ -135,16 +135,27 @@ async function createWindow() {
   // Load the browser chrome UI
   await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 
-  // Forward renderer voice and navigation logs to terminal (compatible with Electron 45+ and legacy)
-  mainWindow.webContents.on('console-message', (event, ...args) => {
-    const rawMsg = (event && typeof event.message === 'string')
-      ? event.message
-      : (typeof args[1] === 'string' ? args[1] : (typeof event === 'string' ? event : ''));
+  // Renderer diagnostic relay — receives explicit log() IPC calls from renderer for terminal visibility
+  ipcMain.on('renderer:log', (event, msg) => {
+    console.log(`[Renderer] ${msg}`);
+  });
 
+  // Forward renderer console messages to terminal (Electron 45+ compatible)
+  mainWindow.webContents.on('console-message', (...args) => {
+    // Electron 45+: single Event object with .message property
+    // Legacy: (event, level, message, line, sourceId)
+    let rawMsg = '';
+    for (const a of args) {
+      if (a && typeof a.message === 'string') { rawMsg = a.message; break; }
+      if (typeof a === 'string' && a.length > 0) { rawMsg = a; break; }
+    }
     if (!rawMsg) return;
     if (rawMsg.includes('Electron Security Warning') || rawMsg.includes('Autofill.')) return;
-    if (rawMsg.includes('[Voice') || rawMsg.includes('[Microphone') || rawMsg.includes('Speech') || rawMsg.includes('[AgentRuntime') || rawMsg.includes('Heard:') || rawMsg.includes('[STT') || rawMsg.includes('[Nav]')) {
-      console.log(`[Renderer Voice] ${rawMsg}`);
+    // Forward all renderer logs that are prefixed with our tags
+    if (rawMsg.includes('[Voice') || rawMsg.includes('[Microphone') || rawMsg.includes('[Mic') ||
+        rawMsg.includes('Speech') || rawMsg.includes('[AgentRuntime') || rawMsg.includes('Heard:') ||
+        rawMsg.includes('[STT') || rawMsg.includes('[Nav]') || rawMsg.includes('[Renderer]')) {
+      console.log(`[Renderer] ${rawMsg}`);
     }
   });
 

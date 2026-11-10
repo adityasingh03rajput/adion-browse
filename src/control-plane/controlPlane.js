@@ -150,11 +150,17 @@ class ControlPlane {
     // Voice stream initiated from microphone HUD
     ipcMain.on(IPCChannels.AGENT_VOICE_STREAM_START, () => {
       console.log('[ControlPlane] 🎙️ Received voice stream start signal from UI');
+      this._voiceDataReceived = false;
       this.runtime.startAudioSession();
     });
 
     // Voice stream audio chunks transmitted from microphone
     ipcMain.on(IPCChannels.AGENT_VOICE_STREAM_DATA, (event, audioChunk) => {
+      if (!this._voiceDataReceived) {
+        this._voiceDataReceived = true;
+        const size = audioChunk ? (audioChunk.byteLength || audioChunk.length || 'unknown') : 0;
+        console.log(`[ControlPlane] 🔊 First PCM audio chunk received from renderer (size: ${size}B)`);
+      }
       this.runtime.processAudioStreamChunk(audioChunk);
     });
 
