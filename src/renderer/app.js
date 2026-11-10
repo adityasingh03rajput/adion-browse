@@ -482,14 +482,17 @@ document.addEventListener('DOMContentLoaded', () => {
     agentHudState.innerText = stateText;
     agentHudMessage.innerText = message;
 
+    const inVoiceMode = isListening || isListeningMode || stateText === 'LISTENING';
+
     agentHudPulse.className = 'agent-hud-pulse';
-    if (isListeningMode) {
+    if (inVoiceMode) {
       agentHudPulse.classList.add('listening');
-    } else if (stateText === 'EXECUTING_ACTION' || stateText === 'PROCESSING') {
+    } else if (stateText === 'EXECUTING_ACTION' || stateText === 'PROCESSING' || stateText === 'PARSING_INTENT') {
       agentHudPulse.classList.add('executing');
     }
 
-    if (!isListeningMode && stateText !== 'EXECUTING_ACTION') {
+    // Only auto-hide if NOT actively in continuous listening mode
+    if (!inVoiceMode && stateText !== 'EXECUTING_ACTION' && stateText !== 'PARSING_INTENT') {
       hudHideTimeout = setTimeout(() => {
         agentHudOverlay.classList.remove('visible');
         agentTranscriptPreview.classList.remove('has-text');
@@ -628,24 +631,41 @@ document.addEventListener('DOMContentLoaded', () => {
   // Bind Decoupled Control Plane Event Listeners
   if (window.adionAPI && window.adionAPI.agent) {
     window.adionAPI.agent.onStateChange((data) => {
-      showAgentHud(data.state, `State: ${data.state}`);
+      if (data.state === 'LISTENING') {
+        showAgentHud('LISTENING', isListening ? 'Ready for next voice command... (listening)' : 'Listening...', true);
+      } else {
+        showAgentHud(data.state, `State: ${data.state}`, isListening);
+      }
     });
 
     window.adionAPI.agent.onActionStarted((action) => {
-      showAgentHud('EXECUTING_ACTION', `Executing: ${action.type}`);
+      showAgentHud('EXECUTING_ACTION', `Executing: ${action.type}`, isListening);
     });
 
     window.adionAPI.agent.onActionFinished((action) => {
-      showAgentHud('COMPLETED', `Finished: ${action.type}`);
+      if (isListening) {
+        showAgentHud('LISTENING', `Action complete. Ready for next command...`, true);
+      } else {
+        showAgentHud('COMPLETED', `Finished: ${action.type}`, false);
+      }
     });
 
     window.adionAPI.agent.onFeedback((feedback) => {
-      showAgentHud(feedback.level.toUpperCase(), feedback.message);
+      showAgentHud(feedback.level.toUpperCase(), feedback.message, isListening);
     });
 
     window.adionAPI.agent.onAudioLevel((data) => {
+      if (!isListening) return;
       if (data.isSpeechActive) {
         agentHudState.innerText = `SPEECH (${(data.rms * 100).toFixed(0)}%)`;
+        agentHudPulse.style.transform = `scale(${Math.min(1.8, 1.0 + data.rms * 5)})`;
+        agentHudPulse.style.boxShadow = '0 0 16px #10b981';
+      } else {
+        if (agentHudState.innerText.startsWith('SPEECH')) {
+          agentHudState.innerText = 'LISTENING';
+        }
+        agentHudPulse.style.transform = 'scale(1.0)';
+        agentHudPulse.style.boxShadow = '0 0 8px #10b981';
       }
     });
 
@@ -653,6 +673,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (data.action === 'OPEN_SETTINGS' && btnSettings) btnSettings.click();
       if (data.action === 'OPEN_BOOKMARKS' && btnBookmarksMenu) btnBookmarksMenu.click();
       if (data.action === 'OPEN_HISTORY' && btnHistory) btnHistory.click();
+      if (data.action === 'STOP_VOICE') {
+        stopMicrophoneStream();
+        showAgentHud('IDLE', 'Voice mode stopped', false);
+      }
     });
   }
 });

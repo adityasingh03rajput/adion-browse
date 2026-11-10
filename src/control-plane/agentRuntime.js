@@ -21,6 +21,7 @@ class AgentRuntime extends EventEmitter {
     this.state = AgentState.IDLE;
     this.currentTask = null;
     this.actionHistory = [];
+    this.continuousVoice = false;
 
     // Audio stream session state & VAD tracking
     this.audioSession = {
@@ -46,9 +47,10 @@ class AgentRuntime extends EventEmitter {
   }
 
   /**
-   * Start a streaming audio session
+   * Start a streaming audio session (Continuous Hands-Free Voice Mode)
    */
   startAudioSession() {
+    this.continuousVoice = true;
     this.audioSession = {
       active: true,
       chunks: [],
@@ -61,8 +63,30 @@ class AgentRuntime extends EventEmitter {
       isSegmenting: false
     };
     this.setState(AgentState.LISTENING);
-    console.log('[AgentRuntime Audio] Voice stream session initialized');
+    console.log('[AgentRuntime Audio] Continuous voice stream session initialized');
     this.emit('feedback', { message: 'Microphone stream open - capturing audio frames...', level: 'info' });
+  }
+
+  /**
+   * Re-arm the audio session for continuous hands-free voice interaction
+   * Cleans accumulated frames and silence tracking to receive subsequent commands
+   */
+  rearmAudioSession() {
+    if (!this.continuousVoice) return;
+    this.audioSession = {
+      active: true,
+      chunks: [],
+      totalBytes: 0,
+      startTime: Date.now(),
+      chunkCount: 0,
+      peakEnergy: 0,
+      speechDetected: false,
+      consecutiveSilenceFrames: 0,
+      isSegmenting: false
+    };
+    this.setState(AgentState.LISTENING);
+    console.log('[AgentRuntime Audio] Voice session re-armed: ready for next speech command');
+    this.emit('feedback', { message: 'Ready for next voice command... (listening)', level: 'info' });
   }
 
   /**
@@ -157,12 +181,17 @@ class AgentRuntime extends EventEmitter {
         await this.processCommand(transcript);
       } else {
         this.emit('feedback', { message: 'No clear voice command identified', level: 'warning' });
-        this.setState(AgentState.IDLE);
       }
     } catch (err) {
       console.error('[AgentRuntime Pipeline] STT Error:', err);
       this.emit('feedback', { message: `STT error: ${err.message}`, level: 'error' });
-      this.setState(AgentState.IDLE);
+    } finally {
+      // Hands-free continuous loop: Automatically re-arm microphone session for next command
+      if (this.continuousVoice) {
+        this.rearmAudioSession();
+      } else {
+        this.setState(AgentState.IDLE);
+      }
     }
   }
 
@@ -170,6 +199,7 @@ class AgentRuntime extends EventEmitter {
    * Finalize the audio stream session and route accumulated speech to model / intent parser
    */
   async stopAudioSession(providedTranscript = null) {
+    this.continuousVoice = false;
     if (!this.audioSession.active && !providedTranscript) {
       this.setState(AgentState.IDLE);
       return { transcript: '' };
@@ -219,6 +249,16 @@ class AgentRuntime extends EventEmitter {
     const text = rawInput.trim();
     if (!text) return;
 
+    // Hands-free voice stop command
+    if (/(stop listening|turn off (mic|microphone|voice)|exit voice|stop voice|cancel voice|shut down voice)/i.test(text)) {
+      this.continuousVoice = false;
+      this.audioSession.active = false;
+      this.emit('shell-action', { action: 'STOP_VOICE' });
+      this.setState(AgentState.IDLE);
+      this.emit('feedback', { message: 'Voice agent stopped listening', level: 'info' });
+      return;
+    }
+
     this.setState(AgentState.PARSING_INTENT, { input: text });
     this.emit('feedback', { message: `Autonomous Agent coordinating: "${text}"`, level: 'info' });
 
@@ -264,7 +304,9 @@ class AgentRuntime extends EventEmitter {
       console.error('[AgentRuntime] Execution error:', err);
       this.setState(AgentState.ERROR, { error: err.message });
       this.emit('feedback', { message: `Execution failed: ${err.message}`, level: 'error' });
-      setTimeout(() => this.setState(AgentState.IDLE), 2500);
+      if (!this.continuousVoice) {
+        setTimeout(() => this.setState(AgentState.IDLE), 2500);
+      }
     }
   }
 
@@ -370,7 +412,7 @@ class AgentRuntime extends EventEmitter {
     this.setState(AgentState.EXECUTING_ACTION, { action: intent });
     this.emit('action-started', intent);
 
-    const activeTab = this.tabManager.getActiveTab();
+    const activeTab = this.tabManager ? this.tabManager.getActiveTab() : null;
     if (!activeTab && intent.type !== ActionType.NEW_TAB) {
       throw new Error('No active browser tab found');
     }
@@ -552,7 +594,9 @@ class AgentRuntime extends EventEmitter {
 
     this.actionHistory.push({ intent, timestamp: Date.now() });
     this.emit('action-finished', intent);
-    this.setState(AgentState.IDLE);
+    if (!this.continuousVoice) {
+      this.setState(AgentState.IDLE);
+    }
   }
 }
 

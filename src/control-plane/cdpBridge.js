@@ -200,16 +200,19 @@ class CDPBridge {
           const text = (el.innerText || el.textContent || '').trim().toLowerCase();
           const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
           const title = (el.getAttribute('title') || '').toLowerCase();
+          const alt = (el.getAttribute('alt') || '').toLowerCase();
           const placeholder = (el.getAttribute('placeholder') || '').toLowerCase();
           const id = (el.id || '').toLowerCase();
 
           // Check for keyword matches
-          if (ariaLabel === query || title === query || text === query) {
+          if (ariaLabel === query || title === query || text === query || alt === query) {
             score = 100;
-          } else if (ariaLabel.includes(query) || title.includes(query)) {
+          } else if (ariaLabel.includes(query) || title.includes(query) || alt.includes(query)) {
             score = 80;
-          } else if (text.length < 80 && text.includes(query)) {
-            score = 60;
+          } else if (text.length < 120 && text.includes(query)) {
+            score = 65;
+          } else if (text.includes(query)) {
+            score = 45;
           } else if (placeholder.includes(query) || id.includes(query)) {
             score = 40;
           }
@@ -227,15 +230,17 @@ class CDPBridge {
         }
 
         if (bestMatch && highestScore >= 40) {
+          // If bestMatch is inside an anchor or button (e.g. video card, thumbnail image), target the clickable container
+          const clickable = bestMatch.closest('a, button, [role="button"]') || bestMatch;
           try {
-            bestMatch.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+            clickable.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
           } catch(e) {}
-          const newRect = bestMatch.getBoundingClientRect();
+          const newRect = clickable.getBoundingClientRect();
 
           // Dispatch synthetic DOM click as direct trigger
           try {
-            bestMatch.focus();
-            bestMatch.click();
+            clickable.focus();
+            clickable.click();
           } catch(e) {}
 
           return {
@@ -245,8 +250,8 @@ class CDPBridge {
             y: Math.round(newRect.top + newRect.height / 2),
             width: Math.round(newRect.width),
             height: Math.round(newRect.height),
-            tag: bestMatch.tagName,
-            label: (bestMatch.getAttribute('aria-label') || bestMatch.innerText || bestMatch.title || '').slice(0, 50)
+            tag: clickable.tagName,
+            label: (clickable.getAttribute('aria-label') || clickable.innerText || clickable.title || clickable.getAttribute('alt') || '').slice(0, 50)
           };
         }
 
