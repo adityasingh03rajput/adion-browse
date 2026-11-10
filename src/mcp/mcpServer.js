@@ -1067,7 +1067,8 @@ class MCPServer extends EventEmitter {
           }
         });
 
-        server.listen(currentPort, '127.0.0.1', () => {
+        const host = process.env.ADION_MCP_HOST || '0.0.0.0';
+        server.listen(currentPort, host, () => {
           this.port = currentPort;
           this.server = server;
           this.isRunning = true;
