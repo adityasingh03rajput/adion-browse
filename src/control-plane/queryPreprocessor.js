@@ -47,6 +47,7 @@ class QueryPreprocessor {
 
     // 2. Phonetic & acoustic homophone normalization
     cleaned = cleaned
+      .replace(/\b(hie|hei|hy|heyy|heya|hai|hiya)\b/gi, 'hey')
       .replace(/\bbase\s+frequency\b/gi, 'bass frequency')
       .replace(/\bbase\s+boost\b/gi, 'bass boost')
       .replace(/\bcolour\b/gi, 'color')
@@ -271,8 +272,8 @@ class QueryPreprocessor {
 
     // H. Conversational Courtesy & Ambient Speech Fast-Path (STRICT STANDALONE CHECK ONLY)
     // Prevents hijacking any utterance containing actionable verbs
-    const isActionable = /(?:search|open|go|navigate|shut|close|change|set|click|scroll|play|switch|tab|bookmark)/i.test(lower);
-    if (!isActionable && /^(?:thank\s*you|thanks|thx|gracias|merci|danke|hello|hi|hey|good\s*(?:morning|afternoon|evening)|bye|goodbye|cool|awesome|ok|okay|ok\s+fine|fine|alright)[\.\!\?]?$/i.test(lower)) {
+    const isActionable = /(?:search|open|go|navigate|shut|close|change|set|click|scroll|play|switch|tab|bookmark|type|input|write|enter|fill)/i.test(lower);
+    if (!isActionable && /^(?:thank\s*you|thanks|thx|gracias|merci|danke|hello|hi|hie|hei|hy|heyy|heya|hai|hiya|hey|howdy|yo|greetings|good\s*(?:morning|afternoon|evening)|bye|goodbye|cool|awesome|ok|okay|ok\s+fine|fine|alright)(?:\s*,?\s*jarvis)?[\.\!\?]?$/i.test(lower)) {
       return {
         type: 'CONVERSATIONAL_ACKNOWLEDGE',
         thought: 'Standing by: ready for your browser commands.',

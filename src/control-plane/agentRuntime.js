@@ -1149,8 +1149,24 @@ class AgentRuntime extends EventEmitter {
       }
 
       case ActionType.INPUT_TEXT: {
+        const rawPrompt = String(intent.raw || '').toLowerCase().trim();
+        const textVal = String(intent.text || intent.value || '').trim();
+
+        // Anti-Unintended-Input Guard:
+        // Do not type into page inputs unless user command explicitly intended to type/input/write text,
+        // preventing greetings (e.g. "hie", "hi", "hey"), questions, or conversational speech from accidentally typing into webpage search boxes.
+        const hasExplicitTypingIntent = /(?:type|input|write|enter|fill|search for|look up)\b/i.test(rawPrompt) || intent.explicitInput;
+        const isGreetingOrCourtesy = /^(?:hie|hei|hy|heyy|heya|hai|hiya|hi|hello|hey|yo|howdy|thanks|thank you|ok|okay)[\.\!\?]?$/i.test(textVal.toLowerCase()) ||
+          /^(?:hie|hei|hy|heyy|heya|hai|hiya|hi|hello|hey|yo|howdy)[\s\.,\!\?]/i.test(rawPrompt);
+
+        if (!hasExplicitTypingIntent && isGreetingOrCourtesy) {
+          console.warn(`[AgentRuntime Guard] Blocked unintended text input "${textVal}": identified as conversational greeting, not a page input command.`);
+          this.emit('feedback', { message: `Greeting recognized: "${textVal}". Standing by for browser commands.`, level: 'info' });
+          this.emit('jarvis-notification', { type: 'info', message: 'Ready for browser commands.' });
+          break;
+        }
+
         const selector = intent.selector || 'input[type="text"], input[type="search"], textarea, [contenteditable="true"]';
-        const textVal = intent.text || intent.value || '';
         await this.cdp.evaluate(`
           (() => {
             const el = document.querySelector(${JSON.stringify(selector)}) || document.querySelector('input');

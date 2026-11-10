@@ -21,13 +21,15 @@ class STTEngine {
       return '';
     }
 
+    let rawTranscript = '';
+
     // 1. High-Performance Whisper-Large-v3-Turbo
     if (config.groqApiKey) {
       try {
         const groqText = await this.queryGroqWhisper(pcmBuffer);
         if (groqText && groqText.trim()) {
           console.log(`[STTEngine] Whisper-large-v3-turbo transcribed: "${groqText}"`);
-          return groqText.trim();
+          rawTranscript = groqText.trim();
         }
       } catch (err) {
         console.warn('[STTEngine] Whisper cloud call failed, using fallback:', err.message);
@@ -35,20 +37,79 @@ class STTEngine {
     }
 
     // 2. Try local Whisper.cpp HTTP endpoint if running
-    try {
-      const whisperResult = await this.queryLocalWhisper(pcmBuffer);
-      if (whisperResult && whisperResult.trim()) {
-        console.log(`[STTEngine] Local Whisper transcribed: "${whisperResult}"`);
-        return whisperResult.trim();
+    if (!rawTranscript) {
+      try {
+        const whisperResult = await this.queryLocalWhisper(pcmBuffer);
+        if (whisperResult && whisperResult.trim()) {
+          console.log(`[STTEngine] Local Whisper transcribed: "${whisperResult}"`);
+          rawTranscript = whisperResult.trim();
+        }
+      } catch (e) {
+        // Whisper endpoint not running; fall through to edge acoustic classifier
       }
-    } catch (e) {
-      // Whisper endpoint not running; fall through to edge acoustic classifier
     }
 
     // 3. Fast Acoustic & Phonetic Pattern Matcher
-    const classifiedText = this.classifyAcousticCommand(pcmBuffer);
-    console.log(`[STTEngine] Acoustic Classifier matched: "${classifiedText}"`);
-    return classifiedText;
+    if (!rawTranscript) {
+      const classifiedText = this.classifyAcousticCommand(pcmBuffer);
+      console.log(`[STTEngine] Acoustic Classifier matched: "${classifiedText}"`);
+      rawTranscript = classifiedText;
+    }
+
+    // 4. Transcription Normalization, Phonetic Error Correction & Hallucination Filter
+    const cleaned = this.cleanAndNormalizeTranscript(rawTranscript);
+    if (cleaned !== rawTranscript) {
+      console.log(`[STTEngine] Normalized transcript: "${cleaned}" (raw was: "${rawTranscript}")`);
+    }
+    return cleaned;
+  }
+
+  /**
+   * Cleans listening errors, normalizes phonetic greeting slips (e.g. "hie", "hei"),
+   * and discards ambient video subtitle / outro hallucinations.
+   */
+  cleanAndNormalizeTranscript(rawInput) {
+    if (!rawInput || typeof rawInput !== 'string') return '';
+    let text = rawInput.trim();
+
+    // A. Reject Whisper hallucinations on ambient noise or background audio
+    const hallucinationPatterns = [
+      /gracias\s+por\s+ver\s+el\s+video/i,
+      /subt[íi]tulos\s+realizados\s+por/i,
+      /thank\s+you\s+for\s+watching/i,
+      /thanks\s+for\s+watching/i,
+      /suscr[íi]bete/i,
+      /please\s+subscribe/i,
+      /like\s+and\s+subscribe/i,
+      /amara\.org/i,
+      /community\s+subtitles/i,
+      /watching!/i
+    ];
+
+    for (const pat of hallucinationPatterns) {
+      if (pat.test(text)) {
+        console.warn(`[STTEngine] Discarded ambient audio/subtitles hallucination: "${text}"`);
+        return '';
+      }
+    }
+
+    // B. Reject unnatural word-repetition loops (e.g. "you you you you you")
+    if (/(\b\w+\b)(?:\s+\1){3,}/i.test(text)) {
+      console.warn(`[STTEngine] Discarded repetitive acoustic loop hallucination: "${text}"`);
+      return '';
+    }
+
+    // C. Normalize phonetic greeting slips ("hie", "hei", "hy", "heyy", "heya", "hai", "hiya") to standard "hey" / "hi"
+    text = text
+      .replace(/\b(hie|hei|hy|heyy|heya|hai|hiya)\b/gi, 'hey')
+      .replace(/\bbase\s+boost\b/gi, 'bass boost')
+      .replace(/\bbase\s+frequency\b/gi, 'bass frequency')
+      .replace(/\bcolour\b/gi, 'color')
+      .replace(/\byoutube\s*dot\s*com\b/gi, 'youtube.com')
+      .replace(/\binstagram\s*dot\s*com\b/gi, 'instagram.com')
+      .replace(/\bgoogle\s*dot\s*com\b/gi, 'google.com');
+
+    return text.trim();
   }
 
   /**

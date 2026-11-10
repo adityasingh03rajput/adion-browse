@@ -545,6 +545,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const agentHudState = document.getElementById('agentHudState');
   const agentHudMessage = document.getElementById('agentHudMessage');
   const agentHudPulse = document.getElementById('agentHudPulse');
+  const agentHudSphereCanvas = document.getElementById('agentHudSphereCanvas');
   const agentTranscriptPreview = document.getElementById('agentTranscriptPreview');
   const btnCancelAgent = document.getElementById('btnCancelAgent');
 
@@ -593,14 +594,17 @@ document.addEventListener('DOMContentLoaded', () => {
     agentHudOverlay.classList.add('visible');
     agentHudState.innerText = stateText;
     agentHudMessage.innerText = message;
+    setJarvisState(stateText);
 
     const inVoiceMode = isListening || isListeningMode || stateText === 'LISTENING';
 
-    agentHudPulse.className = 'agent-hud-pulse';
-    if (inVoiceMode) {
-      agentHudPulse.classList.add('listening');
-    } else if (stateText === 'EXECUTING_ACTION' || stateText === 'PROCESSING' || stateText === 'PARSING_INTENT') {
-      agentHudPulse.classList.add('executing');
+    if (agentHudPulse) {
+      agentHudPulse.className = 'agent-hud-pulse';
+      if (inVoiceMode) {
+        agentHudPulse.classList.add('listening');
+      } else if (stateText === 'EXECUTING_ACTION' || stateText === 'PROCESSING' || stateText === 'PARSING_INTENT') {
+        agentHudPulse.classList.add('executing');
+      }
     }
 
     // Only auto-hide if NOT actively in continuous listening mode
@@ -649,14 +653,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const rms = Math.sqrt(sumSquares / inputData.length);
 
         // Live visual pulse modulation based on acoustic energy
-        if (rms > 0.015) {
-          agentHudPulse.style.transform = `scale(${Math.min(1.8, 1.0 + rms * 5)})`;
-          agentHudPulse.style.boxShadow = '0 0 16px #10b981';
-          agentHudPulse.style.background = '#10b981';
-        } else {
-          agentHudPulse.style.transform = 'scale(1.0)';
-          agentHudPulse.style.boxShadow = '0 0 8px #ff3366';
-          agentHudPulse.style.background = '#ff3366';
+        jarvisAudioLevel = Math.min(1.0, rms * 4.5);
+        if (agentHudPulse) {
+          if (rms > 0.015) {
+            agentHudPulse.style.transform = `scale(${Math.min(1.8, 1.0 + rms * 5)})`;
+            agentHudPulse.style.boxShadow = '0 0 16px #10b981';
+            agentHudPulse.style.background = '#10b981';
+          } else {
+            agentHudPulse.style.transform = 'scale(1.0)';
+            agentHudPulse.style.boxShadow = '0 0 8px #ff3366';
+            agentHudPulse.style.background = '#ff3366';
+          }
         }
 
         // Stream raw PCM frame across IPC to Control Plane / Local Model
@@ -870,39 +877,28 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // --- Dynamic 3D Animated Jarvis Sphere (Canvas) ---
-  if (jarvisCanvas && jarvisCanvas.getContext) {
-    const ctx = jarvisCanvas.getContext('2d');
+  // --- Dynamic 3D Animated Jarvis Sphere Engine (Floating Widget & Assistant Overlay) ---
+  const ctxJarvis = jarvisCanvas && jarvisCanvas.getContext ? jarvisCanvas.getContext('2d') : null;
+  const ctxHud = agentHudSphereCanvas && agentHudSphereCanvas.getContext ? agentHudSphereCanvas.getContext('2d') : null;
+
+  if (ctxJarvis || ctxHud) {
     let angleY = 0;
     let angleX = 0.25;
     let pulseTime = 0;
+    let primaryColor = '#00f2fe';
+    let accentColor = '#4facfe';
 
-    function renderJarvisSphere() {
-      ctx.clearRect(0, 0, jarvisCanvas.width, jarvisCanvas.height);
+    function drawSphereOnCanvas(canvas, ctx, scale = 1.0) {
+      if (!canvas || !ctx) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      const cx = jarvisCanvas.width / 2;
-      const cy = jarvisCanvas.height / 2;
-      const baseRadius = 24 + (jarvisAudioLevel * 18);
-      pulseTime += 0.04;
-
-      // Spin rate dynamically scales when thinking / executing
-      const spinMultiplier = (jarvisState === 'THINKING' || jarvisState === 'PARSING_INTENT') ? 2.5 : 1.0;
-      angleY += 0.02 * spinMultiplier;
-
-      // Color scheme based on status
-      let primaryColor = '#00f2fe';
-      let accentColor = '#4facfe';
-      if (jarvisState === 'LISTENING') {
-        primaryColor = '#10b981';
-        accentColor = '#00f2fe';
-      } else if (jarvisState === 'ALERT' || jarvisState === 'ERROR') {
-        primaryColor = '#ff4b4b';
-        accentColor = '#ff8888';
-      }
+      const cx = canvas.width / 2;
+      const cy = canvas.height / 2;
+      const baseRadius = (canvas.width * 0.3) + (jarvisAudioLevel * 14 * scale);
 
       // 1. Central Pulsing Holographic Core
-      const corePulse = Math.sin(pulseTime * 2.5) * 3;
-      const coreRadius = Math.max(6, 12 + corePulse + (jarvisAudioLevel * 12));
+      const corePulse = Math.sin(pulseTime * 2.5) * (2.5 * scale);
+      const coreRadius = Math.max(3 * scale, (8 * scale) + corePulse + (jarvisAudioLevel * 10 * scale));
       const coreGrad = ctx.createRadialGradient(cx, cy, 2, cx, cy, coreRadius);
       coreGrad.addColorStop(0, '#ffffff');
       coreGrad.addColorStop(0.4, primaryColor);
@@ -945,7 +941,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.fillStyle = '#ffffff';
         ctx.globalAlpha = 0.85;
         ctx.beginPath();
-        ctx.arc(nodeX, nodeY, 1.8, 0, Math.PI * 2);
+        ctx.arc(nodeX, nodeY, 1.8 * scale, 0, Math.PI * 2);
         ctx.fill();
       }
 
@@ -954,18 +950,44 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.strokeStyle = primaryColor;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.arc(cx, cy, baseRadius + 7, angleY, angleY + Math.PI * 0.65);
+      ctx.arc(cx, cy, baseRadius + (5 * scale), angleY, angleY + Math.PI * 0.65);
       ctx.stroke();
 
       ctx.beginPath();
-      ctx.arc(cx, cy, baseRadius + 7, angleY + Math.PI, angleY + Math.PI * 1.65);
+      ctx.arc(cx, cy, baseRadius + (5 * scale), angleY + Math.PI, angleY + Math.PI * 1.65);
       ctx.stroke();
 
       ctx.globalAlpha = 1.0;
+    }
+
+    function renderJarvisSphere() {
+      pulseTime += 0.04;
+      const spinMultiplier = (jarvisState === 'THINKING' || jarvisState === 'PARSING_INTENT') ? 2.5 : 1.0;
+      angleY += 0.02 * spinMultiplier;
+
+      // Color scheme based on status
+      primaryColor = '#00f2fe';
+      accentColor = '#4facfe';
+      if (jarvisState === 'LISTENING') {
+        primaryColor = '#10b981';
+        accentColor = '#00f2fe';
+      } else if (jarvisState === 'ALERT' || jarvisState === 'ERROR') {
+        primaryColor = '#ff4b4b';
+        accentColor = '#ff8888';
+      }
+
+      if (ctxJarvis) {
+        drawSphereOnCanvas(jarvisCanvas, ctxJarvis, 1.0);
+      }
+      if (ctxHud) {
+        drawSphereOnCanvas(agentHudSphereCanvas, ctxHud, 0.72);
+      }
+
       requestAnimationFrame(renderJarvisSphere);
     }
 
     renderJarvisSphere();
+  }
   }
 
   // --- Session Memory Loader & Timeline Renderer ---

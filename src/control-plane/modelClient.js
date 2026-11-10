@@ -45,7 +45,7 @@ Available Action Types and their parameters:
 - "RELOAD": {}
 - "SCROLL": { "direction": "down" | "up" | "top" | "bottom", "amount": 450 }
 - "CLICK_SELECTOR": { "target": "button label, link text, or selector" }
-- "INPUT_TEXT": { "selector": "input or search box selector", "text": "text to type" }
+- "INPUT_TEXT": { "selector": "input or search box selector", "text": "text to type" } - ONLY use when user explicitly commands typing/inputting text (e.g. "type Hello", "input query in search box"). Conversational remarks, greetings (e.g. 'hi', 'hie', 'hello', 'hey'), or ambient words must NEVER trigger INPUT_TEXT.
 - "TOGGLE_DEVTOOLS": {} - opens/toggles developer tools (the code <> button on top right)
 - "SWITCH_TAB": { "target": "Wikipedia" | 1 | "tab_id" } - switches to matching tab by title, index, or query
 - "DEVTOOLS_SWITCH_PANEL": { "panel": "console" | "elements" | "network" | "sources" | "application" } - switches between panel tabs in Developer Tools
@@ -208,6 +208,15 @@ Output:
     { "type": "SCROLL", "params": { "direction": "down", "amount": 450 } }
   ]
 }
+
+User: "hie" or "hello" or "hey jarvis"
+Output:
+{
+  "thought": "Greetings! Standing by for your browser commands.",
+  "actions": []
+}
+
+CRITICAL RULE: Conversational remarks, greetings (e.g. 'hi', 'hie', 'hello', 'hey', 'jarvis'), courtesies, or ambient words must NEVER trigger INPUT_TEXT or type into search boxes. If the user is greeting or speaking conversationally without commanding an action, return actions: [] with a courteous thought.
 
 Do NOT wrap output in markdown fences. Output raw JSON object only.
 `;

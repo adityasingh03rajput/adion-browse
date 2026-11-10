@@ -330,13 +330,20 @@
     </div>
   </div>
 
-  <!-- AI VOICE CONTROL PLANE HUD OVERLAY -->
+  <!-- AI VOICE CONTROL PLANE HUD OVERLAY WITH JARVIS ANIMATED SPHERE -->
   <div class="agent-hud-overlay" id="agentHudOverlay">
     <div class="agent-hud-card" id="agentHudCard">
-      <div class="agent-hud-pulse" id="agentHudPulse"></div>
+      <!-- Jarvis 3D Animated Sphere Engine in Assistant Overlay -->
+      <div class="agent-hud-sphere-wrapper" id="agentHudSphereWrapper">
+        <div class="agent-hud-ring agent-hud-ring-outer"></div>
+        <div class="agent-hud-ring agent-hud-ring-inner"></div>
+        <div class="agent-hud-ring agent-hud-ring-pulse"></div>
+        <canvas id="agentHudSphereCanvas" width="56" height="56"></canvas>
+        <div class="agent-hud-core-glow"></div>
+      </div>
       <div class="agent-hud-content">
         <div class="agent-hud-header">
-          <span class="agent-hud-tag" id="agentHudTag">AURA AGENT</span>
+          <span class="agent-hud-tag" id="agentHudTag">JARVIS ASSISTANT</span>
           <span class="agent-hud-state" id="agentHudState">IDLE</span>
         </div>
         <div class="agent-hud-message" id="agentHudMessage">Ready. Say "Scroll down", "Open YouTube", or "Click search"...</div>

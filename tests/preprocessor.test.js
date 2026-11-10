@@ -88,6 +88,35 @@ async function testPreprocessorPerformance() {
   assert.strictEqual(courtesyIntent.actions.length, 0);
   console.log('  ✔ Standalone courtesies acknowledged with zero-cost empty actions.');
 
+  // Test 7: "hie" Greeting Transcription & Anti-Unintended-Input Protection
+  console.log('\nTest 7: "hie" Phonetic Greeting & Anti-Unintended-Input Protection...');
+  const hiePrep = preprocessor.preprocess('hie');
+  console.log(`  Raw: "${hiePrep.raw}" -> Normalized: "${hiePrep.normalized}"`);
+  const hieIntent = preprocessor.extractFastIntent(hiePrep);
+  assert.ok(hieIntent !== null);
+  assert.strictEqual(hieIntent.type, 'CONVERSATIONAL_ACKNOWLEDGE');
+  assert.strictEqual(hieIntent.actions.length, 0);
+  console.log('  ✔ "hie" recognized strictly as greeting courtesy; unintended text input prevented.');
+
+  const hieJarvisPrep = preprocessor.preprocess('hie jarvis');
+  const hieJarvisIntent = preprocessor.extractFastIntent(hieJarvisPrep);
+  assert.ok(hieJarvisIntent !== null);
+  assert.strictEqual(hieJarvisIntent.type, 'CONVERSATIONAL_ACKNOWLEDGE');
+  assert.strictEqual(hieJarvisIntent.actions.length, 0);
+  console.log('  ✔ "hie jarvis" recognized as conversational greeting; page inputs shielded.');
+
+  // Test 8: STTEngine Listening & Hallucination Filter
+  console.log('\nTest 8: STTEngine Hallucination Discard & Phonetic Correction...');
+  const STTEngine = require('../src/control-plane/sttEngine');
+  const stt = new STTEngine();
+  const hallucinated1 = stt.cleanAndNormalizeTranscript('Gracias por ver el video.');
+  assert.strictEqual(hallucinated1, '', 'Whisper outro hallucination must be discarded');
+  const hallucinated2 = stt.cleanAndNormalizeTranscript('Thank you for watching! Please subscribe.');
+  assert.strictEqual(hallucinated2, '', 'Subtitles outro hallucination must be discarded');
+  const correctedPrompt = stt.cleanAndNormalizeTranscript('hie, can you search instagram.com?');
+  assert.strictEqual(correctedPrompt, 'hey, can you search instagram.com?');
+  console.log('  ✔ Ambient outro hallucinations discarded and "hie" phonetics cleanly normalized.');
+
   console.log('\n✅ ALL QUERY PREPROCESSING & PERFORMANCE BENCHMARKS PASSED!');
 }
 
