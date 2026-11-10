@@ -5,6 +5,9 @@ const store = require('./store');
 const TabManager = require('./tabManager');
 const ControlPlane = require('../control-plane/controlPlane');
 
+// Silence non-critical Chromium C++ net warnings
+app.commandLine.appendSwitch('log-level', '3');
+
 // Main Electron process
 let mainWindow = null;
 let tabManager = null;

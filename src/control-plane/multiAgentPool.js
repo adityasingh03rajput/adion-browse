@@ -133,3 +133,4 @@ class MultiAgentPool extends EventEmitter {
 }
 
 module.exports = MultiAgentPool;
+

@@ -99,3 +99,4 @@ class DataSynthesizer {
 }
 
 module.exports = DataSynthesizer;
+
