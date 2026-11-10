@@ -124,7 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
           kpiBlocked.textContent = stats.totalBlocked || '0';
           kpiBandwidth.textContent = `Bandwidth saved: ${stats.estimatedBandwidthSavedKB || 0} KB`;
         }
-      } catch(e) {}
+      } catch (e) { }
     }
   }
   refreshStats();
@@ -193,3 +193,4 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 });
+

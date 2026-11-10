@@ -1,5 +1,6 @@
 const { BrowserView, app } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { URL } = require('url');
 const shield = require('./shield');
 const store = require('./store');
@@ -51,21 +52,46 @@ class TabManager {
     }
 
     const trimmed = input.trim();
-    // Check if targeting local audio.html file
-    if (trimmed.toLowerCase() === 'audio.html' || trimmed.toLowerCase() === 'audio') {
-      return `file://${path.join(process.cwd(), 'audio.html')}`;
+
+    // 1. Direct file:// protocol
+    if (trimmed.startsWith('file://')) {
+      return trimmed;
     }
-    // Check if it's already a valid url with protocol
+
+    // 2. Windows drive absolute path (e.g. D:\Adion Browse\audio.html or D:/Adion Browse/audio.html)
+    if (/^[a-zA-Z]:[\\\/]/.test(trimmed)) {
+      const resolved = path.resolve(trimmed).replace(/\\/g, '/');
+      return `file:///${resolved}`;
+    }
+
+    // 3. Local workspace file match (e.g. "audio.html", "audio", "./audio.html")
+    const workspaceFilePath = path.resolve(process.cwd(), trimmed);
+    if (fs.existsSync(workspaceFilePath) && fs.statSync(workspaceFilePath).isFile()) {
+      return `file:///${workspaceFilePath.replace(/\\/g, '/')}`;
+    }
+    if (!trimmed.includes('.') && fs.existsSync(`${workspaceFilePath}.html`)) {
+      return `file:///${(`${workspaceFilePath}.html`).replace(/\\/g, '/')}`;
+    }
+
+    // 4. Relative paths or Unix-style paths
+    if (trimmed.startsWith('/') || trimmed.startsWith('./') || trimmed.startsWith('../')) {
+      const resolved = path.resolve(trimmed);
+      if (fs.existsSync(resolved)) {
+        return `file:///${resolved.replace(/\\/g, '/')}`;
+      }
+    }
+
+    // 5. Explicit URL with protocol (http://, https://, adion://, chrome://)
     if (/^[a-zA-Z]+:\/\//.test(trimmed)) {
       return trimmed;
     }
 
-    // Check if it's a domain name like example.com or localhost
+    // 6. Domain name (e.g. example.com, localhost:3000, wikipedia.org)
     if (/^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(:\d+)?(\/.*)?$/.test(trimmed) || /^localhost(:\d+)?(\/.*)?$/.test(trimmed)) {
       return `https://${trimmed}`;
     }
 
-    // Otherwise, treat as search query using the configured search engine
+    // 7. Otherwise, treat as web search
     const engine = store.getSetting('searchEngine') || 'brave';
     const query = encodeURIComponent(trimmed);
     switch (engine) {
@@ -164,7 +190,14 @@ class TabManager {
 
   handleNavigation(tab, url) {
     const isNewTab = url.startsWith('file://') && url.includes('newtab.html');
-    tab.url = isNewTab ? 'adion://newtab' : url;
+    const isDashboard = url.startsWith('file://') && url.includes('dashboard.html');
+    if (isNewTab) {
+      tab.url = 'adion://newtab';
+    } else if (isDashboard) {
+      tab.url = 'adion://dashboard';
+    } else {
+      tab.url = url;
+    }
     const wc = tab.view.webContents;
     tab.canGoBack = wc.navigationHistory ? wc.navigationHistory.canGoBack() : (wc.canGoBack ? wc.canGoBack() : false);
     tab.canGoForward = wc.navigationHistory ? wc.navigationHistory.canGoForward() : (wc.canGoForward ? wc.canGoForward() : false);

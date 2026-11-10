@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -15,6 +16,7 @@
       --border: #2d333b;
       --success: #10b981;
     }
+
     body {
       margin: 0;
       padding: 30px;
@@ -22,6 +24,7 @@
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     }
+
     .header {
       display: flex;
       justify-content: space-between;
@@ -30,6 +33,7 @@
       padding-bottom: 20px;
       margin-bottom: 30px;
     }
+
     .title-box h1 {
       margin: 0 0 8px 0;
       font-size: 24px;
@@ -37,11 +41,13 @@
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
+
     .title-box p {
       margin: 0;
       color: var(--text-muted);
       font-size: 14px;
     }
+
     .status-badge {
       display: inline-flex;
       align-items: center;
@@ -54,24 +60,28 @@
       font-size: 13px;
       font-weight: 600;
     }
+
     .grid {
       display: grid;
       grid-template-columns: 2fr 1fr;
       gap: 24px;
     }
+
     .card {
       background: var(--card-bg);
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 24px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     }
+
     .card h2 {
       margin-top: 0;
       font-size: 18px;
       border-bottom: 1px solid var(--border);
       padding-bottom: 12px;
     }
+
     #visualizerCanvas {
       width: 100%;
       height: 220px;
@@ -80,11 +90,13 @@
       border: 1px solid var(--border);
       display: block;
     }
+
     .controls {
       display: flex;
       gap: 12px;
       margin-top: 18px;
     }
+
     button.btn {
       background: linear-gradient(135deg, var(--accent), var(--primary));
       border: none;
@@ -95,13 +107,16 @@
       cursor: pointer;
       transition: all 0.2s;
     }
+
     button.btn:hover {
       transform: translateY(-2px);
       box-shadow: 0 4px 14px rgba(0, 242, 254, 0.4);
     }
+
     .eq-bar {
       margin-bottom: 16px;
     }
+
     .eq-bar label {
       display: flex;
       justify-content: space-between;
@@ -109,23 +124,27 @@
       color: var(--text-muted);
       margin-bottom: 6px;
     }
+
     input[type="range"] {
       width: 100%;
       accent-color: var(--primary);
     }
+
     .metric-row {
       display: flex;
       justify-content: space-between;
       padding: 10px 0;
-      border-bottom: 1px solid rgba(255,255,255,0.05);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
       font-size: 13px;
     }
+
     .metric-value {
       font-weight: 700;
       color: var(--primary);
     }
   </style>
 </head>
+
 <body>
   <div class="header">
     <div class="title-box">
@@ -218,4 +237,5 @@
     });
   </script>
 </body>
+
 </html>

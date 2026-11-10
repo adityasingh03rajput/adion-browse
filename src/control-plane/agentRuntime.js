@@ -415,16 +415,18 @@ class AgentRuntime extends EventEmitter {
       return { type: ActionType.OPEN_HISTORY };
     }
 
-    const openMatch = lower.match(/(open|launch|navigate to|go to)\s+(https?:\/\/[^\s]+|[a-z0-9\-]+\.[a-z]{2,}[^\s]*|youtube|google|reddit|github|wikipedia|twitter|x\.com)/i);
+    const openMatch = lower.match(/(open|launch|navigate to|go to)\s+(https?:\/\/[^\s]+|[a-z0-9\-]+\.[a-z]{2,}[^\s]*|youtube|google|reddit|github|wikipedia|twitter|x\.com|audio\.html|audio|dashboard|metrics)/i);
     if (openMatch) {
-      let target = openMatch[2];
-      if (target === 'youtube') target = 'https://www.youtube.com';
+      let target = openMatch[2].toLowerCase();
+      if (target === 'audio.html' || target === 'audio') target = 'audio.html';
+      else if (target === 'dashboard' || target === 'metrics') target = 'adion://dashboard';
+      else if (target === 'youtube') target = 'https://www.youtube.com';
       else if (target === 'google') target = 'https://www.google.com';
       else if (target === 'reddit') target = 'https://www.reddit.com';
       else if (target === 'github') target = 'https://www.github.com';
       else if (target === 'wikipedia') target = 'https://www.wikipedia.org';
       else if (target === 'x.com' || target === 'twitter') target = 'https://x.com';
-      return { type: ActionType.NEW_TAB, url: target };
+      return { type: ActionType.NAVIGATE, url: target };
     }
     if (/(new tab|open new tab|create tab)/i.test(lower)) {
       return { type: ActionType.NEW_TAB, url: 'adion://newtab' };
