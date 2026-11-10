@@ -58,8 +58,17 @@ Available Action Types and their parameters:
 - "INSPECT_ELEMENT": { "selector": "CSS selector or element description" } - locates, highlights, and inspects element in Developer Tools
 - "CAPTURE_VIEWPORT": {}
 - "ANALYZE_IMAGES": { "criteria": "image search criteria" }
+- "PLAY_VIDEO_FROM_THUMBNAIL": { "query": "video topic or thumbnail description" } - provisions zero-cost vision models (Qwen-VL / Groq Vision Free Tier) to analyze YouTube thumbnails and initiate playback
 
 Examples:
+User: "play the first video about space exploration" or "click on the video with thumbnail showing Mars"
+Output:
+{
+  "thought": "Route vision task to Qwen-VL to identify and play matching video thumbnail",
+  "actions": [
+    { "type": "PLAY_VIDEO_FROM_THUMBNAIL", "params": { "query": "space exploration Mars" } }
+  ]
+}
 User: "Tell Aiden browse to switch to a dashboard or overlay GUI that displays live requested data clearly. After updating the interface, run a test query to verify the new display format."
 Output:
 {

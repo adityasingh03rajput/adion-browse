@@ -4,6 +4,7 @@ const fs = require('fs');
 const { AgentState, ActionType } = require('./protocol');
 const STTEngine = require('./sttEngine');
 const ModelClient = require('./modelClient');
+const ModelRouter = require('./modelRouter');
 
 /**
  * Asynchronous Agent Runtime
@@ -20,6 +21,7 @@ class AgentRuntime extends EventEmitter {
     this.vault = securityVault;
     this.stt = new STTEngine();
     this.model = new ModelClient();
+    this.router = new ModelRouter();
     this.state = AgentState.IDLE;
     this.currentTask = null;
     this.actionHistory = [];
@@ -527,6 +529,16 @@ class AgentRuntime extends EventEmitter {
       return { type: ActionType.CLICK_SELECTOR, target: targetQuery || clickMatch[2] };
     }
 
+    // Video Thumbnail Grounding & Playback via Qwen-VL / Vision Router
+    const videoMatch = lower.match(/(?:play|watch|click\s+on|select|identify\s+and\s+play)\s+(?:the\s+)?(?:video\s+)?(?:about\s+|with\s+thumbnail\s+|from\s+thumbnail\s+)?(.+)/i);
+    if (videoMatch && /(youtube|video|thumbnail|first video|second video|clip|trailer|song|music)/i.test(lower)) {
+      const q = videoMatch[1].replace(/\b(from\s+thumbnail|with\s+thumbnail|video|on\s+youtube|youtube|about)\b/gi, '').replace(/\s+/g, ' ').trim();
+      return {
+        type: ActionType.PLAY_VIDEO_FROM_THUMBNAIL,
+        query: q || videoMatch[1]
+      };
+    }
+
     // Screenshot capture
     if (/(screenshot|capture screen|capture page|take snapshot)/i.test(lower)) {
       return { type: ActionType.CAPTURE_VIEWPORT };
@@ -559,7 +571,8 @@ class AgentRuntime extends EventEmitter {
       ActionType.CLICK_SELECTOR,
       ActionType.CLICK_COORDINATE,
       ActionType.CAPTURE_VIEWPORT,
-      ActionType.ANALYZE_IMAGES
+      ActionType.ANALYZE_IMAGES,
+      ActionType.PLAY_VIDEO_FROM_THUMBNAIL
     ].includes(intent.type)) {
       await this.cdp.attach(activeTab.view.webContents);
     }
@@ -837,6 +850,54 @@ class AgentRuntime extends EventEmitter {
           this.emit('action-finished', { type: ActionType.ANALYZE_IMAGES, count: images.length, candidates: images });
         } else {
           this.emit('feedback', { message: `No images matched criteria: "${intent.criteria}"`, level: 'warning' });
+        }
+        break;
+      }
+
+      case ActionType.PLAY_VIDEO_FROM_THUMBNAIL: {
+        const query = intent.query || intent.target || 'video';
+        this.emit('feedback', { message: `Vision Router: Evaluating thumbnail requirements for "${query}" (Cost Policy: $0.00 Free Tier)`, level: 'info' });
+
+        // 1. If not currently on YouTube, navigate to search results
+        if (!activeTab.url.includes('youtube.com')) {
+          const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+          this.tabManager.navigateActiveTab(searchUrl);
+          this.emit('feedback', { message: `Navigating to YouTube: ${query}...`, level: 'info' });
+          await new Promise(r => setTimeout(r, 2200));
+        }
+
+        await this.cdp.attach(activeTab.view.webContents);
+
+        // 2. Extract visible video card renderers & thumbnails from page
+        let candidates = this.vision ? await this.vision.extractYouTubeVideoCandidates() : [];
+        if (!candidates || candidates.length === 0) {
+          await new Promise(r => setTimeout(r, 1200));
+          candidates = this.vision ? await this.vision.extractYouTubeVideoCandidates() : [];
+        }
+
+        // 3. Capture high-definition viewport screenshot
+        const screenshot = await this.cdp.captureScreenshot();
+
+        // 4. Query Vision Router (Qwen-VL / Groq Llama 3.2 Vision Free Tier)
+        const analysis = await this.router.analyzeThumbnailVision(screenshot, query, candidates);
+        console.log('[AgentRuntime Vision] Analysis output:', analysis);
+
+        // 5. Ground and play the matched video candidate
+        let target = null;
+        if (analysis && analysis.matchedIndex && candidates[analysis.matchedIndex - 1]) {
+          target = candidates[analysis.matchedIndex - 1];
+        } else if (candidates.length > 0) {
+          target = candidates[0];
+        }
+
+        if (target && this.vision) {
+          await this.vision.playVideoCandidate(target);
+          this.emit('feedback', {
+            message: `Playing: "${target.title}" (${target.channel || 'YouTube'}) - Grounded via ${this.router.accounting.lastAssignedModel}!`,
+            level: 'success'
+          });
+        } else {
+          this.emit('feedback', { message: `Could not identify video thumbnail matching: "${query}"`, level: 'warning' });
         }
         break;
       }

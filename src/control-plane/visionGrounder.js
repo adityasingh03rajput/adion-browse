@@ -91,6 +91,87 @@ class VisionGrounder {
   }
 
   /**
+   * Scans active page for YouTube video renderers and thumbnail elements
+   */
+  async extractYouTubeVideoCandidates() {
+    const expr = `
+      (() => {
+        const videoNodes = Array.from(document.querySelectorAll(
+          'ytd-video-renderer, ytd-rich-item-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-playlist-video-renderer'
+        ));
+
+        const results = [];
+        for (let i = 0; i < videoNodes.length; i++) {
+          const node = videoNodes[i];
+          const rect = node.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0 || rect.bottom < 0 || rect.top > window.innerHeight * 1.6) continue;
+
+          const titleEl = node.querySelector('#video-title, #title-wrapper, a#video-title, h3 a');
+          const title = (titleEl ? (titleEl.innerText || titleEl.getAttribute('title') || '') : '').trim();
+          if (!title) continue;
+
+          const thumbEl = node.querySelector('ytd-thumbnail, a#thumbnail, img.yt-core-image, img');
+          const channelEl = node.querySelector('#channel-name, .ytd-channel-name, #text.ytd-channel-name');
+          const channel = (channelEl ? channelEl.innerText : '').trim();
+          const durationEl = node.querySelector('ytd-thumbnail-overlay-time-status-renderer, span.ytd-thumbnail-overlay-time-status-renderer, #text.ytd-thumbnail-overlay-time-status-renderer');
+          const duration = (durationEl ? durationEl.innerText : '').trim();
+
+          const targetEl = thumbEl || titleEl || node;
+          const targetRect = targetEl.getBoundingClientRect();
+
+          results.push({
+            index: results.length + 1,
+            title,
+            channel,
+            duration,
+            x: Math.round(targetRect.left + targetRect.width / 2),
+            y: Math.round(targetRect.top + targetRect.height / 2),
+            width: Math.round(targetRect.width),
+            height: Math.round(targetRect.height),
+            videoUrl: (titleEl && titleEl.href) || (thumbEl && thumbEl.href) || ''
+          });
+
+          if (results.length >= 8) break;
+        }
+
+        return results;
+      })()
+    `;
+    const res = await this.cdp.evaluate(expr);
+    return Array.isArray(res) ? res : [];
+  }
+
+  /**
+   * Focus, highlight, and click the selected video candidate to start playback
+   */
+  async playVideoCandidate(candidate) {
+    if (!candidate) return false;
+    await this.highlightCandidates([candidate]);
+
+    const expr = `
+      (() => {
+        const x = ${candidate.x};
+        const y = ${candidate.y};
+        const el = document.elementFromPoint(x, y);
+        if (el) {
+          const clickable = el.closest('a#thumbnail, #video-title, a, ytd-thumbnail') || el;
+          clickable.focus();
+          clickable.click();
+          return true;
+        }
+        return false;
+      })()
+    `;
+    await this.cdp.evaluate(expr);
+
+    try {
+      await this.cdp.dispatchClick(candidate.x, candidate.y);
+    } catch (_) {}
+
+    return true;
+  }
+
+  /**
    * Highlight multiple disambiguation candidates on page with distinct color tags
    */
   async highlightCandidates(candidates) {

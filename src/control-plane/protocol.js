@@ -34,6 +34,7 @@ const ActionType = {
   // Semantic Vision & Downloads
   ANALYZE_IMAGES: 'ANALYZE_IMAGES',
   DOWNLOAD_IMAGE: 'DOWNLOAD_IMAGE',
+  PLAY_VIDEO_FROM_THUMBNAIL: 'PLAY_VIDEO_FROM_THUMBNAIL',
 
   // Browser Shell & Developer Controls
   TOGGLE_DEVTOOLS: 'TOGGLE_DEVTOOLS',
