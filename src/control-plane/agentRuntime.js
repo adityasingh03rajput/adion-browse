@@ -1,6 +1,7 @@
 const EventEmitter = require('events');
 const { AgentState, ActionType } = require('./protocol');
 const STTEngine = require('./sttEngine');
+const ModelClient = require('./modelClient');
 
 /**
  * Asynchronous Agent Runtime
@@ -16,6 +17,7 @@ class AgentRuntime extends EventEmitter {
     this.vision = visionGrounder;
     this.vault = securityVault;
     this.stt = new STTEngine();
+    this.model = new ModelClient();
     this.state = AgentState.IDLE;
     this.currentTask = null;
     this.actionHistory = [];
@@ -218,10 +220,36 @@ class AgentRuntime extends EventEmitter {
     if (!text) return;
 
     this.setState(AgentState.PARSING_INTENT, { input: text });
-    this.emit('feedback', { message: `Interpreting command: "${text}"`, level: 'info' });
+    this.emit('feedback', { message: `Autonomous Agent coordinating: "${text}"`, level: 'info' });
 
     try {
-      // 1. Parse intent
+      const activeTab = this.tabManager ? this.tabManager.getActiveTab() : null;
+      const pageContext = activeTab ? { url: activeTab.url, title: activeTab.title } : {};
+
+      // 1. Query Grok / Mercury / Local Model for high-level reasoning and function calling
+      let plan = null;
+      try {
+        plan = await this.model.planActions(text, pageContext);
+      } catch (err) {
+        console.warn('[AgentRuntime] Model planning notice:', err.message);
+      }
+
+      if (plan && Array.isArray(plan.actions) && plan.actions.length > 0) {
+        this.emit('feedback', { message: `AI Plan: ${plan.thought || 'Executing actions'}`, level: 'success' });
+        console.log(`[AgentRuntime Plan] Executing ${plan.actions.length} action(s):`, plan.thought);
+
+        for (let i = 0; i < plan.actions.length; i++) {
+          const act = plan.actions[i];
+          const intent = { type: act.type, ...(act.params || {}) };
+          await this.executeIntent(intent);
+          if (i < plan.actions.length - 1) {
+            await new Promise(r => setTimeout(r, 350));
+          }
+        }
+        return;
+      }
+
+      // 2. Fallback to Local Edge Rule Parser for offline or simple commands
       const intent = await this.parseIntent(text);
 
       if (!intent) {
@@ -230,7 +258,7 @@ class AgentRuntime extends EventEmitter {
         return;
       }
 
-      // 2. Execute parsed intent
+      // 3. Execute parsed intent
       await this.executeIntent(intent);
     } catch (err) {
       console.error('[AgentRuntime] Execution error:', err);
@@ -389,8 +417,9 @@ class AgentRuntime extends EventEmitter {
       }
 
       case ActionType.NAVIGATE: {
-        this.tabManager.navigateActiveTab(intent.query);
-        this.emit('feedback', { message: `Navigating to: ${intent.query}`, level: 'success' });
+        const destination = intent.url || intent.query || '';
+        this.tabManager.navigateActiveTab(destination);
+        this.emit('feedback', { message: `Navigating to: ${destination}`, level: 'success' });
         break;
       }
 
@@ -432,6 +461,26 @@ class AgentRuntime extends EventEmitter {
         } else {
           this.emit('feedback', { message: `No images matched criteria: "${intent.criteria}"`, level: 'warning' });
         }
+        break;
+      }
+
+      case ActionType.INPUT_TEXT: {
+        const selector = intent.selector || 'input[type="text"], input[type="search"], textarea, [contenteditable="true"]';
+        const textVal = intent.text || intent.value || '';
+        await this.cdp.evaluate(`
+          (() => {
+            const el = document.querySelector(${JSON.stringify(selector)}) || document.querySelector('input');
+            if (el) {
+              el.focus();
+              el.value = ${JSON.stringify(textVal)};
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+              return true;
+            }
+            return false;
+          })()
+        `);
+        this.emit('feedback', { message: `Typed: "${textVal}"`, level: 'success' });
         break;
       }
 

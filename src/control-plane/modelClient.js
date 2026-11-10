@@ -1,0 +1,274 @@
+const config = require('./config');
+const { ActionType } = require('./protocol');
+
+/**
+ * Autonomous Model Client & Multi-Step LLM Function Calling Coordinator
+ * Routes user intents to Groq (LPU accelerated), Mercury, or Local Model (Qwen 2.5 Coder / Llama 3.2)
+ * to produce deterministic, structured JSON payloads for browser automation.
+ */
+class ModelClient {
+  constructor() {
+    this.groqKey = config.groqApiKey;
+    this.groqUrl = config.groqApiUrl;
+    this.groqModel = config.groqModel;
+
+    this.mercuryKey = config.mercuryApiKey;
+    this.mercuryUrl = config.mercuryApiUrl;
+    this.mercuryModel = config.mercuryModel;
+
+    this.localEndpoint = config.localModelEndpoint;
+
+    this.systemPrompt = `
+You are the Autonomous Browser Execution Coordinator for Adion Browse.
+Your job is to translate user natural language instructions and voice commands into a deterministic sequence of executable browser actions.
+
+You MUST respond strictly with a valid JSON object matching this schema:
+{
+  "thought": "Brief 1-sentence reasoning",
+  "actions": [
+    {
+      "type": "<ACTION_TYPE>",
+      "params": { ... }
+    }
+  ]
+}
+
+Available Action Types and their parameters:
+- "NAVIGATE": { "url": "https://example.com" } or { "query": "search term" }
+- "NEW_TAB": { "url": "https://example.com" }
+- "CLOSE_TAB": {}
+- "GO_BACK": {}
+- "GO_FORWARD": {}
+- "RELOAD": {}
+- "SCROLL": { "direction": "down" | "up" | "top" | "bottom", "amount": 450 }
+- "CLICK_SELECTOR": { "target": "button label, link text, or selector" }
+- "INPUT_TEXT": { "selector": "input or search box selector", "text": "text to type" }
+- "CAPTURE_VIEWPORT": {}
+- "ANALYZE_IMAGES": { "criteria": "image search criteria" }
+
+Examples:
+User: "open youtube and search for lofi music"
+Output:
+{
+  "thought": "Open YouTube and query for lofi music",
+  "actions": [
+    { "type": "NAVIGATE", "params": { "url": "https://www.youtube.com/results?search_query=lofi+music" } }
+  ]
+}
+
+User: "scroll down"
+Output:
+{
+  "thought": "Scroll down active page",
+  "actions": [
+    { "type": "SCROLL", "params": { "direction": "down", "amount": 450 } }
+  ]
+}
+
+Do NOT wrap output in markdown fences. Output raw JSON object only.
+`;
+  }
+
+  /**
+   * Plan browser actions for a natural language command using Groq, Mercury, or Local model
+   */
+  async planActions(userInput, pageContext = {}) {
+    const prompt = `
+Current Active Page:
+- URL: ${pageContext.url || 'adion://newtab'}
+- Title: ${pageContext.title || 'New Tab'}
+
+User Command: "${userInput}"
+
+JSON Action Plan:
+`;
+
+    // 1. Try Groq Cloud (Ultra-Fast LPU Inference)
+    if (this.groqKey) {
+      try {
+        console.log(`[ModelClient] Querying Groq Cloud (${this.groqModel})...`);
+        const result = await this.queryGroq(prompt);
+        if (result && result.actions && result.actions.length > 0) {
+          console.log(`[ModelClient] Groq generated ${result.actions.length} action(s):`, result.thought);
+          return result;
+        }
+      } catch (err) {
+        console.warn('[ModelClient] Groq API call failed:', err.message);
+      }
+    }
+
+    // 2. Try Mercury AI
+    if (this.mercuryKey) {
+      try {
+        console.log(`[ModelClient] Querying Mercury AI (${this.mercuryModel})...`);
+        const result = await this.queryMercury(prompt);
+        if (result && result.actions && result.actions.length > 0) {
+          console.log(`[ModelClient] Mercury generated ${result.actions.length} action(s):`, result.thought);
+          return result;
+        }
+      } catch (err) {
+        console.warn('[ModelClient] Mercury API call failed:', err.message);
+      }
+    }
+
+    // 3. Try Local Model (Ollama / Qwen 2.5 Coder 3B / Llama 3.2 3B)
+    try {
+      const localResult = await this.queryLocalModel(prompt);
+      if (localResult && localResult.actions && localResult.actions.length > 0) {
+        console.log('[ModelClient] Local Model generated actions:', localResult.thought);
+        return localResult;
+      }
+    } catch (e) {
+      // Local model not running
+    }
+
+    return null;
+  }
+
+  /**
+   * Query Groq Cloud chat completions
+   */
+  async queryGroq(prompt) {
+    const res = await fetch(this.groqUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.groqKey}`
+      },
+      body: JSON.stringify({
+        model: this.groqModel,
+        messages: [
+          { role: 'system', content: this.systemPrompt },
+          { role: 'user', content: prompt }
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.1,
+        max_tokens: 600
+      })
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Groq API error ${res.status}: ${text}`);
+    }
+
+    const data = await res.json();
+    const rawContent = data.choices?.[0]?.message?.content || '';
+    return this.parseJSONResponse(rawContent);
+  }
+
+  /**
+   * Query Mercury AI chat completions
+   */
+  async queryMercury(prompt) {
+    const res = await fetch(this.mercuryUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.mercuryKey}`
+      },
+      body: JSON.stringify({
+        model: this.mercuryModel,
+        messages: [
+          { role: 'system', content: this.systemPrompt },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.1,
+        max_tokens: 600
+      })
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Mercury API error ${res.status}: ${text}`);
+    }
+
+    const data = await res.json();
+    const rawContent = data.choices?.[0]?.message?.content || '';
+    return this.parseJSONResponse(rawContent);
+  }
+
+  /**
+   * Query Local Ollama (Qwen 2.5 Coder 3B / Llama 3.2 3B)
+   */
+  async queryLocalModel(prompt) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1200);
+
+    try {
+      const res = await fetch(this.localEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'qwen2.5-coder:3b',
+          prompt: `${this.systemPrompt}\n\n${prompt}`,
+          stream: false,
+          format: 'json'
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const json = await res.json();
+        return this.parseJSONResponse(json.response || '');
+      }
+    } catch (e) {
+      clearTimeout(timer);
+    }
+    return null;
+  }
+
+  /**
+   * Extract, sanitize and normalize JSON action schema from model output
+   */
+  parseJSONResponse(raw) {
+    if (!raw || typeof raw !== 'string') return null;
+
+    let cleaned = raw.trim();
+    if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/^```(json)?\n?/, '').replace(/\n?```$/, '');
+    }
+
+    let parsed = null;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (e) {
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      if (match) {
+        try { parsed = JSON.parse(match[0]); } catch (err) {}
+      }
+    }
+
+    if (!parsed || !Array.isArray(parsed.actions)) return null;
+
+    // Normalize action shapes
+    const normalizedActions = parsed.actions.map(act => {
+      let rawType = (act.type || act.action || '').toUpperCase();
+      if (rawType === 'TYPE' || rawType === 'INPUT') rawType = 'INPUT_TEXT';
+      if (rawType === 'CLICK' || rawType === 'TAP') rawType = 'CLICK_SELECTOR';
+      if (rawType === 'PRESS' && act.key === 'Enter') rawType = 'SCROLL'; // safe fallback
+
+      const params = act.params || {
+        url: act.url,
+        query: act.query,
+        direction: act.direction,
+        amount: act.amount,
+        target: act.target || act.selector,
+        selector: act.selector,
+        text: act.text
+      };
+
+      return {
+        type: rawType,
+        params
+      };
+    }).filter(act => !!act.type);
+
+    return {
+      thought: parsed.thought || 'Executing browser command',
+      actions: normalizedActions
+    };
+  }
+}
+
+module.exports = ModelClient;

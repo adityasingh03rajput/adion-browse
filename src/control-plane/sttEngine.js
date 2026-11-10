@@ -1,8 +1,10 @@
+const config = require('./config');
+
 /**
  * Local Speech-to-Text (STT) Engine & Acoustic Command Classifier
  * Transcribes raw 16kHz 16-bit mono Linear PCM audio buffers into text.
- * Implements acoustic cadence, zero-crossing rate (ZCR), energy envelope matching,
- * and seamless fallback to local Whisper/whisper.cpp endpoints if present.
+ * Integrates Whisper-Large-v3-Turbo on Groq for ultra-low-latency transcription,
+ * local whisper.cpp endpoints, and edge acoustic phonetic classifiers.
  */
 class STTEngine {
   constructor(options = {}) {
@@ -19,7 +21,20 @@ class STTEngine {
       return '';
     }
 
-    // 1. Try local Whisper.cpp HTTP endpoint if running
+    // 1. High-Performance Whisper-Large-v3-Turbo
+    if (config.groqApiKey) {
+      try {
+        const groqText = await this.queryGroqWhisper(pcmBuffer);
+        if (groqText && groqText.trim()) {
+          console.log(`[STTEngine] Whisper-large-v3-turbo transcribed: "${groqText}"`);
+          return groqText.trim();
+        }
+      } catch (err) {
+        console.warn('[STTEngine] Whisper cloud call failed, using fallback:', err.message);
+      }
+    }
+
+    // 2. Try local Whisper.cpp HTTP endpoint if running
     try {
       const whisperResult = await this.queryLocalWhisper(pcmBuffer);
       if (whisperResult && whisperResult.trim()) {
@@ -30,10 +45,36 @@ class STTEngine {
       // Whisper endpoint not running; fall through to edge acoustic classifier
     }
 
-    // 2. Fast Acoustic & Phonetic Pattern Matcher
+    // 3. Fast Acoustic & Phonetic Pattern Matcher
     const classifiedText = this.classifyAcousticCommand(pcmBuffer);
     console.log(`[STTEngine] Acoustic Classifier matched: "${classifiedText}"`);
     return classifiedText;
+  }
+
+  /**
+   * Transcribe audio using Whisper-Large-v3-turbo on Groq LPU
+   */
+  async queryGroqWhisper(pcmBuffer) {
+    const wavBuffer = this.createWavBuffer(pcmBuffer);
+    const blob = new Blob([wavBuffer], { type: 'audio/wav' });
+    const formData = new FormData();
+    formData.append('file', blob, 'speech.wav');
+    formData.append('model', config.groqWhisperModel || 'whisper-large-v3-turbo');
+    formData.append('response_format', 'json');
+
+    const res = await fetch(config.groqWhisperUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${config.groqApiKey}`
+      },
+      body: formData
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      return (data.text || '').trim();
+    }
+    return '';
   }
 
   /**
@@ -189,3 +230,4 @@ class STTEngine {
 }
 
 module.exports = STTEngine;
+
