@@ -55,11 +55,79 @@ function startBrowser() {
     stdio: ['inherit', 'pipe', 'pipe']
   });
 
-  browserProcess.stdout.pipe(process.stdout);
-  browserProcess.stdout.pipe(logStream);
+  const noisePatterns = [
+    /:\d+:\d+\/\d+\.\d+:(ERROR|WARNING|INFO):/i,
+    /gpu_process_host\.cc/i,
+    /gpu_init\.cc/i,
+    /sandbox_win\.cc/i,
+    /audio_manager_win\.cc/i,
+    /angle_platform_impl\.cc/i,
+    /gl_surface_egl\.cc/i,
+    /d3d11_device\.cc/i,
+    /cert_verify_proc/i,
+    /viz_main_impl\.cc/i,
+    /paint_controller\.cc/i,
+    /DevTools listening on ws:/i,
+    /DeprecationWarning/i,
+    /GetInterfaceInfo/i,
+    /ALSA/i,
+    /DirectSound/i,
+    /fallback to non-strict/i,
+    /\[AgentRuntime Audio\] Diagnostics: Frame #/i
+  ];
 
-  browserProcess.stderr.pipe(process.stderr);
-  browserProcess.stderr.pipe(logStream);
+  function createStructuredLogger(stream, isStderr = false) {
+    let pendingBuffer = '';
+    return (chunk) => {
+      const text = chunk.toString();
+      if (stream) stream.write(text);
+
+      pendingBuffer += text;
+      const lines = pendingBuffer.split(/\r?\n/);
+      pendingBuffer = lines.pop();
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+
+        if (noisePatterns.some(pattern => pattern.test(line))) {
+          continue;
+        }
+
+        const now = new Date();
+        const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+
+        let formatted = line;
+        if (line.includes('[AgentRuntime Audio]') || line.includes('[AgentRuntime VAD]')) {
+          formatted = `[${timeStr}] 🎙️  ${line.replace(/\[AgentRuntime\s+/, '[')}`;
+        } else if (line.includes('[STTEngine]')) {
+          formatted = `[${timeStr}] 🗣️  ${line}`;
+        } else if (line.includes('[ModelClient]') || line.includes('[Claude]') || line.includes('[AnthropicProvider]')) {
+          formatted = `[${timeStr}] 🤖 ${line}`;
+        } else if (line.includes('[MCPServer]')) {
+          formatted = `[${timeStr}] 📡 ${line}`;
+        } else if (line.includes('[SessionManager]')) {
+          formatted = `[${timeStr}] 💾 ${line}`;
+        } else if (line.includes('[AgentRuntime FileSystem]') || line.includes('[AgentRuntime FastPath]')) {
+          formatted = `[${timeStr}] ⚡ ${line.replace('[AgentRuntime ', '[')}`;
+        } else if (isStderr && /error/i.test(line)) {
+          formatted = `[${timeStr}] ⚠️  [SYSTEM ERROR] ${line}`;
+        } else if (isStderr) {
+          continue;
+        } else {
+          formatted = `[${timeStr}] ℹ️  ${line}`;
+        }
+
+        console.log(formatted);
+      }
+    };
+  }
+
+  const handleStdout = createStructuredLogger(logStream, false);
+  const handleStderr = createStructuredLogger(logStream, true);
+
+  browserProcess.stdout.on('data', handleStdout);
+  browserProcess.stderr.on('data', handleStderr);
 
   const currentPid = browserProcess.pid;
   console.log(`[Adion Supervisor] Browser process active (PID: ${currentPid})`);

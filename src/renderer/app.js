@@ -725,6 +725,36 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /**
+   * High-tech synthetic audio chime feedback for microphone state transitions
+   */
+  function playAudioFeedbackCue(isActive) {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      const now = ctx.currentTime;
+      if (isActive) {
+        osc.frequency.setValueAtTime(520, now);
+        osc.frequency.exponentialRampToValueAtTime(880, now + 0.07);
+        gain.gain.setValueAtTime(0.06, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+        osc.start(now);
+        osc.stop(now + 0.08);
+      } else {
+        osc.frequency.setValueAtTime(880, now);
+        osc.frequency.exponentialRampToValueAtTime(440, now + 0.07);
+        gain.gain.setValueAtTime(0.06, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+        osc.start(now);
+        osc.stop(now + 0.08);
+      }
+    } catch (_) {}
+  }
+
+  /**
    * Start streaming hardware microphone audio directly across IPC to the Control Plane
    */
   function showOmniboxVoiceStatus(visible, text = 'LISTENING...') {
@@ -740,11 +770,17 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function startMicrophoneStream() {
-    // Immediate tactile feedback on button and omnibox status pill
+    // Immediate, 0ms tactile visual feedback on button, omnibox, and HUD
+    isListening = true;
     if (btnVoiceAgent) btnVoiceAgent.classList.add('listening');
+    const omnibox = document.querySelector('.omnibox');
+    if (omnibox) omnibox.classList.add('voice-active');
+    const btnJarvisVoiceEl = document.getElementById('btnJarvisVoice');
+    if (btnJarvisVoiceEl) btnJarvisVoiceEl.classList.add('listening');
+
     showOmniboxVoiceStatus(true, 'LISTENING...');
     showAgentHud('LISTENING', 'Microphone active - stream capturing...', true);
-    isListening = true;
+    playAudioFeedbackCue(true);
 
     try {
       latestTranscript = '';
@@ -808,6 +844,10 @@ document.addEventListener('DOMContentLoaded', () => {
       console.warn('[Microphone Stream] Error accessing microphone:', err);
       isListening = false;
       if (btnVoiceAgent) btnVoiceAgent.classList.remove('listening');
+      const omnibox = document.querySelector('.omnibox');
+      if (omnibox) omnibox.classList.remove('voice-active');
+      const btnJarvisVoiceEl = document.getElementById('btnJarvisVoice');
+      if (btnJarvisVoiceEl) btnJarvisVoiceEl.classList.remove('listening');
       showOmniboxVoiceStatus(false);
       showJarvisToast('Microphone access denied or busy. Check system settings.', 'error');
       showAgentHud('WARNING', 'Microphone unavailable. Type in chat instead.');
@@ -820,7 +860,13 @@ document.addEventListener('DOMContentLoaded', () => {
   function stopMicrophoneStream(transcript = '') {
     isListening = false;
     if (btnVoiceAgent) btnVoiceAgent.classList.remove('listening');
+    const omnibox = document.querySelector('.omnibox');
+    if (omnibox) omnibox.classList.remove('voice-active');
+    const btnJarvisVoiceEl = document.getElementById('btnJarvisVoice');
+    if (btnJarvisVoiceEl) btnJarvisVoiceEl.classList.remove('listening');
+
     showOmniboxVoiceStatus(false);
+    playAudioFeedbackCue(false);
 
     if (scriptProcessor) {
       scriptProcessor.disconnect();
@@ -862,24 +908,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // Instant Tactile Voice Button Handler (0ms latency, pointerdown + click fallback)
+  let lastVoiceToggleTime = 0;
+  function handleVoiceButtonClick(e) {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const now = Date.now();
+    if (now - lastVoiceToggleTime < 280) return;
+    lastVoiceToggleTime = now;
+    toggleVoiceAgent();
+  }
+
   if (btnVoiceAgent) {
-    btnVoiceAgent.addEventListener('pointerdown', (e) => {
-      // Prevent omnibox input from stealing focus or triggering text selection
-      e.preventDefault();
-      e.stopPropagation();
-    });
+    btnVoiceAgent.addEventListener('pointerdown', handleVoiceButtonClick);
+    btnVoiceAgent.addEventListener('click', handleVoiceButtonClick);
+  }
 
-    btnVoiceAgent.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleVoiceAgent();
-    }, { passive: false });
-
-    btnVoiceAgent.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleVoiceAgent();
-    });
+  const omniboxVoicePill = document.getElementById('omniboxVoicePill');
+  if (omniboxVoicePill) {
+    omniboxVoicePill.style.cursor = 'pointer';
+    omniboxVoicePill.addEventListener('pointerdown', handleVoiceButtonClick);
+    omniboxVoicePill.addEventListener('click', handleVoiceButtonClick);
   }
 
   if (btnCancelAgent) {
@@ -1270,11 +1321,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Jarvis Mic Button Sync ---
   if (btnJarvisVoice) {
-    btnJarvisVoice.addEventListener('click', () => {
-      if (btnVoiceAgent) {
-        btnVoiceAgent.click();
-      }
-    });
+    btnJarvisVoice.addEventListener('pointerdown', handleVoiceButtonClick);
+    btnJarvisVoice.addEventListener('click', handleVoiceButtonClick);
   }
 
   // --- IPC Event Listeners for Jarvis & Session Updates ---
