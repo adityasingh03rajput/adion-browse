@@ -76,58 +76,49 @@ function startBrowser() {
     /\[AgentRuntime Audio\] Diagnostics: Frame #/i
   ];
 
-  function createStructuredLogger(stream, isStderr = false) {
-    let pendingBuffer = '';
-    return (chunk) => {
-      const text = chunk.toString();
-      if (stream) stream.write(text);
+  function formatAndLog(rawText, isStderr = false) {
+    if (!rawText) return;
+    try {
+      if (logStream) logStream.write(rawText);
+    } catch (_) {}
 
-      pendingBuffer += text;
-      const lines = pendingBuffer.split(/\r?\n/);
-      pendingBuffer = lines.pop();
+    const lines = rawText.split(/\r?\n/);
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line) continue;
 
-      for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line) continue;
+      if (noisePatterns.some(p => p.test(line))) continue;
 
-        if (noisePatterns.some(pattern => pattern.test(line))) {
-          continue;
-        }
+      const now = new Date();
+      const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 
-        const now = new Date();
-        const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-
-        let formatted = line;
-        if (line.includes('[AgentRuntime Audio]') || line.includes('[AgentRuntime VAD]')) {
-          formatted = `[${timeStr}] 🎙️  ${line.replace(/\[AgentRuntime\s+/, '[')}`;
-        } else if (line.includes('[STTEngine]')) {
-          formatted = `[${timeStr}] 🗣️  ${line}`;
-        } else if (line.includes('[ModelClient]') || line.includes('[Claude]') || line.includes('[AnthropicProvider]')) {
-          formatted = `[${timeStr}] 🤖 ${line}`;
-        } else if (line.includes('[MCPServer]')) {
-          formatted = `[${timeStr}] 📡 ${line}`;
-        } else if (line.includes('[SessionManager]')) {
-          formatted = `[${timeStr}] 💾 ${line}`;
-        } else if (line.includes('[AgentRuntime FileSystem]') || line.includes('[AgentRuntime FastPath]')) {
-          formatted = `[${timeStr}] ⚡ ${line.replace('[AgentRuntime ', '[')}`;
-        } else if (isStderr && /error/i.test(line)) {
-          formatted = `[${timeStr}] ⚠️  [SYSTEM ERROR] ${line}`;
-        } else if (isStderr) {
-          continue;
-        } else {
-          formatted = `[${timeStr}] ℹ️  ${line}`;
-        }
-
-        console.log(formatted);
+      let formatted = line;
+      if (line.includes('[AgentRuntime Audio]') || line.includes('[AgentRuntime VAD]')) {
+        formatted = `[${timeStr}] 🎙️  ${line.replace(/\[AgentRuntime\s+/, '[')}`;
+      } else if (line.includes('[STTEngine]') || line.includes('[AgentRuntime STT]')) {
+        formatted = `[${timeStr}] 🗣️  ${line.replace('[AgentRuntime ', '[')}`;
+      } else if (line.includes('[ModelClient]') || line.includes('[Claude]') || line.includes('[AnthropicProvider]')) {
+        formatted = `[${timeStr}] 🤖 ${line}`;
+      } else if (line.includes('[MCPServer]')) {
+        formatted = `[${timeStr}] 📡 ${line}`;
+      } else if (line.includes('[SessionManager]')) {
+        formatted = `[${timeStr}] 💾 ${line}`;
+      } else if (line.includes('[AgentRuntime FastPath]') || line.includes('[FastPath]')) {
+        formatted = `[${timeStr}] ⚡ ${line.replace('[AgentRuntime ', '[')}`;
+      } else if (isStderr && /error/i.test(line)) {
+        formatted = `[${timeStr}] ⚠️  [SYSTEM ERROR] ${line}`;
+      } else if (isStderr) {
+        continue;
+      } else {
+        formatted = `[${timeStr}] ℹ️  ${line}`;
       }
-    };
+
+      process.stdout.write(formatted + '\n');
+    }
   }
 
-  const handleStdout = createStructuredLogger(logStream, false);
-  const handleStderr = createStructuredLogger(logStream, true);
-
-  browserProcess.stdout.on('data', handleStdout);
-  browserProcess.stderr.on('data', handleStderr);
+  browserProcess.stdout.on('data', chunk => formatAndLog(chunk.toString(), false));
+  browserProcess.stderr.on('data', chunk => formatAndLog(chunk.toString(), true));
 
   const currentPid = browserProcess.pid;
   console.log(`[Adion Supervisor] Browser process active (PID: ${currentPid})`);

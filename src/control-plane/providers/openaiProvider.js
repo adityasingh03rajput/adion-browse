@@ -26,7 +26,12 @@ class OpenAIProvider extends BaseProvider {
   }
 
   isConfigured() {
-    return Boolean(this.apiKey && this.apiKey.trim().length > 0);
+    if (!this.apiKey || !this.apiKey.trim()) return false;
+    // An OpenRouter key (sk-or-v1-...) requires an OpenRouter endpoint, not standard api.openai.com
+    if (this.apiKey.startsWith('sk-or-v1-') && this.apiUrl.includes('api.openai.com')) {
+      return false;
+    }
+    return true;
   }
 
   async plan(prompt, systemPrompt, options = {}) {

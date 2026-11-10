@@ -811,6 +811,11 @@ input:checked+.slider:before {
 }
 
 /* AI Voice Commander & Control Plane HUD */
+.omnibox-wrapper.voice-active {
+  border-color: #ff3366 !important;
+  box-shadow: 0 0 16px rgba(255, 51, 102, 0.45) !important;
+}
+
 .omnibox.voice-active {
   border-color: #ff3366 !important;
   box-shadow: 0 0 16px rgba(255, 51, 102, 0.45) !important;

@@ -174,8 +174,55 @@ class QueryPreprocessor {
       };
     }
 
-    // C. Navigation & Search Fast-Path (e.g. "search for youtube.com", "search instagram.com", "open youtube")
-    const navMatch = lower.match(/(?:navigate\s+to|go\s+to|open|search\s+for|search)\s+(?:the\s+)?([a-z0-9\.\-_:\/]+)(?:\s+(?:website|page|site|homepage))?$/i);
+    // C. Navigation & Search Fast-Path
+    // 1. YouTube specific query search: e.g. "search youtube for funny cats", "search on youtube for music", "search for lofi on youtube"
+    const ytQueryMatch = lower.match(/(?:search\s+(?:on\s+)?youtube\s+for|search\s+for\s+(.+?)\s+on\s+youtube)\s*(.*)/i);
+    if (ytQueryMatch) {
+      const q = (ytQueryMatch[1] || ytQueryMatch[2] || '').trim();
+      if (q) {
+        return {
+          type: ActionType.NAVIGATE,
+          url: `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`,
+          thought: `Search YouTube for "${q}"`
+        };
+      }
+    }
+
+    // 2. Direct platform navigation: "search youtube", "open youtube", "go to youtube", "search for youtube"
+    if (/^(?:search\s+(?:for\s+)?|open\s+|go\s+to\s+|navigate\s+to\s+)?youtube(?:\.com)?$/i.test(lower.trim())) {
+      return {
+        type: ActionType.NAVIGATE,
+        url: 'https://www.youtube.com',
+        thought: 'Navigate to https://www.youtube.com'
+      };
+    }
+
+    // 3. General Search Queries: e.g. "search for wireless mouse", "search weather in tokyo", "search google for cats"
+    const googleQueryMatch = lower.match(/search\s+(?:on\s+)?google\s+for\s+(.+)/i);
+    if (googleQueryMatch) {
+      const q = googleQueryMatch[1].trim();
+      return {
+        type: ActionType.NAVIGATE,
+        url: `https://www.google.com/search?q=${encodeURIComponent(q)}`,
+        thought: `Search Google for "${q}"`
+      };
+    }
+
+    const generalSearchMatch = lower.match(/^(?:search\s+for|search)\s+(.+)$/i);
+    if (generalSearchMatch) {
+      const target = generalSearchMatch[1].trim();
+      if (target === 'youtube' || target === 'youtube.com') {
+        return { type: ActionType.NAVIGATE, url: 'https://www.youtube.com', thought: 'Navigate to https://www.youtube.com' };
+      }
+      return {
+        type: ActionType.NAVIGATE,
+        url: `https://search.brave.com/search?q=${encodeURIComponent(target)}`,
+        thought: `Search for "${target}"`
+      };
+    }
+
+    // 4. Standard URL / Domain Navigation: "navigate to example.com", "open github.com"
+    const navMatch = lower.match(/(?:navigate\s+to|go\s+to|open)\s+(?:the\s+)?([a-z0-9\.\-_:\/]+)(?:\s+(?:website|page|site|homepage))?$/i);
     if (navMatch && !/(console|network|tab|history|bookmark)/i.test(navMatch[1])) {
       let target = navMatch[1].trim();
       let url = target;

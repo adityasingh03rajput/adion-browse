@@ -773,13 +773,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // Immediate, 0ms tactile visual feedback on button, omnibox, and HUD
     isListening = true;
     if (btnVoiceAgent) btnVoiceAgent.classList.add('listening');
-    const omnibox = document.querySelector('.omnibox');
+    const omnibox = document.querySelector('.omnibox-wrapper');
     if (omnibox) omnibox.classList.add('voice-active');
     const btnJarvisVoiceEl = document.getElementById('btnJarvisVoice');
     if (btnJarvisVoiceEl) btnJarvisVoiceEl.classList.add('listening');
 
     showOmniboxVoiceStatus(true, 'LISTENING...');
-    showAgentHud('LISTENING', 'Microphone active - stream capturing...', true);
+    showAgentHud('LISTENING', 'Microphone active - speak now...', true);
     playAudioFeedbackCue(true);
 
     try {
@@ -794,6 +794,13 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
+
+      // Signal Control Plane that voice session has begun BEFORE streaming frames
+      window.adionAPI.agent.startVoice();
+
       const source = audioContext.createMediaStreamSource(audioStream);
 
       // 2048 buffer at 16kHz = ~128ms PCM chunk transmission
@@ -835,8 +842,6 @@ document.addEventListener('DOMContentLoaded', () => {
       source.connect(scriptProcessor);
       scriptProcessor.connect(audioContext.destination);
 
-      window.adionAPI.agent.startVoice();
-
       if (recognition) {
         try { recognition.start(); } catch(e){}
       }
@@ -844,7 +849,7 @@ document.addEventListener('DOMContentLoaded', () => {
       console.warn('[Microphone Stream] Error accessing microphone:', err);
       isListening = false;
       if (btnVoiceAgent) btnVoiceAgent.classList.remove('listening');
-      const omnibox = document.querySelector('.omnibox');
+      const omnibox = document.querySelector('.omnibox-wrapper');
       if (omnibox) omnibox.classList.remove('voice-active');
       const btnJarvisVoiceEl = document.getElementById('btnJarvisVoice');
       if (btnJarvisVoiceEl) btnJarvisVoiceEl.classList.remove('listening');
@@ -858,9 +863,10 @@ document.addEventListener('DOMContentLoaded', () => {
    * Stop microphone audio stream and flush final buffer
    */
   function stopMicrophoneStream(transcript = '') {
+    if (!isListening) return;
     isListening = false;
     if (btnVoiceAgent) btnVoiceAgent.classList.remove('listening');
-    const omnibox = document.querySelector('.omnibox');
+    const omnibox = document.querySelector('.omnibox-wrapper');
     if (omnibox) omnibox.classList.remove('voice-active');
     const btnJarvisVoiceEl = document.getElementById('btnJarvisVoice');
     if (btnJarvisVoiceEl) btnJarvisVoiceEl.classList.remove('listening');
@@ -869,15 +875,15 @@ document.addEventListener('DOMContentLoaded', () => {
     playAudioFeedbackCue(false);
 
     if (scriptProcessor) {
-      scriptProcessor.disconnect();
+      try { scriptProcessor.disconnect(); } catch (_) {}
       scriptProcessor = null;
     }
     if (audioContext && audioContext.state !== 'closed') {
-      audioContext.close();
+      try { audioContext.close(); } catch (_) {}
       audioContext = null;
     }
     if (audioStream) {
-      audioStream.getTracks().forEach(track => track.stop());
+      try { audioStream.getTracks().forEach(track => track.stop()); } catch (_) {}
       audioStream = null;
     }
 
@@ -943,9 +949,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Bind Decoupled Control Plane Event Listeners
   if (window.adionAPI && window.adionAPI.agent) {
+    window.adionAPI.agent.onTranscript((data) => {
+      if (data && data.text) {
+        showAgentHud('PROCESSING', `Heard: "${data.text}"`);
+        showJarvisToast(`Voice command: "${data.text}"`, 'success');
+        if (agentTranscriptPreview) {
+          agentTranscriptPreview.innerText = `"${data.text}"`;
+          agentTranscriptPreview.classList.add('has-text');
+        }
+        // Conclude audio capture when recognized command is received
+        stopMicrophoneStream();
+      }
+    });
+
     window.adionAPI.agent.onStateChange((data) => {
       if (data.state === 'LISTENING') {
         showAgentHud('LISTENING', isListening ? 'Ready for next voice command... (listening)' : 'Listening...', true);
+      } else if (data.state === 'IDLE') {
+        showAgentHud('IDLE', 'Standing by', false);
+        if (isListening) stopMicrophoneStream();
       } else {
         showAgentHud(data.state, `State: ${data.state}`, isListening);
       }
