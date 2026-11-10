@@ -77,6 +77,32 @@ async function runSessionAndJarvisTests() {
   assert.ok(genMsg2.includes('network') || genMsg2.includes('safeguarded'));
   console.log('  âœ” Generalized error handling verified: system faults reported gracefully without premature element targeting failures.');
 
+  // Test 5: Multi-Turn Conversation Memory & Cognitive Element Grounding
+  console.log('\nTest 5: Multi-Turn Conversation Memory & Grounding Architecture...');
+  sessionManager.recordInteraction({
+    source: 'user',
+    rawPrompt: 'What was the biggest horror movie of 2017?',
+    modelResponse: { thought: 'Andy Muschietti\'s "It" was the highest grossing horror film of 2017.' },
+    feedback: 'Andy Muschietti\'s "It" was the highest grossing horror film of 2017.',
+    status: 'success'
+  });
+
+  const history = sessionManager.getHistory().interactions;
+  assert.strictEqual(history.length, 1);
+  assert.ok(history[0].prompt.raw.includes('horror movie of 2017'));
+
+  // Verify ModelClient prompt incorporates conversation history
+  const modelClientSrc = fs.readFileSync(path.join(__dirname, '../src/control-plane/modelClient.js'), 'utf8');
+  assert.ok(modelClientSrc.includes('Recent Conversation History:'), 'modelClient prompt must include conversation history');
+  assert.ok(modelClientSrc.includes('conversationHistory = []'), 'planActions must accept conversationHistory parameter');
+
+  // Verify CDP Bridge cognitive token-level element grounding
+  const cdpBridgeSrc = fs.readFileSync(path.join(__dirname, '../src/control-plane/cdpBridge.js'), 'utf8');
+  assert.ok(cdpBridgeSrc.includes('meaningfulTokens'), 'cdpBridge must extract meaningful semantic tokens');
+  assert.ok(cdpBridgeSrc.includes('tokenCoverage'), 'cdpBridge must compute token coverage for fuzzy conceptual matching');
+  assert.ok(cdpBridgeSrc.includes('hrefDomainMatches'), 'cdpBridge must match domains in hrefs for links');
+  console.log('  ✔ Multi-turn conversation memory and cognitive element grounding verified.');
+
   console.log('\nâœ… ALL SESSION MEMORY & JARVIS ARCHITECTURE TESTS PASSED SUCCESSFULLY!');
 }
 

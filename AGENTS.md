@@ -16,7 +16,16 @@ Modern web applications ignore synthetic JavaScript DOM events (`el.value = ...`
 2. **DOM Insertion**: Use `document.execCommand('insertText')` and `InputEvent` for rich-text editors and controlled components.
 3. **Chromium Hardware Input (`sendInputEvent`)**: Always dispatch real OS-level Chromium hardware keystrokes (`keyDown`, `char`, `keyUp`) and mouse clicks via `webContents.sendInputEvent` or CDP `Input.dispatchKeyEvent` / `Input.dispatchMouseEvent`. This guarantees that React synthetic event systems and framework state machines register the input.
 
-## 4. Architectural Standards & Test Discipline
+## 4. Multi-Turn Conversational Memory & Coreference Resolution
+- **Never Forget Previous Turns**: The agent must always retain recent conversation history (past user commands, agent actions, and contextual thoughts).
+- **Resolve Pronouns Contextually**: Pronouns and demonstratives (e.g. "open it", "click this", "that one", "the link") must be resolved against recent conversation history and active page context. Never treat conversational pronouns as literal web search queries (e.g. NEVER search for the literal string "it").
+
+## 5. Cognitive Element Grounding (Think What It Could Be)
+- **No Rigid String Equality**: Web elements on dynamic pages (search results, articles, cards, media feeds) rarely match natural language commands verbatim (e.g. "IMDb It 2017" vs `It (2017) - IMDb`).
+- **Semantic & Token Coverage Matching**: Break target queries into meaningful tokens, score token coverage across titles, text, `aria-label`, headings, and URLs/`href` attributes, and check parent result containers. Think conceptually about what the user wants to click rather than demanding an exact substring match.
+
+## 6. Architectural Standards & Test Discipline
 - Maintain 100% test pass rate across all test suites (`npm test`).
 - Maintain zero-cost model routing and <0.5ms preprocessing benchmarks (`py -m pytest bench_tokens.py`).
 - Keep code clean, modular, and maintainable.
+

@@ -225,33 +225,38 @@ class QueryPreprocessor {
     const navMatch = lower.match(/(?:navigate\s+to|go\s+to|open)\s+(?:the\s+)?([a-z0-9\.\-_:\/]+)(?:\s+(?:website|page|site|homepage))?$/i);
     if (navMatch && !/(console|network|tab|history|bookmark)/i.test(navMatch[1])) {
       let target = navMatch[1].trim();
-      let url = target;
-      if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('file://') && !url.startsWith('adion://')) {
-        if (target === 'youtube' || target === 'youtube.com' || target === 'www.youtube.com') {
-          url = 'https://www.youtube.com';
-        } else if (target === 'whatsapp' || target === 'whatsapp.com' || target === 'web.whatsapp.com') {
-          url = 'https://web.whatsapp.com';
-        } else if (target === 'chatgpt' || target === 'chatgpt.com') {
-          url = 'https://chatgpt.com';
-        } else if (target === 'github' || target === 'github.com') {
-          url = 'https://github.com';
-        } else if (target === 'google' || target === 'google.com') {
-          url = 'https://www.google.com';
-        } else if (target === 'reddit' || target === 'reddit.com') {
-          url = 'https://reddit.com';
-        } else if (target === 'twitter' || target === 'x' || target === 'x.com' || target === 'twitter.com') {
-          url = 'https://x.com';
-        } else if (/^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}/.test(url)) {
-          url = `https://${url}`;
-        } else {
-          url = `https://search.brave.com/search?q=${encodeURIComponent(target)}`;
+      const isCoreference = /^(?:it|this|that|them|one|first|second|third|last|next|previous|link|result|tab|item|video|article|page)$/i.test(target);
+
+      // Do NOT hijack conversational pronouns/coreferences (e.g. "open it", "open this") into literal Brave search queries
+      if (!isCoreference) {
+        let url = target;
+        if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('file://') && !url.startsWith('adion://')) {
+          if (target === 'youtube' || target === 'youtube.com' || target === 'www.youtube.com') {
+            url = 'https://www.youtube.com';
+          } else if (target === 'whatsapp' || target === 'whatsapp.com' || target === 'web.whatsapp.com') {
+            url = 'https://web.whatsapp.com';
+          } else if (target === 'chatgpt' || target === 'chatgpt.com') {
+            url = 'https://chatgpt.com';
+          } else if (target === 'github' || target === 'github.com') {
+            url = 'https://github.com';
+          } else if (target === 'google' || target === 'google.com') {
+            url = 'https://www.google.com';
+          } else if (target === 'reddit' || target === 'reddit.com') {
+            url = 'https://reddit.com';
+          } else if (target === 'twitter' || target === 'x' || target === 'x.com' || target === 'twitter.com') {
+            url = 'https://x.com';
+          } else if (/^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}/.test(url)) {
+            url = `https://${url}`;
+          } else {
+            url = `https://search.brave.com/search?q=${encodeURIComponent(target)}`;
+          }
         }
+        return {
+          type: ActionType.NAVIGATE,
+          url: url,
+          thought: `Navigate to ${url}`
+        };
       }
-      return {
-        type: ActionType.NAVIGATE,
-        url: url,
-        thought: `Navigate to ${url}`
-      };
     }
 
     // D. Context-Aware WhatsApp Contact Messaging & Direct Dispatch

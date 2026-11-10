@@ -252,7 +252,7 @@ Do NOT wrap output in markdown fences. Output raw JSON object only.
   /**
    * Plan browser actions for a natural language command using Groq, Mercury, or Local model
    */
-  async planActions(userInput, pageContext = {}) {
+  async planActions(userInput, pageContext = {}, conversationHistory = []) {
     let elementsInfo = '';
     if (Array.isArray(pageContext.buttons) && pageContext.buttons.length > 0) {
       elementsInfo += `\n- Visible Interactive Buttons: ${pageContext.buttons.join(', ')}`;
@@ -267,12 +267,26 @@ Do NOT wrap output in markdown fences. Output raw JSON object only.
       elementsInfo += `\n- Shared Page Content (Active Page):\n${pageContext.pageText.slice(0, 3000)}`;
     }
 
+    let historySection = '';
+    if (Array.isArray(conversationHistory) && conversationHistory.length > 0) {
+      historySection = '\nRecent Conversation History:\n' +
+        conversationHistory.map((item, idx) => {
+          const u = item.user || item.rawPrompt || item.transcription || '';
+          const a = item.agent || item.feedback || item.thought || '';
+          return `Turn ${idx + 1}:\n- User: "${u}"\n- Agent: ${a}`;
+        }).join('\n') + '\n';
+    }
+
     const prompt = `
 Current Active Page:
 - URL: ${pageContext.url || 'adion://newtab'}
 - Title: ${pageContext.title || 'New Tab'}${elementsInfo}
-
+${historySection}
 User Command: "${userInput}"
+
+Conversational Instruction:
+- Maintain conversational memory across turns. When the user says "it", "this", "that", "them", "open it", "click it", or asks a follow-up, resolve the reference using the Recent Conversation History and Current Active Page.
+- Never output generic search queries for pronouns like "it". Instead, target the specific item, search result, link, or entity discussed.
 
 JSON Action Plan:
 `;

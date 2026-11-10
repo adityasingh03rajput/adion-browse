@@ -397,9 +397,17 @@ class AgentRuntime extends EventEmitter {
         } catch (_) {}
       }
 
+      // Retrieve recent conversation history from SessionManager so agent never forgets previous chat
+      const recentInteractions = this.sessionManager ? (this.sessionManager.getHistory().interactions || []).slice(-8) : [];
+      const conversationHistory = recentInteractions.map(item => ({
+        user: item.rawPrompt || item.transcription,
+        agent: item.feedback || (item.modelResponse && item.modelResponse.thought) || '',
+        status: item.status
+      }));
+
       let plan = null;
       try {
-        plan = await this.model.planActions(text, pageContext);
+        plan = await this.model.planActions(text, pageContext, conversationHistory);
       } catch (err) {
         console.warn('[AgentRuntime] Model planning notice:', err.message);
       }

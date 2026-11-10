@@ -34,7 +34,7 @@ class VisionGrounder {
         width: match.width,
         height: match.height,
         tag: match.tag,
-        label: match.text,
+        label: match.label || match.text || naturalQuery,
         confidence: 0.94
       };
     }

@@ -165,6 +165,11 @@ class CDPBridge {
       (() => {
         const query = ${JSON.stringify(target.toLowerCase().trim())};
 
+        // Extract meaningful semantic tokens for conceptual & fuzzy matching
+        const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'for', 'in', 'on', 'at', 'to', 'from', 'by', 'with', 'link', 'website', 'page', 'site', 'button', 'click', 'open', 'tap', 'please', 'can', 'you']);
+        const rawTokens = query.replace(/[^\\w\\s\\.-]/g, ' ').split(/\\s+/).filter(Boolean);
+        const meaningfulTokens = rawTokens.filter(t => !stopWords.has(t) && t.length > 1);
+
         // Recursive tree walker traversing both standard DOM and Shadow DOM
         function getAllElements(root = document.body) {
           let elements = [];
@@ -201,26 +206,66 @@ class CDPBridge {
           const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
           const title = (el.getAttribute('title') || '').toLowerCase();
           const alt = (el.getAttribute('alt') || '').toLowerCase();
+          const href = (el.getAttribute('href') || el.src || '').toLowerCase();
           const placeholder = (el.getAttribute('placeholder') || '').toLowerCase();
           const id = (el.id || '').toLowerCase();
 
-          // Check for keyword matches
+          // Context from parent card or search result container
+          const parentCard = el.closest('article, [class*="result" i], [class*="snippet" i], [class*="card" i], li, [data-sitelink]');
+          const parentCardText = parentCard ? (parentCard.innerText || '').slice(0, 350).toLowerCase() : '';
+          const combined = (text + ' ' + ariaLabel + ' ' + title + ' ' + alt + ' ' + href + ' ' + parentCardText).toLowerCase();
+
+          // 1. Exact string matches
           if (ariaLabel === query || title === query || text === query || alt === query) {
-            score = 100;
+            score = 120;
           } else if (ariaLabel.includes(query) || title.includes(query) || alt.includes(query)) {
-            score = 80;
+            score = 100;
           } else if (text.length < 120 && text.includes(query)) {
-            score = 65;
+            score = 90;
           } else if (text.includes(query)) {
-            score = 45;
-          } else if (placeholder.includes(query) || id.includes(query)) {
-            score = 40;
+            score = 75;
+          } else if (combined.includes(query)) {
+            score = 65;
+          }
+
+          // 2. Cognitive Multi-Token Semantic Coverage (what it could be)
+          if (meaningfulTokens.length > 0) {
+            let matchedTokens = 0;
+            let hrefDomainMatches = 0;
+            for (const tok of meaningfulTokens) {
+              if (text.includes(tok) || ariaLabel.includes(tok) || title.includes(tok) || alt.includes(tok)) {
+                matchedTokens++;
+              } else if (href.includes(tok)) {
+                matchedTokens++;
+                hrefDomainMatches++;
+              } else if (parentCardText.includes(tok)) {
+                matchedTokens += 0.8;
+              }
+            }
+            const tokenCoverage = matchedTokens / meaningfulTokens.length;
+            if (tokenCoverage >= 0.99) {
+              score = Math.max(score, 90 + (meaningfulTokens.length * 5) + (hrefDomainMatches * 20));
+            } else if (tokenCoverage >= 0.65) {
+              score = Math.max(score, 65 + (matchedTokens * 5) + (hrefDomainMatches * 15));
+            } else if (tokenCoverage >= 0.45 && meaningfulTokens.length >= 3) {
+              score = Math.max(score, 45 + (matchedTokens * 4));
+            }
+          }
+
+          if (placeholder.includes(query) || id.includes(query)) {
+            score = Math.max(score, 50);
           }
 
           // Bias towards clickable elements
-          const isClickable = el.tagName === 'BUTTON' || el.tagName === 'A' || el.tagName === 'INPUT' || el.getAttribute('role') === 'button' || el.onclick != null || window.getComputedStyle(el).cursor === 'pointer';
+          const isClickable = el.tagName === 'BUTTON' || el.tagName === 'A' || el.tagName === 'INPUT' || el.getAttribute('role') === 'button' || el.getAttribute('role') === 'link' || el.onclick != null || window.getComputedStyle(el).cursor === 'pointer';
           if (isClickable && score > 0) {
-            score += 25;
+            score += 30;
+          }
+
+          // Bias towards search result headings and titles
+          const isHeading = el.tagName === 'H1' || el.tagName === 'H2' || el.tagName === 'H3' || el.tagName === 'H4';
+          if (isHeading && score > 0) {
+            score += 20;
           }
 
           if (score > highestScore) {
@@ -229,9 +274,12 @@ class CDPBridge {
           }
         }
 
-        if (bestMatch && highestScore >= 40) {
-          // If bestMatch is inside an anchor or button (e.g. video card, thumbnail image), target the clickable container
-          const clickable = bestMatch.closest('a, button, [role="button"]') || bestMatch;
+        if (bestMatch && highestScore >= 35) {
+          // If bestMatch is inside or contains an anchor or button, target the clickable container
+          let clickable = bestMatch.closest('a, button, [role="button"], [role="link"]');
+          if (!clickable) {
+            clickable = bestMatch.querySelector('a, button, [role="button"], [role="link"]') || bestMatch;
+          }
           try {
             clickable.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
           } catch(e) {}

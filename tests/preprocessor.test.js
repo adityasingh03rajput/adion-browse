@@ -164,6 +164,18 @@ async function testPreprocessorPerformance() {
   assert.strictEqual(sendMsgIntent.message, 'hi');
   console.log('  ✔ Context-aware contact search and message extraction verified for WhatsApp Web!');
 
+  // Test 11: Pronoun / Anaphora Non-Hijacking ("open it", "click this")
+  console.log('\nTest 11: Conversational Pronoun & Coreference Non-Hijacking...');
+  const openItPrep = preprocessor.preprocess('open it');
+  const openItFastIntent = preprocessor.extractFastIntent(openItPrep);
+  // Must be null so it does not navigate to search.brave.com?q=it, allowing multi-turn conversational reasoning to resolve "it"
+  assert.strictEqual(openItFastIntent, null, '"open it" must not be hijacked as a literal URL search query');
+
+  const openThisPrep = preprocessor.preprocess('open this');
+  const openThisFastIntent = preprocessor.extractFastIntent(openThisPrep);
+  assert.strictEqual(openThisFastIntent, null, '"open this" must not be hijacked as a literal URL search query');
+  console.log('  ✔ Pronouns and relative references preserved for contextual multi-turn resolution.');
+
   console.log('\n✅ ALL QUERY PREPROCESSING & PERFORMANCE BENCHMARKS PASSED!');
 }
 
