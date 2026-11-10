@@ -196,6 +196,13 @@ class QueryPreprocessor {
         thought: 'Navigate to https://www.youtube.com'
       };
     }
+    if (/^(?:search\s+(?:for\s+)?|open\s+|go\s+to\s+|navigate\s+to\s+)?(?:whatsapp\s+web|whatsapp)(?:\.com)?$/i.test(lower.trim())) {
+      return {
+        type: ActionType.NAVIGATE,
+        url: 'https://web.whatsapp.com',
+        thought: 'Navigate to https://web.whatsapp.com'
+      };
+    }
 
     // 3. General Search Queries: e.g. "search for wireless mouse", "search weather in tokyo", "search google for cats"
     const googleQueryMatch = lower.match(/search\s+(?:on\s+)?google\s+for\s+(.+)/i);
@@ -237,6 +244,8 @@ class QueryPreprocessor {
           url = 'https://www.github.com';
         } else if (target === 'twitter' || target === 'twitter.com' || target === 'x' || target === 'x.com') {
           url = 'https://x.com';
+        } else if (target === 'whatsapp' || target === 'whatsapp web' || target === 'web.whatsapp.com' || target === 'whatsapp.com') {
+          url = 'https://web.whatsapp.com';
         } else if (/^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}/.test(url)) {
           url = `https://${url}`;
         } else {
