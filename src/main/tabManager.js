@@ -101,6 +101,7 @@ class TabManager {
 
     // Setup WebContents handlers
     const wc = view.webContents;
+    wc.setMaxListeners(40);
 
     wc.setWindowOpenHandler(({ url }) => {
       this.createTab(url);

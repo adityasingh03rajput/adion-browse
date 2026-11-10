@@ -648,6 +648,12 @@ document.addEventListener('DOMContentLoaded', () => {
         agentHudState.innerText = `SPEECH (${(data.rms * 100).toFixed(0)}%)`;
       }
     });
+
+    window.adionAPI.agent.onShellAction((data) => {
+      if (data.action === 'OPEN_SETTINGS' && btnSettings) btnSettings.click();
+      if (data.action === 'OPEN_BOOKMARKS' && btnBookmarksMenu) btnBookmarksMenu.click();
+      if (data.action === 'OPEN_HISTORY' && btnHistory) btnHistory.click();
+    });
   }
 });
 

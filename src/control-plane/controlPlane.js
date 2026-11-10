@@ -70,6 +70,10 @@ class ControlPlane {
       this.sendToUI('agent:audio-level', data);
     });
 
+    this.runtime.on('shell-action', (data) => {
+      this.sendToUI('shell:action', data);
+    });
+
     // Multi-Agent Pool events
     this.multiAgents.on('agent-spawned', (agent) => {
       this.sendToUI('multi-agent:spawned', agent);

@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('adionAPI', {
     onActionFinished: (callback) => ipcRenderer.on('agent:action-finished', (e, data) => callback(data)),
     onFeedback: (callback) => ipcRenderer.on('agent:feedback-message', (e, data) => callback(data)),
     onAudioLevel: (callback) => ipcRenderer.on('agent:audio-level', (e, data) => callback(data)),
+    onShellAction: (callback) => ipcRenderer.on('shell:action', (e, data) => callback(data)),
     getContextStats: () => ipcRenderer.invoke('agent:get-context-stats'),
     getTabClusters: () => ipcRenderer.invoke('agent:get-tab-clusters'),
     verifyBiometric: (vector) => ipcRenderer.invoke('agent:verify-biometric', vector)

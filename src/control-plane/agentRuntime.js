@@ -305,6 +305,21 @@ class AgentRuntime extends EventEmitter {
     if (/(close this tab|close tab|shut tab)/i.test(lower)) {
       return { type: ActionType.CLOSE_TAB };
     }
+
+    // Browser Chrome Controls
+    if (/(developer tools|devtools|dev tools|code button|developer button|inspect)/i.test(lower)) {
+      return { type: ActionType.TOGGLE_DEVTOOLS };
+    }
+    if (/(open settings|show settings|settings button|gear icon)/i.test(lower)) {
+      return { type: ActionType.OPEN_SETTINGS };
+    }
+    if (/(open bookmarks|show bookmarks|bookmarks)/i.test(lower)) {
+      return { type: ActionType.OPEN_BOOKMARKS };
+    }
+    if (/(open history|show history|history)/i.test(lower)) {
+      return { type: ActionType.OPEN_HISTORY };
+    }
+
     const openMatch = lower.match(/(open|launch|navigate to|go to)\s+(https?:\/\/[^\s]+|[a-z0-9\-]+\.[a-z]{2,}[^\s]*|youtube|google|reddit|github|wikipedia|twitter|x\.com)/i);
     if (openMatch) {
       let target = openMatch[2];
@@ -423,7 +438,54 @@ class AgentRuntime extends EventEmitter {
         break;
       }
 
+      case ActionType.TOGGLE_DEVTOOLS: {
+        this.tabManager.toggleDevTools();
+        this.emit('feedback', { message: 'Toggled Developer Tools', level: 'success' });
+        break;
+      }
+
+      case ActionType.OPEN_SETTINGS: {
+        this.emit('shell-action', { action: 'OPEN_SETTINGS' });
+        this.emit('feedback', { message: 'Opened Settings', level: 'success' });
+        break;
+      }
+
+      case ActionType.OPEN_BOOKMARKS: {
+        this.emit('shell-action', { action: 'OPEN_BOOKMARKS' });
+        this.emit('feedback', { message: 'Opened Bookmarks', level: 'success' });
+        break;
+      }
+
+      case ActionType.OPEN_HISTORY: {
+        this.emit('shell-action', { action: 'OPEN_HISTORY' });
+        this.emit('feedback', { message: 'Opened History', level: 'success' });
+        break;
+      }
+
       case ActionType.CLICK_SELECTOR: {
+        const targetLower = (intent.target || '').toLowerCase();
+        // Check if referring to Chrome shell buttons
+        if (/(developer tools|devtools|dev tools|code button|developer button)/i.test(targetLower)) {
+          this.tabManager.toggleDevTools();
+          this.emit('feedback', { message: 'Toggled Developer Tools', level: 'success' });
+          break;
+        }
+        if (/(settings|gear)/i.test(targetLower)) {
+          this.emit('shell-action', { action: 'OPEN_SETTINGS' });
+          this.emit('feedback', { message: 'Opened Settings', level: 'success' });
+          break;
+        }
+        if (/(bookmark)/i.test(targetLower)) {
+          this.emit('shell-action', { action: 'OPEN_BOOKMARKS' });
+          this.emit('feedback', { message: 'Opened Bookmarks', level: 'success' });
+          break;
+        }
+        if (/(history)/i.test(targetLower)) {
+          this.emit('shell-action', { action: 'OPEN_HISTORY' });
+          this.emit('feedback', { message: 'Opened History', level: 'success' });
+          break;
+        }
+
         this.setState(AgentState.GROUNDING_UI, { target: intent.target });
         this.emit('feedback', { message: `Grounding target: "${intent.target}"...`, level: 'info' });
 
@@ -431,7 +493,7 @@ class AgentRuntime extends EventEmitter {
         if (match && (match.found || match.success)) {
           // Highlight target visual box first
           await this.cdp.highlightElement(match.x, match.y, match.width, match.height, `Target: ${intent.target}`);
-          await new Promise((r) => setTimeout(r, 200));
+          await new Promise((r) => setTimeout(r, 150));
 
           // Dispatch synthetic click at exact hardware coordinates
           await this.cdp.dispatchClick(match.x, match.y);

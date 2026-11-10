@@ -158,40 +158,98 @@ class CDPBridge {
   }
 
   /**
-   * Locate an interactive element matching a query or selector and return its bounding box coordinates
+   * Locate an interactive element matching a query or selector across standard DOM and Shadow DOM trees
    */
   async findElementCoordinates(target) {
     const expr = `
       (() => {
-        const query = ${JSON.stringify(target.toLowerCase())};
-        // Check for exact CSS selector first
-        let el = null;
-        try { el = document.querySelector(query); } catch(e){}
+        const query = ${JSON.stringify(target.toLowerCase().trim())};
 
-        if (!el) {
-          // Search through buttons, links, inputs, and clickable elements
-          const candidates = Array.from(document.querySelectorAll('button, a, input, [role="button"], h1, h2, h3, p, span'));
-          el = candidates.find(item => {
-            const text = (item.innerText || item.getAttribute('aria-label') || item.getAttribute('placeholder') || item.value || '').trim().toLowerCase();
-            return text.includes(query);
-          });
+        // Recursive tree walker traversing both standard DOM and Shadow DOM
+        function getAllElements(root = document.body) {
+          let elements = [];
+          if (!root) return elements;
+
+          const treeWalker = document.createTreeWalker(
+            root,
+            NodeFilter.SHOW_ELEMENT,
+            null,
+            false
+          );
+
+          let node = treeWalker.currentNode;
+          while (node) {
+            elements.push(node);
+            if (node.shadowRoot) {
+              elements = elements.concat(getAllElements(node.shadowRoot));
+            }
+            node = treeWalker.nextNode();
+          }
+          return elements;
         }
 
-        if (el) {
+        const all = getAllElements();
+        let bestMatch = null;
+        let highestScore = 0;
+
+        for (const el of all) {
           const rect = el.getBoundingClientRect();
-          // Ensure element is visible
-          if (rect.width > 0 && rect.height > 0) {
-            return {
-              found: true,
-              x: Math.round(rect.left + rect.width / 2),
-              y: Math.round(rect.top + rect.height / 2),
-              width: rect.width,
-              height: rect.height,
-              tag: el.tagName,
-              text: (el.innerText || '').slice(0, 50)
-            };
+          if (rect.width <= 0 || rect.height <= 0) continue;
+
+          let score = 0;
+          const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+          const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+          const title = (el.getAttribute('title') || '').toLowerCase();
+          const placeholder = (el.getAttribute('placeholder') || '').toLowerCase();
+          const id = (el.id || '').toLowerCase();
+
+          // Check for keyword matches
+          if (ariaLabel === query || title === query || text === query) {
+            score = 100;
+          } else if (ariaLabel.includes(query) || title.includes(query)) {
+            score = 80;
+          } else if (text.length < 80 && text.includes(query)) {
+            score = 60;
+          } else if (placeholder.includes(query) || id.includes(query)) {
+            score = 40;
+          }
+
+          // Bias towards clickable elements
+          const isClickable = el.tagName === 'BUTTON' || el.tagName === 'A' || el.tagName === 'INPUT' || el.getAttribute('role') === 'button' || el.onclick != null || window.getComputedStyle(el).cursor === 'pointer';
+          if (isClickable && score > 0) {
+            score += 25;
+          }
+
+          if (score > highestScore) {
+            highestScore = score;
+            bestMatch = el;
           }
         }
+
+        if (bestMatch && highestScore >= 40) {
+          try {
+            bestMatch.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+          } catch(e) {}
+          const newRect = bestMatch.getBoundingClientRect();
+
+          // Dispatch synthetic DOM click as direct trigger
+          try {
+            bestMatch.focus();
+            bestMatch.click();
+          } catch(e) {}
+
+          return {
+            found: true,
+            score: highestScore,
+            x: Math.round(newRect.left + newRect.width / 2),
+            y: Math.round(newRect.top + newRect.height / 2),
+            width: Math.round(newRect.width),
+            height: Math.round(newRect.height),
+            tag: bestMatch.tagName,
+            label: (bestMatch.getAttribute('aria-label') || bestMatch.innerText || bestMatch.title || '').slice(0, 50)
+          };
+        }
+
         return { found: false };
       })()
     `;

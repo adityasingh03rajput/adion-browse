@@ -43,10 +43,32 @@ Available Action Types and their parameters:
 - "SCROLL": { "direction": "down" | "up" | "top" | "bottom", "amount": 450 }
 - "CLICK_SELECTOR": { "target": "button label, link text, or selector" }
 - "INPUT_TEXT": { "selector": "input or search box selector", "text": "text to type" }
+- "TOGGLE_DEVTOOLS": {} - opens/toggles developer tools (the code <> button on top right)
+- "OPEN_SETTINGS": {} - opens browser settings (the gear icon)
+- "OPEN_HISTORY": {} - opens browsing history
+- "OPEN_BOOKMARKS": {} - opens bookmarks
 - "CAPTURE_VIEWPORT": {}
 - "ANALYZE_IMAGES": { "criteria": "image search criteria" }
 
 Examples:
+User: "Tap on the developer tools button" or "click on the code button"
+Output:
+{
+  "thought": "Toggle Developer Tools console",
+  "actions": [
+    { "type": "TOGGLE_DEVTOOLS", "params": {} }
+  ]
+}
+
+User: "Click on the shorts button"
+Output:
+{
+  "thought": "Click on Shorts button in navigation",
+  "actions": [
+    { "type": "CLICK_SELECTOR", "params": { "target": "Shorts" } }
+  ]
+}
+
 User: "open youtube and search for lofi music"
 Output:
 {
