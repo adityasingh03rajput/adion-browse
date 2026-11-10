@@ -252,3 +252,4 @@ class CDPBridge {
 }
 
 module.exports = CDPBridge;
+

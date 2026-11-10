@@ -7,10 +7,13 @@ const { AgentState, ActionType } = require('./protocol');
  * grounds them against the DOM/CDP pipeline, and dispatches actions to Chromium.
  */
 class AgentRuntime extends EventEmitter {
-  constructor(tabManager, cdpBridge) {
+  constructor(tabManager, cdpBridge, contextEngine, visionGrounder, securityVault) {
     super();
     this.tabManager = tabManager;
     this.cdp = cdpBridge;
+    this.context = contextEngine;
+    this.vision = visionGrounder;
+    this.vault = securityVault;
     this.state = AgentState.IDLE;
     this.currentTask = null;
     this.actionHistory = [];
@@ -214,15 +217,15 @@ class AgentRuntime extends EventEmitter {
         this.setState(AgentState.GROUNDING_UI, { target: intent.target });
         this.emit('feedback', { message: `Grounding target: "${intent.target}"...`, level: 'info' });
 
-        const match = await this.cdp.findElementCoordinates(intent.target);
-        if (match && match.found) {
+        const match = this.vision ? await this.vision.groundElement(intent.target) : await this.cdp.findElementCoordinates(intent.target);
+        if (match && (match.found || match.success)) {
           // Highlight target visual box first
           await this.cdp.highlightElement(match.x, match.y, match.width, match.height, `Target: ${intent.target}`);
           await new Promise((r) => setTimeout(r, 200));
 
           // Dispatch synthetic click at exact hardware coordinates
           await this.cdp.dispatchClick(match.x, match.y);
-          this.emit('feedback', { message: `Clicked "${match.text || intent.target}" at (${match.x}, ${match.y})`, level: 'success' });
+          this.emit('feedback', { message: `Clicked "${match.label || match.text || intent.target}" at (${match.x}, ${match.y})`, level: 'success' });
         } else {
           this.emit('feedback', { message: `Could not locate element matching: "${intent.target}"`, level: 'warning' });
         }
@@ -230,27 +233,24 @@ class AgentRuntime extends EventEmitter {
       }
 
       case ActionType.CAPTURE_VIEWPORT: {
-        const screenshotData = await this.cdp.captureScreenshot();
+        const screenshotData = this.vision ? await this.vision.captureViewportFrame() : await this.cdp.captureScreenshot();
         this.emit('feedback', { message: 'Viewport captured for visual grounding', level: 'success' });
         this.emit('action-finished', { type: ActionType.CAPTURE_VIEWPORT, screenshot: screenshotData });
         break;
       }
 
       case ActionType.ANALYZE_IMAGES: {
+        this.setState(AgentState.GROUNDING_UI, { criteria: intent.criteria });
         this.emit('feedback', { message: `Analyzing page images for: "${intent.criteria}"...`, level: 'info' });
-        const images = await this.cdp.evaluate(`
-          Array.from(document.querySelectorAll('img'))
-            .filter(img => img.naturalWidth > 150 && img.naturalHeight > 150)
-            .map((img, idx) => ({
-              id: idx,
-              src: img.src,
-              alt: img.alt || '',
-              width: img.naturalWidth,
-              height: img.naturalHeight
-            }))
-            .slice(0, 10);
-        `);
-        this.emit('feedback', { message: `Found ${images ? images.length : 0} candidate images on page`, level: 'success' });
+
+        const images = this.vision ? await this.vision.extractSemanticImages(intent.criteria) : [];
+        if (images && images.length > 0) {
+          await this.vision.highlightCandidates(images.slice(0, 4));
+          this.emit('feedback', { message: `Found ${images.length} matching visual elements on page`, level: 'success' });
+          this.emit('action-finished', { type: ActionType.ANALYZE_IMAGES, count: images.length, candidates: images });
+        } else {
+          this.emit('feedback', { message: `No images matched criteria: "${intent.criteria}"`, level: 'warning' });
+        }
         break;
       }
 
@@ -265,3 +265,4 @@ class AgentRuntime extends EventEmitter {
 }
 
 module.exports = AgentRuntime;
+

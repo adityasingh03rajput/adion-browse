@@ -1,6 +1,9 @@
 const { ipcMain } = require('electron');
 const CDPBridge = require('./cdpBridge');
 const AgentRuntime = require('./agentRuntime');
+const ContextEngine = require('./contextEngine');
+const VisionGrounder = require('./visionGrounder');
+const SecurityVault = require('./securityVault');
 const { IPCChannels, AgentState } = require('./protocol');
 
 /**
@@ -13,7 +16,17 @@ class ControlPlane {
     this.mainWindow = mainWindow;
     this.tabManager = tabManager;
     this.cdp = new CDPBridge();
-    this.runtime = new AgentRuntime(this.tabManager, this.cdp);
+    this.context = new ContextEngine('D:\\build-cache\\context');
+    this.vision = new VisionGrounder(this.cdp);
+    this.vault = new SecurityVault();
+
+    this.runtime = new AgentRuntime(
+      this.tabManager,
+      this.cdp,
+      this.context,
+      this.vision,
+      this.vault
+    );
 
     this.init();
   }
@@ -85,6 +98,26 @@ class ControlPlane {
       this.runtime.setState(AgentState.IDLE);
       this.runtime.emit('feedback', { message: 'Agent task cancelled', level: 'warning' });
     });
+
+    // Query Context Engine Stats
+    ipcMain.handle('agent:get-context-stats', () => {
+      return this.context.getStats();
+    });
+
+    // Query Semantic Tab Clusters
+    ipcMain.handle('agent:get-tab-clusters', () => {
+      const allTabs = Array.from(this.tabManager.tabs.values()).map(t => ({
+        id: t.id,
+        url: t.url,
+        title: t.title
+      }));
+      return this.context.clusterTabs(allTabs);
+    });
+
+    // Biometric Voice Verification flow
+    ipcMain.handle('agent:verify-biometric', (event, vectorSample) => {
+      return this.vault.verifyVoiceBiometrics(vectorSample);
+    });
   }
 
   /**
@@ -93,6 +126,9 @@ class ControlPlane {
   async onActiveTabChanged(tab) {
     if (tab && tab.view) {
       await this.cdp.attach(tab.view.webContents);
+      if (this.context && tab.url) {
+        this.context.recordNavigation(tab.id, tab.url, tab.title);
+      }
     } else {
       this.cdp.detach();
     }
@@ -104,3 +140,4 @@ class ControlPlane {
 }
 
 module.exports = ControlPlane;
+

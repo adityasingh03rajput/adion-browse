@@ -51,6 +51,9 @@ contextBridge.exposeInMainWorld('adionAPI', {
     onTranscript: (callback) => ipcRenderer.on('agent:voice-transcript', (e, data) => callback(data)),
     onActionStarted: (callback) => ipcRenderer.on('agent:action-started', (e, data) => callback(data)),
     onActionFinished: (callback) => ipcRenderer.on('agent:action-finished', (e, data) => callback(data)),
-    onFeedback: (callback) => ipcRenderer.on('agent:feedback-message', (e, data) => callback(data))
+    onFeedback: (callback) => ipcRenderer.on('agent:feedback-message', (e, data) => callback(data)),
+    getContextStats: () => ipcRenderer.invoke('agent:get-context-stats'),
+    getTabClusters: () => ipcRenderer.invoke('agent:get-tab-clusters'),
+    verifyBiometric: (vector) => ipcRenderer.invoke('agent:verify-biometric', vector)
   }
 });
