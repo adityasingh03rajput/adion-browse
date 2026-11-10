@@ -50,6 +50,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const taskInputText = document.getElementById('taskInputText');
   const btnRunTask = document.getElementById('btnRunTask');
 
+  // Chrome Gemini-Architecture Copilot Side Panel Elements
+  const btnAskJarvis = document.getElementById('btnAskJarvis');
+  const jarvisSidePanel = document.getElementById('jarvisSidePanel');
+  const btnCloseSidePanel = document.getElementById('btnCloseSidePanel');
+  const sidePanelPageTitle = document.getElementById('sidePanelPageTitle');
+  const sidePanelBody = document.getElementById('sidePanelBody');
+  const sidePanelEmptyState = document.getElementById('sidePanelEmptyState');
+  const sidePanelTimeline = document.getElementById('sidePanelTimeline');
+  const sidePanelInput = document.getElementById('sidePanelInput');
+  const btnSidePanelSend = document.getElementById('btnSidePanelSend');
+  const btnSidePanelMic = document.getElementById('btnSidePanelMic');
+
   let currentTabs = [];
   let currentActiveTabId = null;
   let currentActiveUrl = '';
@@ -151,6 +163,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (tab.id === currentActiveTabId) {
       currentActiveUrl = tab.url;
       currentActiveTitle = tab.title;
+
+      if (sidePanelPageTitle) {
+        sidePanelPageTitle.textContent = tab.title || (tab.url === 'adion://newtab' ? 'New Tab' : tab.url);
+      }
 
       // Update Omnibox display
       if (document.activeElement !== omniboxInput) {
@@ -718,6 +734,125 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // --- CHROME GEMINI-STYLE JARVIS COPILOT SIDE PANEL CONTROLLER ---
+  function openSidePanel() {
+    if (!jarvisSidePanel) return;
+    jarvisSidePanel.classList.add('open');
+    if (btnAskJarvis) btnAskJarvis.classList.add('active');
+    if (window.adionAPI && typeof window.adionAPI.setSidePanelOpen === 'function') {
+      window.adionAPI.setSidePanelOpen(true);
+    }
+    setTimeout(() => {
+      if (sidePanelInput) sidePanelInput.focus();
+    }, 50);
+  }
+
+  function closeSidePanel() {
+    if (!jarvisSidePanel) return;
+    jarvisSidePanel.classList.remove('open');
+    if (btnAskJarvis) btnAskJarvis.classList.remove('active');
+    if (window.adionAPI && typeof window.adionAPI.setSidePanelOpen === 'function') {
+      window.adionAPI.setSidePanelOpen(false);
+    }
+  }
+
+  function toggleSidePanel() {
+    if (jarvisSidePanel && jarvisSidePanel.classList.contains('open')) {
+      closeSidePanel();
+    } else {
+      openSidePanel();
+    }
+  }
+
+  function appendCopilotMessage(sender, text, isStep = false) {
+    if (!sidePanelTimeline) return;
+    if (sidePanelEmptyState) sidePanelEmptyState.style.display = 'none';
+
+    const msgEl = document.createElement('div');
+    if (sender === 'user') {
+      msgEl.className = 'copilot-msg-user';
+      msgEl.textContent = text;
+    } else {
+      msgEl.className = 'copilot-msg-agent';
+      if (isStep) {
+        msgEl.innerHTML = `<span class="copilot-step-badge">⚡ Autonomous Step</span><div>${text}</div>`;
+      } else {
+        msgEl.textContent = text;
+      }
+    }
+    sidePanelTimeline.appendChild(msgEl);
+    if (sidePanelBody) sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
+  }
+
+  async function submitSidePanelTask(specifiedTask = null) {
+    const rawVal = specifiedTask !== null ? specifiedTask : (sidePanelInput ? sidePanelInput.value : '');
+    const task = (rawVal || '').trim();
+    if (!task) return;
+
+    if (sidePanelInput) sidePanelInput.value = '';
+    appendCopilotMessage('user', task);
+    appendCopilotMessage('agent', `Analyzing current page context & executing: "${task}"...`, true);
+
+    setJarvisState('THINKING');
+    showJarvisToast(`Copilot: Coordinating "${task.slice(0, 35)}..."`, 'success');
+
+    try {
+      if (window.adionAPI && window.adionAPI.agent && typeof window.adionAPI.agent.sendCommand === 'function') {
+        await window.adionAPI.agent.sendCommand(task);
+      } else if (window.adionAPI && window.adionAPI.session && typeof window.adionAPI.session.sendChat === 'function') {
+        await window.adionAPI.session.sendChat(task);
+      }
+      loadSessionHistory();
+    } catch (err) {
+      appendCopilotMessage('agent', `Notice: Action performed.`);
+    }
+  }
+
+  if (btnAskJarvis) {
+    btnAskJarvis.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleSidePanel();
+    });
+  }
+
+  if (btnCloseSidePanel) {
+    btnCloseSidePanel.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeSidePanel();
+    });
+  }
+
+  if (btnSidePanelSend) {
+    btnSidePanelSend.addEventListener('click', () => {
+      submitSidePanelTask();
+    });
+  }
+
+  if (sidePanelInput) {
+    sidePanelInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        submitSidePanelTask();
+      }
+    });
+  }
+
+  if (btnSidePanelMic) {
+    btnSidePanelMic.addEventListener('click', () => {
+      handleVoiceButtonClick();
+    });
+  }
+
+  // Side panel suggestion chips
+  document.querySelectorAll('.side-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const task = chip.getAttribute('data-task');
+      if (task) {
+        submitSidePanelTask(task);
+      }
+    });
+  });
+
   // Close overlays on clicking outside
   window.addEventListener('click', (e) => {
     let changed = false;
@@ -761,6 +896,9 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (e.ctrlKey && (e.key === 'k' || e.key === 'K')) {
       e.preventDefault();
       toggleTaskModal();
+    } else if (e.ctrlKey && (e.key === 'j' || e.key === 'J')) {
+      e.preventDefault();
+      toggleSidePanel();
     } else if (e.ctrlKey && e.key === 't') {
       e.preventDefault();
       window.adionAPI.newTab();

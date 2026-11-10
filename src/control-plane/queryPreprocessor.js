@@ -242,7 +242,21 @@ class QueryPreprocessor {
       };
     }
 
-    // D. Browser Tabs & History (including "shut down this", "close this tab")
+    // D. Direct WhatsApp Messaging & Chat Automation
+    const waMatch = lower.match(/(?:text|send\s+(?:message\s+)?|message)\s+(.+?)\s+to\s+([+0-9]{7,15})\s+(?:on|in|via)\s+whatsapp/i);
+    if (waMatch) {
+      const msg = waMatch[1].trim().replace(/^["']|["']$/g, '');
+      const phone = waMatch[2].replace(/[^0-9]/g, '');
+      return {
+        type: 'WHATSAPP_SEND',
+        phone,
+        message: msg,
+        url: `https://web.whatsapp.com/send/?phone=${phone}&text=${encodeURIComponent(msg)}`,
+        thought: `Send WhatsApp message "${msg}" to +${phone}`
+      };
+    }
+
+    // E. Browser Tabs & History (including "shut down this", "close this tab")
     if (/(?:close\s+(?:this\s+)?tab|shut\s+(?:down\s+)?(?:this\s+)?(?:tab|page|window)?|close\s+this|shut\s+this\s+down)/i.test(lower)) {
       return { type: ActionType.CLOSE_TAB, thought: 'Close current tab' };
     }

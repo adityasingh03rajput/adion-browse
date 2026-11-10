@@ -128,6 +128,13 @@
 
       <!-- Browser Menu / Tool Buttons -->
       <div class="menu-controls">
+        <!-- Chrome Gemini-style Ask Jarvis Copilot Button -->
+        <button class="btn-ask-jarvis" id="btnAskJarvis" title="Ask Jarvis Copilot (Side Panel • Ctrl+J)">
+          <svg class="sparkle-icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M19.07 4.93L4.93 19.07"></path>
+          </svg>
+          <span class="btn-ask-jarvis-text">Ask Jarvis</span>
+        </button>
         <button class="btn-icon" id="btnBookmarksMenu" title="Bookmarks">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
@@ -545,6 +552,71 @@
       </div>
     </div>
   </div>
+
+  <!-- JARVIS COPILOT SIDE PANEL (CHROME GEMINI ARCHITECTURE) -->
+  <aside class="jarvis-side-panel" id="jarvisSidePanel">
+    <div class="side-panel-header">
+      <div class="side-panel-brand">
+        <div class="side-panel-sparkle-badge">✦</div>
+        <div>
+          <h3 class="side-panel-title">JARVIS COPILOT</h3>
+          <span class="side-panel-subtitle">Autonomous Browser Intelligence</span>
+        </div>
+      </div>
+      <button class="btn-side-panel-close" id="btnCloseSidePanel" title="Close Copilot (Ctrl+J)">&times;</button>
+    </div>
+
+    <!-- Active Tab Context Pill (Sharing current page) -->
+    <div class="side-panel-context-card" id="sidePanelContextCard">
+      <div class="context-pill">
+        <span class="context-sparkle">✦</span>
+        <span class="context-label">Sharing:</span>
+        <span class="context-page-title" id="sidePanelPageTitle">New Tab</span>
+      </div>
+    </div>
+
+    <!-- Copilot Conversation & Live Autonomous Steps Timeline -->
+    <div class="side-panel-body" id="sidePanelBody">
+      <div class="side-panel-empty-state" id="sidePanelEmptyState">
+        <div class="empty-sparkle-logo">✦</div>
+        <h4>Where should we start?</h4>
+        <p>I can navigate, complete web workflows, interact with active pages, or analyze text alongside your browsing.</p>
+        
+        <div class="side-panel-suggestions">
+          <button class="side-chip" data-task="Summarize this page">📄 Summarize page</button>
+          <button class="side-chip" data-task="text hi to 9424831233 in whatsapp">💬 WhatsApp Message</button>
+          <button class="side-chip" data-task="Extract key data and links">🔗 Extract all links</button>
+          <button class="side-chip" data-task="Scroll down to explore">📜 Scroll down</button>
+        </div>
+      </div>
+      <div class="side-panel-timeline" id="sidePanelTimeline">
+        <!-- Rendered conversation & execution steps -->
+      </div>
+    </div>
+
+    <!-- Copilot Bottom Command & Speech Input -->
+    <div class="side-panel-footer">
+      <div class="side-panel-input-container">
+        <input type="text" id="sidePanelInput" class="side-panel-input" placeholder="Ask Jarvis or give browser task..." autocomplete="off">
+        <div class="side-panel-input-actions">
+          <button class="btn-side-panel-mic" id="btnSidePanelMic" title="Speak command">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+              <line x1="12" y1="19" x2="12" y2="23"></line>
+              <line x1="8" y1="23" x2="16" y2="23"></line>
+            </svg>
+          </button>
+          <button class="btn-side-panel-send" id="btnSidePanelSend" title="Run Task (Enter)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+              <polyline points="12 5 19 12 12 19"></polyline>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </aside>
 
   <script src="app.js"></script>
 </body>

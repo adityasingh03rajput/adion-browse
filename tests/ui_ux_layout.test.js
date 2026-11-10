@@ -46,6 +46,16 @@ async function testUiUxLayout() {
   assert.ok(safeBounds.height >= 200, 'Bounds must enforce minimum safe height of 200px');
   console.log('  ✔ Minimum safe boundary enforcement prevents zero-size viewport collapse.');
 
+  // Side Panel open/close bounds test (Chrome Gemini Architecture)
+  mockWidth = 1920;
+  mockHeight = 1080;
+  tm.setSidePanelOpen(true, 380);
+  const sidePanelBounds = tm.getBounds();
+  assert.strictEqual(sidePanelBounds.width, 1920 - 380, 'When side panel is open, viewport width must shrink by 380px');
+  tm.setSidePanelOpen(false);
+  assert.strictEqual(tm.getBounds().width, 1920, 'When side panel closes, viewport width must restore to 100%');
+  console.log('  ✔ Side Panel viewport partition verified: BrowserView dynamically yields 380px without overlap.');
+
   // --- Test 2: Window Resize & Maximization Event Coverage ---
   console.log('\nTest 2: Window State Change Listeners (Resize, Maximize, Restore)...');
   const tabManagerSrc = fs.readFileSync(path.join(__dirname, '../src/main/tabManager.js'), 'utf8');
@@ -136,6 +146,26 @@ async function testUiUxLayout() {
   assert.ok(appSrc.includes('executeWrittenTask'), 'app.js must define executeWrittenTask');
   assert.ok(appSrc.includes("key === 'k'"), 'app.js must support Ctrl+K shortcut for task commander');
   console.log('  ✔ AI Text Task Commander button, modal, Ctrl+K shortcut, and task execution verified.');
+
+  // --- Test 9: Chrome Gemini-Architecture Copilot Side Panel & Autonomous Continuator ---
+  console.log('\nTest 9: Chrome Gemini-Architecture Copilot Side Panel & Autonomous Continuator...');
+  assert.ok(indexHtml.includes('id="btnAskJarvis"'), 'index.html must have btnAskJarvis button');
+  assert.ok(indexHtml.includes('id="jarvisSidePanel"'), 'index.html must have jarvisSidePanel aside container');
+  assert.ok(indexHtml.includes('id="sidePanelPageTitle"'), 'index.html must display context sharing page title');
+  assert.ok(indexHtml.includes('id="sidePanelTimeline"'), 'index.html must have sidePanelTimeline for live autonomous steps');
+
+  assert.ok(css.includes('.btn-ask-jarvis'), 'styles.css must style .btn-ask-jarvis');
+  assert.ok(css.includes('.jarvis-side-panel'), 'styles.css must style .jarvis-side-panel');
+  assert.ok(css.includes('.context-pill'), 'styles.css must style context-pill');
+
+  assert.ok(appSrc.includes('toggleSidePanel'), 'app.js must define toggleSidePanel');
+  assert.ok(appSrc.includes("key === 'j'"), 'app.js must support Ctrl+J shortcut for Copilot side panel');
+
+  // Verify autonomous gateway continuator in AgentRuntime
+  const agentRuntimeSrc = fs.readFileSync(path.join(__dirname, '../src/control-plane/agentRuntime.js'), 'utf8');
+  assert.ok(agentRuntimeSrc.includes('observeAndDispatchWhatsApp'), 'agentRuntime.js must implement observeAndDispatchWhatsApp');
+  assert.ok(agentRuntimeSrc.includes('autoHandleContinuations'), 'agentRuntime.js must implement autoHandleContinuations');
+  console.log('  ✔ Chrome-style Ask Jarvis Copilot side panel, context sharing, and autonomous gateway continuator verified.');
 
   console.log('\n✅ ALL UI/UX LAYOUT & RESIZE TESTS PASSED SUCCESSFULLY!\n');
 }

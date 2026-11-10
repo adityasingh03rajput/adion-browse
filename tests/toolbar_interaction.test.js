@@ -60,6 +60,7 @@ async function testToolbarInteractions() {
   const requiredButtons = [
     'btnVoiceAgent',
     'btnTextAgent',
+    'btnAskJarvis',
     'btnBookmark',
     'btnShield',
     'btnBookmarksMenu',
@@ -75,13 +76,15 @@ async function testToolbarInteractions() {
       `index.html must contain button element with id="${btnId}"`
     );
   }
-  console.log(`  ✔ All ${requiredButtons.length} toolbar buttons (including AI Voice & Text Task buttons) confirmed present in DOM.`);
+  console.log(`  ✔ All ${requiredButtons.length} toolbar buttons (including Ask Jarvis Copilot & AI buttons) confirmed present in DOM.`);
 
-  // Verify AI Task Commander Modal
+  // Verify AI Task Commander Modal & Side Panel
   assert.ok(html.includes('id="taskModal"'), 'index.html must contain taskModal');
   assert.ok(html.includes('id="taskInputText"'), 'index.html must contain taskInputText');
   assert.ok(html.includes('id="btnRunTask"'), 'index.html must contain btnRunTask');
-  console.log('  ✔ AI Task Commander modal, input text, and run button confirmed present in DOM.');
+  assert.ok(html.includes('id="jarvisSidePanel"'), 'index.html must contain jarvisSidePanel');
+  assert.ok(html.includes('id="sidePanelPageTitle"'), 'index.html must contain sidePanelPageTitle');
+  console.log('  ✔ AI Task Commander modal, input text, and Jarvis Copilot side panel confirmed present in DOM.');
 
   // Test 3: Verify Preload IPC bridge exposes setOverlayActive
   console.log('\nTest 3: Verifying Preload IPC contract exposes setOverlayActive...');

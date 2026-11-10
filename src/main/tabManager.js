@@ -18,6 +18,8 @@ class TabManager {
     this.dashboardPath = path.join(__dirname, '../dashboard/dashboard.html');
     this.tabSwitchedCallback = null;
     this.isOverlayActive = false;
+    this.isSidePanelOpen = false;
+    this.sidePanelWidth = 380;
 
     // Handle window resize & state transitions (maximize, unmaximize, restore, fullscreen)
     const updateBounds = () => {
@@ -51,12 +53,19 @@ class TabManager {
       }
     } catch (_) {}
 
+    const sidePanelOffset = this.isSidePanelOpen ? this.sidePanelWidth : 0;
     return {
       x: 0,
       y: TOP_BAR_HEIGHT,
-      width: Math.max(300, width),
+      width: Math.max(300, width - sidePanelOffset),
       height: Math.max(200, height - TOP_BAR_HEIGHT)
     };
+  }
+
+  setSidePanelOpen(isOpen, panelWidth = 380) {
+    this.isSidePanelOpen = Boolean(isOpen);
+    this.sidePanelWidth = panelWidth;
+    this.resizeActiveTab();
   }
 
   setOverlayActive(active) {

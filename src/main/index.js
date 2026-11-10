@@ -266,6 +266,12 @@ function setupIPC() {
     }
   });
 
+  ipcMain.on('set-side-panel-open', (e, isOpen) => {
+    if (tabManager) {
+      tabManager.setSidePanelOpen(Boolean(isOpen));
+    }
+  });
+
   ipcMain.on('devtools-switch-panel', (e, panel) => {
     tabManager.switchDevToolsPanel(panel);
   });

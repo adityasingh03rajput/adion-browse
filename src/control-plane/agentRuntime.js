@@ -863,10 +863,33 @@ class AgentRuntime extends EventEmitter {
         break;
       }
 
+      case 'WHATSAPP_SEND': {
+        const phone = intent.phone || '';
+        const message = intent.message || '';
+        const url = intent.url || `https://web.whatsapp.com/send/?phone=${phone}&text=${encodeURIComponent(message)}`;
+        
+        let targetTab = activeTab;
+        if (activeTab && activeTab.url && !activeTab.url.startsWith('adion://newtab') && !activeTab.url.includes('whatsapp')) {
+          targetTab = this.tabManager.createTab(url);
+          this.emit('feedback', { message: `Opened WhatsApp Web in new tab for +${phone}`, level: 'info' });
+        } else {
+          this.tabManager.navigateActiveTab(url);
+          this.emit('feedback', { message: `Navigating to WhatsApp Web for +${phone}`, level: 'info' });
+        }
+
+        this.observeAndDispatchWhatsApp(targetTab, phone, message);
+        break;
+      }
+
       case ActionType.NAVIGATE: {
         const destination = intent.url || intent.query || '';
         this.tabManager.navigateActiveTab(destination);
         this.emit('feedback', { message: `Navigating to: ${destination}`, level: 'success' });
+        if (destination.includes('wa.me') || destination.includes('whatsapp.com')) {
+          this.observeAndDispatchWhatsApp(activeTab, intent.phone || '', intent.message || '');
+        } else {
+          this.autoHandleContinuations(activeTab);
+        }
         break;
       }
 
@@ -1312,6 +1335,113 @@ class AgentRuntime extends EventEmitter {
     }
 
     return false;
+  }
+
+  /**
+   * Autonomous observer for WhatsApp & web messaging workflows.
+   * Automatically bypasses intermediate landing gateways (e.g. "Continue to chat", "use WhatsApp Web")
+   * and auto-dispatches the Send button when the chat composer is ready.
+   */
+  observeAndDispatchWhatsApp(tab, phone = '', message = '') {
+    if (!tab || !tab.view) return;
+    const contents = tab.view.webContents;
+    if (!contents) return;
+
+    let handledContinuation = false;
+    let messageSent = false;
+
+    const checkAndAct = async () => {
+      if (messageSent) return;
+      try {
+        const currentUrl = typeof contents.getURL === 'function' ? contents.getURL() : '';
+
+        // 1. Check for intermediate screen (wa.me or api.whatsapp.com)
+        if (currentUrl.includes('api.whatsapp.com') || currentUrl.includes('wa.me')) {
+          const res = await contents.executeJavaScript(`
+            (() => {
+              const webLink = Array.from(document.querySelectorAll('a, button')).find(el => 
+                /use WhatsApp Web/i.test(el.textContent) || (el.href && el.href.includes('web.whatsapp.com'))
+              );
+              if (webLink) { webLink.click(); return 'webLink'; }
+              const actionBtn = document.getElementById('action-button') || Array.from(document.querySelectorAll('a, button')).find(el => /continue to chat/i.test(el.textContent));
+              if (actionBtn) { actionBtn.click(); return 'actionBtn'; }
+              return null;
+            })()
+          `).catch(() => null);
+
+          if (res && !handledContinuation) {
+            handledContinuation = true;
+            this.emit('feedback', { message: 'Gateway detected: automatically tapped "use WhatsApp Web"', level: 'info' });
+          }
+        }
+
+        // 2. Check for web.whatsapp.com chat & send button
+        if (currentUrl.includes('web.whatsapp.com')) {
+          const sent = await contents.executeJavaScript(`
+            (() => {
+              const sendBtn = document.querySelector('button[aria-label="Send"], span[data-icon="send"]')?.closest('button');
+              if (sendBtn && !sendBtn.disabled) {
+                sendBtn.click();
+                return true;
+              }
+              return false;
+            })()
+          `).catch(() => false);
+
+          if (sent && !messageSent) {
+            messageSent = true;
+            this.emit('feedback', { message: `Message "${message}" successfully sent to +${phone || 'recipient'}!`, level: 'success' });
+            this.emit('jarvis-notification', { type: 'success', message: `WhatsApp message sent to +${phone || 'recipient'}.` });
+          }
+        }
+      } catch (_) {}
+    };
+
+    if (typeof contents.on === 'function') {
+      contents.on('did-finish-load', checkAndAct);
+      contents.on('did-frame-finish-load', checkAndAct);
+    }
+
+    let attempts = 0;
+    const interval = setInterval(async () => {
+      attempts++;
+      if (messageSent || attempts > 20) {
+        clearInterval(interval);
+        if (typeof contents.removeListener === 'function') {
+          contents.removeListener('did-finish-load', checkAndAct);
+          contents.removeListener('did-frame-finish-load', checkAndAct);
+        }
+        return;
+      }
+      await checkAndAct();
+    }, 1000);
+  }
+
+  /**
+   * Generic autonomous continuator for intermediate prompts ("Continue on browser", "Continue in web")
+   */
+  async autoHandleContinuations(tab) {
+    if (!tab || !tab.view) return;
+    try {
+      const contents = tab.view.webContents;
+      if (!contents || typeof contents.executeJavaScript !== 'function') return;
+      await contents.executeJavaScript(`
+        (() => {
+          // Check for WhatsApp intermediate web link
+          const waWeb = Array.from(document.querySelectorAll('a, button')).find(el => 
+            /use WhatsApp Web/i.test(el.textContent) || (el.href && el.href.includes('web.whatsapp.com'))
+          );
+          if (waWeb) { waWeb.click(); return 'waWeb'; }
+
+          // Check for standard "Continue on browser" / "Continue in browser" buttons
+          const continueBrowser = Array.from(document.querySelectorAll('a, button')).find(el => 
+            /continue (?:on|in) (?:browser|web)/i.test(el.textContent)
+          );
+          if (continueBrowser) { continueBrowser.click(); return 'continueBrowser'; }
+          return null;
+        })()
+      `).catch(() => null);
+    } catch (_) {}
   }
 }
 
