@@ -740,9 +740,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function showAgentHud(stateText, message, isListeningMode = false) {
     if (hudHideTimeout) clearTimeout(hudHideTimeout);
+    if (!agentHudOverlay) return;
     agentHudOverlay.classList.add('visible');
-    agentHudState.innerText = stateText;
-    agentHudMessage.innerText = message;
+    if (agentHudState) agentHudState.innerText = stateText;
+    if (agentHudMessage) agentHudMessage.innerText = message;
     setJarvisState(stateText);
 
     const inVoiceMode = isListening || isListeningMode || stateText === 'LISTENING';
@@ -756,12 +757,12 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Only auto-hide if NOT actively in continuous listening mode
-    if (!inVoiceMode && stateText !== 'EXECUTING_ACTION' && stateText !== 'PARSING_INTENT') {
+    // Auto-dismiss HUD card after 3.5s of calm/standby so it never permanently obscures content
+    if (stateText !== 'EXECUTING_ACTION' && stateText !== 'PROCESSING' && stateText !== 'PARSING_INTENT') {
       hudHideTimeout = setTimeout(() => {
-        agentHudOverlay.classList.remove('visible');
-        agentTranscriptPreview.classList.remove('has-text');
-      }, 4000);
+        if (agentHudOverlay) agentHudOverlay.classList.remove('visible');
+        if (agentTranscriptPreview) agentTranscriptPreview.classList.remove('has-text');
+      }, 3500);
     }
   }
 
@@ -984,6 +985,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     showOmniboxVoiceStatus(false);
     playAudioFeedbackCue(false);
+
+    if (agentHudOverlay) {
+      agentHudOverlay.classList.remove('visible');
+    }
+    if (agentTranscriptPreview) {
+      agentTranscriptPreview.classList.remove('has-text');
+    }
 
     if (scriptProcessor) {
       try { scriptProcessor.disconnect(); } catch (_) {}

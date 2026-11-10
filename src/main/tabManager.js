@@ -18,19 +18,43 @@ class TabManager {
     this.tabSwitchedCallback = null;
     this.isOverlayActive = false;
 
-    // Handle window resize
-    this.mainWindow.on('resize', () => {
-      this.resizeActiveTab();
-    });
+    // Handle window resize & state transitions (maximize, unmaximize, restore, fullscreen)
+    const updateBounds = () => {
+      setImmediate(() => {
+        this.resizeActiveTab();
+      });
+    };
+    this.mainWindow.on('resize', updateBounds);
+    this.mainWindow.on('maximize', updateBounds);
+    this.mainWindow.on('unmaximize', updateBounds);
+    this.mainWindow.on('restore', updateBounds);
+    this.mainWindow.on('enter-full-screen', updateBounds);
+    this.mainWindow.on('leave-full-screen', updateBounds);
   }
 
   getBounds() {
-    const [width, height] = this.mainWindow.getContentSize();
+    if (!this.mainWindow || (typeof this.mainWindow.isDestroyed === 'function' && this.mainWindow.isDestroyed())) {
+      return { x: 0, y: TOP_BAR_HEIGHT, width: 1280, height: 720 };
+    }
+    let width = 1280;
+    let height = 800;
+    try {
+      if (typeof this.mainWindow.getContentBounds === 'function') {
+        const cb = this.mainWindow.getContentBounds();
+        width = cb.width;
+        height = cb.height;
+      } else if (typeof this.mainWindow.getContentSize === 'function') {
+        const size = this.mainWindow.getContentSize();
+        width = size[0];
+        height = size[1];
+      }
+    } catch (_) {}
+
     return {
       x: 0,
       y: TOP_BAR_HEIGHT,
-      width: width,
-      height: Math.max(0, height - TOP_BAR_HEIGHT)
+      width: Math.max(300, width),
+      height: Math.max(200, height - TOP_BAR_HEIGHT)
     };
   }
 
@@ -138,8 +162,6 @@ class TabManager {
       }
     });
 
-    view.setAutoResize({ width: true, height: true });
-
     const tab = {
       id,
       view,
@@ -242,6 +264,7 @@ class TabManager {
 
     shield.resetTabStats(tab.webContentsId, domain);
     this.sendTabUpdate(tab);
+    this.resizeActiveTab();
   }
 
   switchTab(id) {
@@ -328,6 +351,7 @@ class TabManager {
     const tab = this.tabs.get(this.activeTabId);
     if (!tab) return;
 
+    this.resizeActiveTab();
     const url = this.resolveUrl(input);
     tab.view.webContents.loadURL(url);
   }
