@@ -1,90 +1,178 @@
 # Adion Browse 🦁🛡️🤖
 
-**Adion Browse** is a high-performance, privacy-first web browser built on top of the real **Chromium** engine and **Electron**, featuring a built-in **Adion Shields** ad & tracker blocking engine and a **Decoupled Asynchronous Control Plane** for local AI voice control, continuous multimodal vision grounding, and edge multi-agent orchestration.
+**Adion Browse** is a high-performance, privacy-first web browser built on top of the real **Chromium** engine and **Electron**, featuring a built-in **Adion Shields** ad & tracker blocking engine, an **Asynchronous AI Control Plane** with continuous hands-free voice control, a native **Model Context Protocol (MCP)** server for autonomous LLM operators, and a **Multi-Model Provider Registry** (ChatGPT, Claude, Gemini/Antigravity, Groq, and local models).
 
 ---
 
-## 🚀 Key Framework Features
+## 🚀 Key Architectural Highlights
 
-### 1. 🎙️ AI Voice Commander & Decoupled Control Plane
-- **Decoupled Architecture**: Keeps Chromium's 60+ FPS rendering pipeline isolated from asynchronous AI and agent execution.
-- **Chrome DevTools Protocol (CDP) Bridge**: Directly executes synthetic mouse kinematics, pixel clicks, smooth scroll wheel deltas, and high-definition viewport screenshots.
-- **Voice Hotkey & Ambient HUD**: Press `Ctrl + Space` or click the microphone icon in the omnibox to activate the floating glassmorphic AI HUD.
-- **Natural Language Intent Parsing**: Translates commands like *"Scroll down"*, *"Open YouTube"*, *"Click search"*, and *"Close tab"* into deterministic browser actions.
+### 1. 🎙️ Continuous Voice Stream & Acoustic VAD Pipeline
+- **Continuous Hands-Free Interaction**: Stays listening across multiple commands and automatically re-arms after executing actions.
+- **Hardware Sample Rate Downsampler**: Downsamples Windows hardware microphone rates (48kHz / 44.1kHz) in real time to clean 16kHz Linear PCM using linear interpolation.
+- **Voice Activity Detection (VAD)**: Real-time acoustic energy analysis with live frame telemetry (`Frame #`, `RMS`, `Speech: true/false`).
+- **Software Automatic Gain Control (AGC)**: Dynamic digital pre-amp and AGC boost quiet microphone signals up to 4.5× for optimal acoustic transcription.
+- **Whisper-Large-v3-Turbo on Groq LPU**: Ultra-low-latency speech transcription with English greedy decoding (`language: 'en'`, `temperature: 0.0`) to eliminate foreign language hallucinations.
+- **Acoustic & Hallucination Filters**: Rejects ambient video outro subtitles (`"Thank you for watching"`, `"gracias por ver el video"`) and word-repetition loops.
 
-### 2. 👁️ Continuous Multimodal Stream & Vision Grounding
-- **Spatial Element Locator**: Grounds descriptive references to pixel-level bounding boxes and dimensions.
-- **Semantic Image Filtering**: Analyzes visible images on the active web page and scores them against user criteria.
-- **Interactive Disambiguation Overlays**: Renders color-coded target badges (`Option 1`, `Option 2`) on the page when multiple candidates match.
+### 2. ⚡ Zero-Latency Query Preprocessor (<0.5ms)
+- **Linguistic Cleaning & Filler Stripping**: Strips conversational preambles (*"can you please"*, *"hey adion"*, *"ok fine"*, etc.) in sub-millisecond time.
+- **Universal, Unbiased Navigation**: 
+  - `open <domain>` or `navigate to <domain>`: Direct navigation for any valid domain (`web.whatsapp.com`, `github.com`, `reddit.com`, `wikipedia.org`).
+  - `search <query>`: Universal web search on configured search engines (Brave, Google, DuckDuckGo).
+  - Explicit platform search: `search google for <query>`, `search youtube for <query>`.
+- **Compound Command Decomposition**: Executes multi-action utterances sequentially (e.g., *"shut down this and now search for youtube.com"* $\rightarrow$ `CLOSE_TAB` then `NAVIGATE`).
+- **Instant DOM & Audio Slider Manipulation**: Directly targets DOM elements, dark/light mode themes, and audio DSP sliders (e.g., *"change bass frequency boost from 0 to 10 dB"*, *"change button color to yellow"*).
+- **LRU Plan Cache**: Caches recent query execution plans for $<0.05\text{ms}$ replay.
 
-### 3. 🧠 Local Context Engine & Session Memory
-- **Episodic Session Graph**: Tracks domain transitions and user journey trajectories locally without cloud telemetry.
-- **Autonomous Tab Clustering**: Automatically categorizes active tabs (*Development*, *Media*, *Shopping*, *Search*, *Social*) for workspace hibernation.
-- **Predictive Navigation**: Pre-computes destination probabilities based on historical transition edges.
+### 3. 📡 Native Model Context Protocol (MCP) Server
+- **Universal Standard**: Implements Anthropic's Model Context Protocol over HTTP and Server-Sent Events (SSE) at `http://127.0.0.1:9224`.
+- **Browser Automation Tools**: Exposes `browser_navigate`, `browser_click`, `browser_type`, `browser_scroll`, `browser_get_dom`, `browser_screenshot`, `browser_tabs`, and `browser_summarize`.
+- **99.4% Token Reduction**: Emits clean semantic DOM summaries and accessibility trees, slashing payload bloat compared to raw Playwright HTML.
+- **Optional Standby Toggle**: Defaults to standby mode; toggled dynamically on/off via the Jarvis GUI or browser Settings without restarting.
+- **Claude Web & Desktop Integration**: Built-in port forwarding and public tunnel manager (`npm run mcp:tunnel`) for direct Claude integration.
 
-### 4. 🔒 Biometric Voice Vault & Prompt Injection Defense
-- **Voice Biometric Verification**: Simulates 192-dimensional acoustic speaker embeddings before releasing credentials for autofill or checkouts.
-- **Hardware-Backed AES-256-GCM Vault**: Session encryption with immediate memory zeroization.
-- **Indirect Prompt Injection Neutralizer**: Sanitizes untrusted web content before it enters agent context, stopping prompt override attacks.
+### 4. 🧠 Multi-Model Provider Registry & Autonomous Operator
+- **Multi-Provider Support**: Supports dynamic switching between:
+  - **OpenAI**: `gpt-4o`, `gpt-4o-mini`
+  - **Anthropic**: `claude-3-5-sonnet`, `claude-3-5-haiku`
+  - **Google Gemini / Antigravity**: `gemini-2.0-flash`
+  - **Groq LPU**: `llama-3.3-70b-versatile`, `openai/gpt-oss-120b`, `qwen/qwen3.8-27b`
+  - **Custom / Local**: OpenAI-compatible local endpoints (`Ollama`, `vLLM`, `DeepSeek`)
+- **Exponential Backoff & Failover**: Automatic retry with model rotation upon encountering rate limits (429) or service degradation (503).
 
-### 5. 👥 Distributed Edge Multi-Agent Pool
-- **Specialized Parallel Agents**: Spawns isolated local workers for:
-  - *Deep Research Agent*: Concurrently synthesizes findings across active documentation tabs.
-  - *Comparative Shopping Agent*: Scans product candidates across multiple vendors to produce structured savings matrices.
+### 5. 🛡️ Adion Shields & Privacy Engine
+- **EasyList & Ghostery Engine**: Integrated `@ghostery/adblocker-electron` engine for network-level tracker, banner, and script blocking.
+- **Zero-Knowledge Privacy Mesh**: ZKP identity commitments for anonymous sync and private ad replacement rewards (**ADION** tokens).
+- **Episodic Session Memory**: Persistent session interaction logs stored locally at `.data/session_interactions.json` without cloud telemetry.
 
-### 6. 🛡️ Zero-Knowledge Mesh & Privacy Ad Economy
-- **ZKP Identity Commitments**: Cryptographic zk-SNARK commitments for anonymous authentication and sync.
-- **Privacy-Preserving Ad Replacement**: Replaces intrusive tracker ads with locally verified recommendations, granting users **ADION** token micropayments directly on the New Tab dashboard.
+### 6. 🛠️ Process Resilience & Developer Experience
+- **Process Supervisor**: `scripts/supervisor.js` with unbuffered real-time stdout/stderr (`stdio: 'inherit'`) and persistent logging tee (`.data/browser.log`).
+- **Detached Developer Tools**: `F12`, `Ctrl+Shift+I`, or the `<>` toolbar button opens a detached DevTools window that works whether focus is inside a webpage or the browser toolbar.
+- **Real-Time Telemetry Dashboard**: Access `adion://dashboard` for network analytics, latency graphs, and shield metrics.
 
 ---
 
-## 📦 How to Run
+## 📦 Getting Started
 
-### One-Click Launch (Windows - D: Drive Cache Isolated)
-Double-click `run-adion.bat` in this directory:
-- Protects your `C:\` drive by redirecting `ELECTRON_CACHE`, `HF_HOME`, `TORCH_HOME`, and `TMP` to `D:\Adion Browse\.cache\`.
+### Prerequisites
+- Node.js 18+ (tested on Node 20 / 22 / 24)
+- Python 3.10+ (for benchmark verification)
+- Windows / macOS / Linux
 
-### Command Line
-```powershell
+### Installation
+```bash
+# Clone the repository
+git clone https://github.com/adityasingh03rajput/adion-browse.git
+cd adion-browse
+
+# Install dependencies
+npm install
+```
+
+### Running the Browser
+```bash
+# Standard launch with process resilience supervisor
 npm start
+
+# Or double-click the one-click Windows launcher (redirects cache to D: drive)
+run-adion.bat
+```
+
+### Running Model Context Protocol (MCP) Server
+```bash
+# Standalone MCP server
+npm run mcp
+
+# Port forwarding / tunnel for Claude Web
+npm run mcp:tunnel
 ```
 
 ---
 
-## 🛠️ Architecture & Directory Layout
+## 🧪 Testing & Verification
+
+Adion Browse includes 7 automated verification suites covering resilience, session memory, query preprocessing, MCP protocol, optional toggles, 3rd-party model providers, and toolbar interactions:
+
+```bash
+# Run all 7 JavaScript test suites
+npm test
+
+# Run Python token reduction benchmark (Playwright vs Adion MCP)
+py -m pytest bench_tokens.py
+```
+
+---
+
+## 📂 Architecture & Directory Layout
 
 ```
 Adion Browse/
-├── .cache/                    # Local cache directory on D: drive (Full User Permissions)
-├── .npmrc                     # Redirects npm cache to D: drive
-├── run-adion.bat              # One-click Windows launcher with cache isolation
-├── setup-chromium-env.bat     # Chromium toolchain & depot_tools configuration
-├── package.json               # Dependencies & scripts
+├── .data/                     # Local session interactions, profile, and browser.log
+├── .cache/                    # Local cache directory on D: drive (isolated)
+├── scripts/
+│   ├── supervisor.js          # Process resilience monitor & unbuffered stdout relay
+│   ├── mcp-server.js          # Standalone Model Context Protocol server entry
+│   ├── port-forward.js        # Port forwarding and public tunnel manager for Claude
+│   └── test-mcp-e2e.js        # End-to-end MCP benchmark & tool validation
 ├── src/
-│   ├── control-plane/         # Decoupled Asynchronous AI Control Plane
-│   │   ├── protocol.js        # Action types, Agent states & typed IPC contracts
+│   ├── control-plane/         # Decoupled AI Autonomous Control Plane
+│   │   ├── agentRuntime.js    # Continuous voice stream, VAD state machine & intent executor
+│   │   ├── sttEngine.js       # Whisper-large-v3-turbo, software AGC & audio normalization
+│   │   ├── queryPreprocessor.js # <0.5ms zero-latency linguistic cleaner & fast-path router
+│   │   ├── modelClient.js     # Autonomous multi-step function calling & backoff coordinator
+│   │   ├── protocol.js        # Typed action contracts, IPC event types & agent states
+│   │   ├── sessionManager.js  # Local session memory & prompt fidelity logger
 │   │   ├── cdpBridge.js       # Chrome DevTools Protocol link for clicks, scrolls & frames
 │   │   ├── visionGrounder.js  # Multimodal stream & spatial element grounding
 │   │   ├── contextEngine.js   # Episodic session graph & tab clustering
-│   │   ├── securityVault.js   # Voice biometric vault & prompt injection filter
-│   │   ├── agentRuntime.js    # Asynchronous intent parser & coordinator
-│   │   ├── multiAgentPool.js  # Distributed edge multi-agent pool
-│   │   ├── dataSynthesizer.js # Differential privacy (DP-SGD) telemetry synthesis
-│   │   ├── zkpMesh.js         # ZKP identity & privacy ad replacement economy
-│   │   └── controlPlane.js    # Central orchestrator connecting Main, CDP & UI
+│   │   ├── securityVault.js   # Voice biometric vault & DOM prompt injection filter
+│   │   └── providers/         # 3rd-Party LLM Provider implementations
+│   │       ├── providerRegistry.js
+│   │       ├── openaiProvider.js
+│   │       ├── anthropicProvider.js
+│   │       ├── geminiProvider.js
+│   │       └── customProvider.js
 │   ├── main/
-│   │   ├── index.js           # Electron main process & IPC coordinator
+│   │   ├── index.js           # Electron main process, IPC coordinator & global shortcuts
+│   │   ├── tabManager.js      # Isolated BrowserView management & detached DevTools
 │   │   ├── shield.js          # Adion Shields ad & tracker blocker engine
-│   │   ├── tabManager.js      # Isolated BrowserView management & tab switching
-│   │   └── store.js           # Local bookmarks, history & shields stats
+│   │   └── store.js           # Local bookmarks, history, settings & shield stats
+│   ├── mcp/
+│   │   └── mcpServer.js       # Native HTTP / SSE Model Context Protocol server
 │   ├── preload/
-│   │   └── preload.js         # Context bridge exposing window.adionAPI (Shields + Agents)
+│   │   └── preload.js         # Context bridge exposing window.adionAPI securely
 │   ├── renderer/
-│   │   ├── index.html         # Browser chrome UI with Voice HUD overlay
-│   │   ├── styles.css         # Dark cyberpunk theme & agent pulse animations
-│   │   └── app.js             # UI state controller, speech API & shortcuts
-│   └── newtab/
-│       ├── newtab.html        # Brave-style dashboard with ZKP rewards card
-│       ├── newtab.css         # High-contrast typography & glassmorphism
-│       └── newtab.js          # Live clock, search & rewards updater
+│   │   ├── index.html         # Browser chrome UI with Voice HUD & Omnibox Status Pill
+│   │   ├── styles.css         # Dark cyberpunk theme, tactile feedback & HUD animations
+│   │   └── app.js             # UI chrome controller, 16kHz downsampling & audio processor
+│   ├── newtab/
+│   │   └── newtab.html        # Privacy dashboard with live stats & search
+│   └── dashboard/
+│       └── dashboard.html     # Live Telemetry & Network Diagnostics (adion://dashboard)
+├── tests/                     # 7 automated test suites
+├── bench_tokens.py            # Token reduction benchmark vs Playwright
+└── run-adion.bat              # One-click Windows launcher
 ```
+
+---
+
+## 📜 Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl + Space` | Toggle AI Voice Commander (start / stop microphone stream) |
+| `F12` or `Ctrl + Shift + I` | Toggle Detached Developer Tools (works on webpage or browser UI) |
+| `Ctrl + T` | Open New Tab (`adion://newtab`) |
+| `Ctrl + W` | Close Active Tab |
+| `Ctrl + R` | Reload Current Page |
+| `Ctrl + L` | Focus Omnibox / Address Bar |
+| `Ctrl + H` | Open Browsing History |
+| `Ctrl + Tab` | Switch to Next Tab |
+| `Ctrl + Shift + Tab` | Switch to Previous Tab |
+| `Ctrl + 1-9` | Switch to Tab by Index |
+| `Escape` | Close Open Overlays and Modals |
+
+---
+
+## 📄 License
+ISC © Adion Browse
