@@ -1255,7 +1255,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     renderJarvisSphere();
   }
-  }
 
   // --- Session Memory Loader & Timeline Renderer ---
   async function loadSessionHistory() {

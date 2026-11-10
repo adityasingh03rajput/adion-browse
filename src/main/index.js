@@ -117,6 +117,15 @@ async function createWindow() {
     }
   });
 
+  // Native keyboard shortcuts for DevTools (F12 / Ctrl+Shift+I)
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown') {
+      if (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i')) {
+        if (tabManager) tabManager.toggleDevTools();
+      }
+    }
+  });
+
   // Initialize Adion Shield engine
   await shield.init(session.defaultSession);
 
@@ -151,8 +160,9 @@ async function createWindow() {
     }
     if (!rawMsg) return;
     if (rawMsg.includes('Electron Security Warning') || rawMsg.includes('Autofill.')) return;
-    // Forward all renderer logs that are prefixed with our tags
-    if (rawMsg.includes('[Voice') || rawMsg.includes('[Microphone') || rawMsg.includes('[Mic') ||
+    // Forward errors and all renderer logs that are prefixed with our tags
+    if (rawMsg.includes('Error') || rawMsg.includes('error') || rawMsg.includes('Uncaught') ||
+        rawMsg.includes('[Voice') || rawMsg.includes('[Microphone') || rawMsg.includes('[Mic') ||
         rawMsg.includes('Speech') || rawMsg.includes('[AgentRuntime') || rawMsg.includes('Heard:') ||
         rawMsg.includes('[STT') || rawMsg.includes('[Nav]') || rawMsg.includes('[Renderer]')) {
       console.log(`[Renderer] ${rawMsg}`);
