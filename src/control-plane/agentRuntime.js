@@ -300,11 +300,39 @@ class AgentRuntime extends EventEmitter {
       const fastIntent = this.preprocessor.extractFastIntent(prep, pageContext);
       if (fastIntent) {
         console.log(`[AgentRuntime FastPath] Executed in ${prep.durationMs}ms:`, fastIntent.thought || fastIntent.type);
-        fastIntent.raw = exactPrompt;
-        await this.executeIntent(fastIntent);
+
+        if (fastIntent.type === 'CONVERSATIONAL_ACKNOWLEDGE') {
+          const feedbackMsg = fastIntent.thought || 'Standing by: ready for your browser commands.';
+          this.setState(AgentState.IDLE);
+          this.emit('feedback', { message: feedbackMsg, level: 'info' });
+          this.emit('jarvis-notification', { type: 'info', message: feedbackMsg });
+          this.sessionManager.recordInteraction({
+            source: source,
+            rawPrompt: exactPrompt,
+            transcription: text,
+            pageContext: pageContext,
+            modelResponse: { thought: feedbackMsg, actions: [] },
+            status: 'success',
+            feedback: feedbackMsg
+          });
+          return;
+        }
+
+        const actionsToRun = Array.isArray(fastIntent.actions) && fastIntent.actions.length > 0
+          ? fastIntent.actions
+          : [fastIntent];
+
+        for (let i = 0; i < actionsToRun.length; i++) {
+          const act = actionsToRun[i];
+          const intent = { type: act.type, ...(act.params || {}), ...act, raw: exactPrompt };
+          await this.executeIntent(intent);
+          if (i < actionsToRun.length - 1) {
+            await new Promise(r => setTimeout(r, 250));
+          }
+        }
 
         // Cache resolved plan
-        this.preprocessor.cachePlan(activeTab?.url, prep.normalized, { thought: fastIntent.thought, actions: [fastIntent] });
+        this.preprocessor.cachePlan(activeTab?.url, prep.normalized, { thought: fastIntent.thought, actions: actionsToRun });
 
         // Record interaction in session memory log
         this.sessionManager.recordInteraction({
@@ -312,7 +340,7 @@ class AgentRuntime extends EventEmitter {
           rawPrompt: exactPrompt,
           transcription: text,
           pageContext: pageContext,
-          modelResponse: { thought: fastIntent.thought, actions: [fastIntent] },
+          modelResponse: { thought: fastIntent.thought, actions: actionsToRun },
           status: 'success',
           feedback: fastIntent.thought || 'Task completed successfully'
         });

@@ -58,9 +58,37 @@ async function testPreprocessorPerformance() {
   const cached = preprocessor.getCachedPlan('file:///audio.html', prep1.normalized);
   assert.ok(cached !== null);
   assert.strictEqual(cached.thought, fastIntent.thought);
-  console.log('  âœ” LRU Plan cache successfully stored and retrieved in <0.05ms.');
+  console.log('  ✔ LRU Plan cache successfully stored and retrieved in <0.05ms.');
 
-  console.log('\nâœ… ALL QUERY PREPROCESSING & PERFORMANCE BENCHMARKS PASSED!');
+  // Test 5: Compound Command Decomposition & Anti-Hijacking
+  console.log('\nTest 5: Compound Command Decomposition & Non-Hijacking...');
+  const compoundQuery = 'ok fine, shut down this and now search for youtube.com';
+  const compoundPrep = preprocessor.preprocess(compoundQuery);
+  console.log(`  Raw: "${compoundPrep.raw}"`);
+  console.log(`  Normalized: "${compoundPrep.normalized}"`);
+
+  assert.strictEqual(compoundPrep.normalized, 'shut down this and now search for youtube.com');
+  const compoundIntent = preprocessor.extractFastIntent(compoundPrep);
+  console.log('  Compound Intent:', compoundIntent);
+
+  assert.ok(compoundIntent !== null, 'Compound intent must be extracted');
+  assert.strictEqual(compoundIntent.type, 'COMPOUND_ACTIONS');
+  assert.strictEqual(compoundIntent.actions.length, 2);
+  assert.strictEqual(compoundIntent.actions[0].type, ActionType.CLOSE_TAB);
+  assert.strictEqual(compoundIntent.actions[1].type, ActionType.NAVIGATE);
+  assert.strictEqual(compoundIntent.actions[1].url, 'https://www.youtube.com');
+  console.log('  ✔ Multi-action command decomposed and not hijacked by conversational prefixes.');
+
+  // Test 6: Standalone Conversational Courtesy
+  console.log('\nTest 6: Standalone Conversational Courtesy...');
+  const courtesyPrep = preprocessor.preprocess('Thank you.');
+  const courtesyIntent = preprocessor.extractFastIntent(courtesyPrep);
+  assert.ok(courtesyIntent !== null);
+  assert.strictEqual(courtesyIntent.type, 'CONVERSATIONAL_ACKNOWLEDGE');
+  assert.strictEqual(courtesyIntent.actions.length, 0);
+  console.log('  ✔ Standalone courtesies acknowledged with zero-cost empty actions.');
+
+  console.log('\n✅ ALL QUERY PREPROCESSING & PERFORMANCE BENCHMARKS PASSED!');
 }
 
 testPreprocessorPerformance().catch(err => {
