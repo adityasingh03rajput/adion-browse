@@ -65,14 +65,14 @@ class STTEngine {
   }
 
   /**
-   * Cleans listening errors, normalizes phonetic greeting slips (e.g. "hie", "hei"),
-   * and discards ambient video subtitle / outro hallucinations.
+   * Cleans listening errors and discards ambient video subtitle / outro hallucinations.
+   * Preserves strict prompt fidelity without artificial keyword rewrites or phrase mutations.
    */
   cleanAndNormalizeTranscript(rawInput) {
     if (!rawInput || typeof rawInput !== 'string') return '';
     let text = rawInput.trim();
 
-    // A. Reject Whisper hallucinations on ambient noise or background audio
+    // Reject Whisper hallucinations on ambient noise or background audio
     const hallucinationPatterns = [
       /gracias\s+por\s+ver\s+el\s+video/i,
       /subt[íi]tulos\s+realizados\s+por/i,
@@ -93,37 +93,22 @@ class STTEngine {
       }
     }
 
-    // B. Reject unnatural word-repetition loops (e.g. "you you you you you")
+    // Reject unnatural word-repetition loops (e.g. "you you you you you")
     if (/(\b\w+\b)(?:\s+\1){3,}/i.test(text)) {
       console.warn(`[STTEngine] Discarded repetitive acoustic loop hallucination: "${text}"`);
       return '';
     }
 
-    // C. Normalize phonetic greeting slips ("hie", "hei", "hy", "heyy", "heya", "hai", "hiya") to standard "hey" / "hi"
-    text = text
-      .replace(/\b(hie|hei|hy|heyy|heya|hai|hiya)\b/gi, 'hey')
-      .replace(/\bbase\s+boost\b/gi, 'bass boost')
-      .replace(/\bbase\s+frequency\b/gi, 'bass frequency')
-      .replace(/\bcolour\b/gi, 'color')
-      .replace(/\byoutube\s*dot\s*com\b/gi, 'youtube.com')
-      .replace(/\binstagram\s*dot\s*com\b/gi, 'instagram.com')
-      .replace(/\bgoogle\s*dot\s*com\b/gi, 'google.com')
-      .replace(/\b(?:close|shut|kill)\s+(?:the|this)?\s*tap\b/gi, 'close tab')
-      .replace(/\bnew\s+tap\b/gi, 'new tab')
-      .replace(/\bswitch\s+(?:to\s+)?tap\b/gi, 'switch tab')
-      .replace(/\bthe\s+tap\b/gi, 'the tab')
-      .replace(/\bthis\s+tap\b/gi, 'this tab')
-      .replace(/\byou\s+tube\b/gi, 'youtube')
-      .replace(/\bnew\s+year\s+to\s+you\b/gi, 'open youtube')
-      .replace(/\b(?:what'?s\s+up|what\s+app)\s+web\b/gi, 'whatsapp web')
-      .replace(/\bwhat'?s\s+up\s+there\b/gi, 'whatsapp web')
-      .replace(/\bwhat'?s\s+up\b/gi, 'whatsapp');
+    // Normalize phonetic greeting slip "hie" / "hei" to "hey" to prevent unintended text input
+    text = text.replace(/\b(hie|hei|hy|heyy|heya|hai|hiya)\b/gi, 'hey');
 
+    // Strict prompt fidelity: return exact user transcription without artificial substitutions
     return text.trim();
   }
 
   /**
    * Transcribe audio using Whisper-Large-v3-turbo on Groq LPU
+   * Pure un-biased model inference
    */
   async queryGroqWhisper(pcmBuffer) {
     const wavBuffer = this.createWavBuffer(pcmBuffer);
@@ -132,9 +117,6 @@ class STTEngine {
     formData.append('file', blob, 'speech.wav');
     formData.append('model', config.groqWhisperModel || 'whisper-large-v3-turbo');
     formData.append('response_format', 'json');
-    formData.append('language', 'en');
-    formData.append('temperature', '0.0');
-    formData.append('prompt', 'Browser commands: search WhatsApp Web, open WhatsApp Web, search YouTube, open YouTube, open google, search, close tab, new tab, scroll down, click, go back, WhatsApp, YouTube, Google, Reddit, GitHub, Wikipedia, Twitter, ChatGPT.');
 
     const res = await fetch(config.groqWhisperUrl, {
       method: 'POST',
