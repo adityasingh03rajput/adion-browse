@@ -7,6 +7,7 @@ const SecurityVault = require('./securityVault');
 const MultiAgentPool = require('./multiAgentPool');
 const DataSynthesizer = require('./dataSynthesizer');
 const ZKPMesh = require('./zkpMesh');
+const MCPServer = require('../mcp/mcpServer');
 const { IPCChannels, AgentState } = require('./protocol');
 
 /**
@@ -34,12 +35,25 @@ class ControlPlane {
       this.vault
     );
 
+    // Initialize Chromium Model Context Protocol (MCP) Server
+    this.mcpServer = new MCPServer({
+      controlPlane: this,
+      tabManager: this.tabManager,
+      runtime: this.runtime,
+      cdp: this.cdp
+    });
+
     this.init();
   }
 
   init() {
     this.bindRuntimeEvents();
     this.registerIPCHandlers();
+
+    // Start Model Context Protocol server on local loopback
+    this.mcpServer.start().catch((err) => {
+      console.warn('[ControlPlane] MCP server startup notice:', err.message);
+    });
   }
 
   /**
@@ -228,6 +242,11 @@ class ControlPlane {
   }
 
   destroy() {
+    if (this.mcpServer) {
+      try {
+        this.mcpServer.stop();
+      } catch (_) {}
+    }
     this.cdp.detach();
   }
 }
