@@ -521,36 +521,56 @@ class CDPBridge {
             }
             el.style.setProperty('box-shadow', '0 0 20px ' + color, 'important');
           } else {
-            // Parse CSS property declarations
+            // Parse CSS property declarations into a structured map
             const declarations = val.split(';').map(s => s.trim()).filter(Boolean);
-            let hasBgChange = false;
+            const propMap = {};
             for (const decl of declarations) {
               const colonIdx = decl.indexOf(':');
               if (colonIdx > 0) {
                 const prop = decl.slice(0, colonIdx).trim().toLowerCase();
-                let rawV = decl.slice(colonIdx + 1).replace(/!important/g, '').trim();
-                if (rawV === 'green') rawV = '#10b981';
-                if (rawV === 'yellow') rawV = '#ffeb3b';
+                const rawV = decl.slice(colonIdx + 1).replace(/!important/g, '').trim();
+                propMap[prop] = rawV;
+              }
+            }
 
-                // If user/LLM sets "color: green" on a button or background, make the button background that color
-                if (prop === 'background' || prop === 'background-color' || (prop === 'color' && isButton)) {
-                  hasBgChange = true;
-                  el.style.setProperty('background', rawV, 'important');
-                  el.style.setProperty('background-color', rawV, 'important');
-                  el.style.setProperty('background-image', 'none', 'important');
-                  if (/yellow|gold|#ff|#fe|white|cyan|lime/i.test(rawV)) {
-                    el.style.setProperty('color', '#0f1117', 'important');
-                  } else {
-                    el.style.setProperty('color', '#ffffff', 'important');
-                  }
-                  el.style.setProperty('box-shadow', '0 0 20px ' + rawV, 'important');
+            let bgVal = propMap['background'] || propMap['background-color'] || null;
+            let textVal = propMap['color'] || null;
+
+            // If user commanded a color on a button without specifying "background" (e.g. only passed "color: red")
+            if (!bgVal && textVal && isButton) {
+              bgVal = textVal;
+              textVal = null;
+            }
+
+            // Apply background color if present
+            if (bgVal) {
+              if (bgVal === 'green') bgVal = '#10b981';
+              if (bgVal === 'yellow') bgVal = '#ffeb3b';
+              el.style.setProperty('background', bgVal, 'important');
+              el.style.setProperty('background-color', bgVal, 'important');
+              el.style.setProperty('background-image', 'none', 'important');
+              el.style.setProperty('box-shadow', '0 0 20px ' + bgVal, 'important');
+
+              // If no explicit text color was requested, ensure high-contrast legibility
+              if (!textVal) {
+                if (/yellow|gold|#ffeb|white|cyan|lime/i.test(bgVal)) {
+                  el.style.setProperty('color', '#0f1117', 'important');
                 } else {
-                  el.style.setProperty(prop, rawV, 'important');
+                  el.style.setProperty('color', '#ffffff', 'important');
                 }
               }
             }
-            if (!hasBgChange && declarations.length === 0 && val) {
-              el.style.cssText += ';' + val;
+
+            // Apply explicit text color if provided
+            if (textVal) {
+              el.style.setProperty('color', textVal, 'important');
+            }
+
+            // Apply all other CSS declarations (e.g. font-size, border, padding)
+            for (const [prop, rawV] of Object.entries(propMap)) {
+              if (prop !== 'background' && prop !== 'background-color' && prop !== 'color') {
+                el.style.setProperty(prop, rawV, 'important');
+              }
             }
           }
         } else if (actionType === 'setAttribute' || actionType === 'attr') {

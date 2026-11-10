@@ -1,4 +1,6 @@
 const EventEmitter = require('events');
+const path = require('path');
+const fs = require('fs');
 const { AgentState, ActionType } = require('./protocol');
 const STTEngine = require('./sttEngine');
 const ModelClient = require('./modelClient');
@@ -22,6 +24,8 @@ class AgentRuntime extends EventEmitter {
     this.currentTask = null;
     this.actionHistory = [];
     this.continuousVoice = false;
+    this.lastDOMSelector = null;
+    this.lastDOMAction = null;
 
     // Audio stream session state & VAD tracking
     this.audioSession = {
@@ -265,6 +269,9 @@ class AgentRuntime extends EventEmitter {
     try {
       const activeTab = this.tabManager ? this.tabManager.getActiveTab() : null;
       let pageContext = activeTab ? { url: activeTab.url, title: activeTab.title } : {};
+      if (this.lastDOMSelector) {
+        pageContext.lastDOMSelector = this.lastDOMSelector;
+      }
 
       // If active tab has content loaded, retrieve fast structural summary (visible buttons, headings) via CDP
       if (activeTab && activeTab.view && !activeTab.url.startsWith('adion://newtab')) {
@@ -658,10 +665,20 @@ class AgentRuntime extends EventEmitter {
       }
 
       case ActionType.MODIFY_DOM: {
-        const selector = intent.selector || intent.target || 'body';
+        let selector = intent.selector || intent.target;
         const action = intent.action || 'setStyle';
         const value = intent.value || '';
         const attribute = intent.attribute || '';
+
+        // Coreference & Follow-up correction resolution (e.g. "I said red, not white", "no, turn it yellow")
+        const rawText = String(intent.raw || '').toLowerCase();
+        const isFollowUp = /(i said|not (white|red|green|blue|black|yellow)|instead|make it|turn it|change it|no,)/i.test(rawText);
+        if ((!selector || selector === 'body' || selector === 'button') && isFollowUp && this.lastDOMSelector) {
+          console.log(`[AgentRuntime Coreference] Re-targeting follow-up correction to previous element: ${this.lastDOMSelector}`);
+          selector = this.lastDOMSelector;
+        }
+
+        selector = selector || 'body';
 
         if (!activeTab || !activeTab.view) {
           throw new Error('No active browser tab found to modify DOM');
@@ -673,6 +690,9 @@ class AgentRuntime extends EventEmitter {
         console.log('[AgentRuntime DOM] Result:', res);
 
         if (res && res.success) {
+          // Remember last modified selector for conversational context / follow-ups
+          this.lastDOMSelector = res.resolvedSelector || selector;
+
           // File System Integration: If active tab is a local file, persist changes to disk
           let persisted = false;
           if (activeTab.url && activeTab.url.startsWith('file:///')) {

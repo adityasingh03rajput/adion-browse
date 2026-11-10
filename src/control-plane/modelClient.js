@@ -203,6 +203,9 @@ Do NOT wrap output in markdown fences. Output raw JSON object only.
     if (Array.isArray(pageContext.headings) && pageContext.headings.length > 0) {
       elementsInfo += `\n- Key Page Headings: ${pageContext.headings.join(' | ')}`;
     }
+    if (pageContext.lastDOMSelector) {
+      elementsInfo += `\n- Recently Modified Element: ${pageContext.lastDOMSelector}`;
+    }
 
     const prompt = `
 Current Active Page:
