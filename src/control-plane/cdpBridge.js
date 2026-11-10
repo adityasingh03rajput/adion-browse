@@ -379,20 +379,42 @@ class CDPBridge {
           }
 
           // 5. High-Precision Scored Semantic Matching across interactive & leaf elements
-          const wantsButton = /\\b(button|btn|submit|toggle|reset|play|playback)\\b/i.test(s);
-          const wantsInput = /\\b(input|field|search|textbox|textarea)\\b/i.test(s);
-          const wantsHeading = /\\b(heading|title|header|h1|h2|h3)\\b/i.test(s);
+          const wantsButton = /\b(button|btn|submit|toggle|reset|play|playback)\b/i.test(s);
+          const wantsInput = /\b(input|field|search|textbox|textarea)\b/i.test(s);
+          const wantsHeading = /\b(heading|title|header|h1|h2|h3)\b/i.test(s);
+          const wantsSlider = /\b(slider|range|boost|bass|base|treble|frequency|eq|decibels?|volume|gain|threshold|noise|vad)\b/i.test(s);
+
+          // Phonetic and acoustic stemming map (e.g. Whisper STT "base" -> "bass")
+          function getAcousticVariants(tok) {
+            const map = {
+              'base': ['base', 'bass'],
+              'bass': ['bass', 'base'],
+              'db': ['db', 'decibel', 'decibels'],
+              'decibel': ['decibel', 'decibels', 'db'],
+              'decibels': ['decibels', 'decibel', 'db'],
+              'vad': ['vad', 'voice'],
+              'freq': ['freq', 'frequency'],
+              'boost': ['boost', 'gain', 'slider']
+            };
+            return map[tok.toLowerCase()] || [tok.toLowerCase()];
+          }
 
           // Normalize search tokens
           const cleanQuery = s
             .toLowerCase()
-            .replace(/^[#\\.]/, '')
+            .replace(/^[#\.]/, '')
             .replace(/([a-z])([A-Z])/g, '$1 $2')
             .replace(/[-_]/g, ' ')
-            .replace(/\\b(the|button|btn|input|field|link|div|element|selector|node)\\b/gi, '')
+            .replace(/\b(the|button|btn|input|field|link|div|element|selector|node|from|to|into)\b/gi, '')
             .trim();
 
-          const qTokens = cleanQuery.split(/\\s+/).filter(t => t.length > 1);
+          const rawTokens = cleanQuery.split(/\s+/).filter(t => t.length > 1);
+          const qTokens = [];
+          for (const tok of rawTokens) {
+            for (const v of getAcousticVariants(tok)) {
+              if (!qTokens.includes(v)) qTokens.push(v);
+            }
+          }
 
           // Query candidate elements, prioritizing leaf interactive elements over large containers
           const candidates = Array.from(document.querySelectorAll(
@@ -406,6 +428,7 @@ class CDPBridge {
             const tag = el.tagName;
             const isButtonNode = tag === 'BUTTON' || el.getAttribute('role') === 'button' || tag === 'INPUT' && /^(button|submit|reset)$/i.test(el.type) || el.classList.contains('btn');
             const isInputNode = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+            const isRangeNode = tag === 'INPUT' && el.type === 'range';
             const isHeadingNode = /^(H1|H2|H3|H4|H5|H6)$/i.test(tag);
             const isContainer = (tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE' || tag === 'MAIN') && !isButtonNode;
 
@@ -417,8 +440,8 @@ class CDPBridge {
             const aria = (el.getAttribute('aria-label') || '').toLowerCase();
             const testid = (el.getAttribute('data-testid') || el.getAttribute('data-id') || '').toLowerCase();
 
-            // Skip large containers if user explicitly targets a button or input
-            if (isContainer && (wantsButton || wantsInput) && text.length > 150) continue;
+            // Skip large containers if user explicitly targets a button, input, or slider
+            if (isContainer && (wantsButton || wantsInput || wantsSlider) && text.length > 160) continue;
 
             let score = 0;
 
@@ -426,6 +449,9 @@ class CDPBridge {
             if (wantsButton) {
               if (isButtonNode) score += 300;
               else if (isContainer) score -= 250;
+            } else if (wantsSlider) {
+              if (isRangeNode) score += 400;
+              else if (el.closest('.eq-bar, .slider-container') || el.parentElement?.querySelector('input[type="range"]')) score += 300;
             } else if (wantsInput) {
               if (isInputNode) score += 300;
               else if (isContainer) score -= 250;
@@ -438,18 +464,21 @@ class CDPBridge {
             if (cleanQuery && (text === cleanQuery || valAttr === cleanQuery || id === cleanQuery || aria === cleanQuery || testid === cleanQuery)) {
               score += 600;
             } else if (qTokens.length > 0) {
-              // Token matching across all identifiers
+              // Token matching across all identifiers with phonetic variants
               let matchedCount = 0;
               const combined = [text, valAttr, id, name, title, aria, testid].join(' ');
               for (const tok of qTokens) {
                 if (combined.includes(tok)) matchedCount++;
               }
-              const ratio = matchedCount / qTokens.length;
-              score += ratio * 400;
+              const ratio = matchedCount / Math.max(rawTokens.length, 1);
+              score += ratio * 450;
 
               // Proximity bonus: shorter text closer to query length wins over huge ancestor containers
-              if (text && qTokens.every(tok => text.includes(tok))) {
-                score += 200;
+              if (text && rawTokens.every(tok => {
+                const variants = getAcousticVariants(tok);
+                return variants.some(v => text.includes(v));
+              })) {
+                score += 250;
                 const lenDiff = Math.abs(text.length - cleanQuery.length);
                 if (lenDiff < 10) score += 200;
                 else if (lenDiff < 30) score += 100;
@@ -459,12 +488,18 @@ class CDPBridge {
 
             if (score > highestScore) {
               highestScore = score;
-              bestMatch = isButtonNode ? el : (el.closest('button, [role="button"]') || el);
+              if (isButtonNode) {
+                bestMatch = el;
+              } else if (isRangeNode) {
+                bestMatch = el;
+              } else {
+                bestMatch = (el.closest('button, [role="button"]') || el);
+              }
             }
           }
 
           // Validation Threshold: Minimum score required to prevent false-positive hijacking
-          if (bestMatch && highestScore >= 350) {
+          if (bestMatch && highestScore >= 320) {
             return bestMatch;
           }
 
@@ -483,6 +518,104 @@ class CDPBridge {
         const prevContent = el.innerText || el.value || el.innerHTML || '';
         const prevStyle = el.getAttribute('style') || '';
 
+        // Helper: Inject floating visible input editor overlay over static text node for reliable visual editing
+        function injectVisibleInputEditor(targetEl, newValue) {
+          try {
+            const rect = targetEl.getBoundingClientRect();
+            const computed = window.getComputedStyle(targetEl);
+
+            // Remove any existing overlay
+            const existing = document.querySelectorAll('.__adion_inline_editor__');
+            existing.forEach(e => e.remove());
+
+            const overlay = document.createElement('div');
+            overlay.className = '__adion_inline_editor__';
+            overlay.style.position = 'fixed';
+            overlay.style.top = Math.max(0, rect.top - 6) + 'px';
+            overlay.style.left = Math.max(0, rect.left - 6) + 'px';
+            overlay.style.minWidth = Math.max(rect.width + 16, 140) + 'px';
+            overlay.style.zIndex = '2147483647';
+            overlay.style.display = 'flex';
+            overlay.style.alignItems = 'center';
+            overlay.style.gap = '8px';
+            overlay.style.background = 'rgba(15, 17, 23, 0.96)';
+            overlay.style.border = '2px solid #00f2fe';
+            overlay.style.borderRadius = '8px';
+            overlay.style.padding = '5px 10px';
+            overlay.style.boxShadow = '0 8px 24px rgba(0, 242, 254, 0.45), 0 0 15px rgba(0, 0, 0, 0.8)';
+            overlay.style.backdropFilter = 'blur(8px)';
+            overlay.style.transition = 'all 0.35s cubic-bezier(0.16, 1, 0.3, 1)';
+            overlay.style.opacity = '1';
+
+            const badge = document.createElement('span');
+            badge.innerText = 'AI Edit';
+            badge.style.fontSize = '10px';
+            badge.style.textTransform = 'uppercase';
+            badge.style.letterSpacing = '1px';
+            badge.style.background = 'linear-gradient(135deg, #00f2fe, #4facfe)';
+            badge.style.color = '#0f1117';
+            badge.style.fontWeight = '800';
+            badge.style.padding = '2px 6px';
+            badge.style.borderRadius = '4px';
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = newValue;
+            input.style.background = 'transparent';
+            input.style.border = 'none';
+            input.style.outline = 'none';
+            input.style.color = '#00f2fe';
+            input.style.fontFamily = computed.fontFamily || 'sans-serif';
+            input.style.fontSize = Math.max(parseFloat(computed.fontSize) || 14, 13) + 'px';
+            input.style.fontWeight = 'bold';
+            input.style.flex = '1';
+            input.style.minWidth = '60px';
+
+            overlay.appendChild(badge);
+            overlay.appendChild(input);
+            document.body.appendChild(overlay);
+
+            // Animate highlight on target element
+            const origOutline = targetEl.style.outline;
+            targetEl.style.outline = '3px solid #00f2fe';
+            targetEl.style.outlineOffset = '2px';
+
+            // Auto-fade and clean up after 1.5 seconds
+            setTimeout(() => {
+              overlay.style.opacity = '0';
+              overlay.style.transform = 'translateY(-6px)';
+              targetEl.style.outline = origOutline;
+              setTimeout(() => {
+                if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+              }, 400);
+            }, 1500);
+          } catch (_) {}
+        }
+
+        // 1. Detect if target or its context involves an input[type="range"] slider
+        let targetSlider = null;
+        let pairedValueNode = null;
+
+        if (el.tagName === 'INPUT' && el.type === 'range') {
+          targetSlider = el;
+          pairedValueNode = el.parentElement?.querySelector('[id*="val" i], span:last-child') ||
+                            document.getElementById('val' + el.id.replace(/^slider/i, ''));
+        } else {
+          // Check if inside an .eq-bar or slider container
+          const eqContainer = el.closest('.eq-bar, .slider-container, div');
+          if (eqContainer) {
+            targetSlider = eqContainer.querySelector('input[type="range"]');
+            pairedValueNode = eqContainer.querySelector('[id*="val" i], span:last-child');
+          }
+          if (!targetSlider && (rawSelector.toLowerCase().includes('bass') || rawSelector.toLowerCase().includes('base'))) {
+            targetSlider = document.getElementById('sliderBass') || document.querySelector('input[type="range"][id*="bass" i]');
+            pairedValueNode = document.getElementById('valBass');
+          }
+        }
+
+        const isSliderAction = actionType === 'setValue' || actionType === 'setSlider' ||
+          (targetSlider && /(-?\d+|zero|one|two|three|four|five|six|seven|eight|nine|ten|twelve)/i.test(val));
+
         // Apply Dynamic DOM Action
         if (actionType === 'remove' || actionType === 'delete') {
           el.remove();
@@ -492,11 +625,57 @@ class CDPBridge {
           el.style.removeProperty('display');
         } else if (actionType === 'toggle') {
           el.style.display = (el.style.display === 'none') ? '' : 'none';
-        } else if (actionType === 'setText' || actionType === 'text') {
+        } else if (isSliderAction && targetSlider) {
+          // Range Slider Manipulation: Parse numeric value (including acoustic word forms)
+          const wordNums = { 'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'twelve': 12 };
+          let numVal = null;
+
+          const toMatch = val.match(/(?:to|into)\s+(-?\d+(?:\.\d+)?|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\b)/i);
+          if (toMatch) {
+            const rawNum = toMatch[1].toLowerCase();
+            numVal = wordNums[rawNum] !== undefined ? wordNums[rawNum] : parseFloat(rawNum);
+          } else {
+            const directMatch = val.match(/-?\d+(?:\.\d+)?/);
+            if (directMatch) {
+              numVal = parseFloat(directMatch[0]);
+            } else {
+              for (const [w, n] of Object.entries(wordNums)) {
+                if (new RegExp('\\b' + w + '\\b', 'i').test(val)) {
+                  numVal = n;
+                  break;
+                }
+              }
+            }
+          }
+
+          if (numVal !== null && !isNaN(numVal)) {
+            targetSlider.value = numVal;
+            targetSlider.setAttribute('value', numVal);
+            targetSlider.dispatchEvent(new Event('input', { bubbles: true }));
+            targetSlider.dispatchEvent(new Event('change', { bubbles: true }));
+
+            targetSlider.style.outline = '3px solid #00f2fe';
+            setTimeout(() => { targetSlider.style.outline = ''; }, 1500);
+
+            if (pairedValueNode) {
+              const currentText = pairedValueNode.innerText || '';
+              const unit = currentText.includes('RMS') ? ' RMS' : (currentText.includes('Hz') ? ' Hz' : ' dB');
+              const displayStr = numVal + unit;
+              pairedValueNode.innerText = displayStr;
+              pairedValueNode.textContent = displayStr;
+              pairedValueNode.dispatchEvent(new Event('change', { bubbles: true }));
+              injectVisibleInputEditor(pairedValueNode, displayStr);
+            }
+          }
+        } else if (actionType === 'setText' || actionType === 'text' || actionType === 'setValue') {
           if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
             el.value = val;
           } else {
+            // Static text node (h1-h6, p, span, label, div, button):
+            // Inject visible floating input field over the static text node for reliable visual editing
             el.innerText = val;
+            el.textContent = val;
+            injectVisibleInputEditor(el, val);
           }
         } else if (actionType === 'setHTML' || actionType === 'html') {
           el.innerHTML = val;

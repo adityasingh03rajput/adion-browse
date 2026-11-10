@@ -124,6 +124,15 @@ Output:
   ]
 }
 
+User: "change the base frequency boost from zero to 10 decibels" or "set bass boost to 10 db"
+Output:
+{
+  "thought": "Update bass frequency boost slider and display value to 10 dB",
+  "actions": [
+    { "type": "MODIFY_DOM", "params": { "selector": "#sliderBass, Bass Frequency Boost", "action": "setValue", "value": "10" } }
+  ]
+}
+
 User: "Please change the color of the generate test tone." or "change test tone button color to green"
 Output:
 {
@@ -269,61 +278,110 @@ JSON Action Plan:
   }
 
   /**
-   * Query Groq Cloud chat completions
+   * Resilient Groq Cloud query with exponential backoff, jitter, and zero-cost model failover
+   * Gracefully handles 503 (Service Unavailable), 429 (Rate Limit), 502/504 (Bad Gateway), and network errors.
    */
   async queryGroq(prompt) {
-    let res = null;
-    try {
-      res = await fetch(this.groqUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.groqKey}`
-        },
-        body: JSON.stringify({
-          model: this.groqModel,
+    const zeroCostModelCandidates = [
+      this.groqModel || 'openai/gpt-oss-120b',
+      'llama-3.3-70b-versatile',
+      'meta-llama/llama-4-scout-preview',
+      'llama-3.1-8b-instant'
+    ];
+
+    const maxRetries = 3;
+    const baseDelayMs = 500;
+    let lastError = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const candidateModel = zeroCostModelCandidates[attempt % zeroCostModelCandidates.length];
+
+      try {
+        const payload = {
+          model: candidateModel,
           messages: [
-            { role: 'system', content: this.systemPrompt },
+            { role: 'system', content: this.systemPrompt + '\nRespond strictly with RAW JSON format. No markdown, no prose.' },
             { role: 'user', content: prompt }
           ],
           response_format: { type: 'json_object' },
           temperature: 0.1,
-          max_tokens: 600
-        })
-      });
-    } catch (e) {
-      // Network retry
+          max_tokens: 650
+        };
+
+        let res = await fetch(this.groqUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.groqKey}`
+          },
+          body: JSON.stringify(payload)
+        }).catch(err => {
+          lastError = err;
+          return null;
+        });
+
+        // If response is valid and HTTP 200 OK
+        if (res && res.ok) {
+          const data = await res.json();
+          const rawContent = data.choices?.[0]?.message?.content || '';
+          const parsed = this.parseJSONResponse(rawContent);
+          if (parsed && Array.isArray(parsed.actions) && parsed.actions.length > 0) {
+            return parsed;
+          }
+        }
+
+        // Analyze HTTP status for retryable errors (503 Service Unavailable, 429 Rate Limit, 502/504 Bad Gateway)
+        const status = res ? res.status : 0;
+        const isRetryable = status === 503 || status === 429 || status === 502 || status === 504 || status === 0;
+
+        if (res && !res.ok) {
+          const errBody = await res.text().catch(() => '');
+          lastError = new Error(`Groq API error ${status} on model ${candidateModel}: ${errBody.slice(0, 140)}`);
+
+          // If HTTP 400 schema constraint issue, try once unconstrained
+          if (status === 400 && attempt === 0) {
+            delete payload.response_format;
+            const unconstrainedRes = await fetch(this.groqUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${this.groqKey}`
+              },
+              body: JSON.stringify(payload)
+            }).catch(() => null);
+
+            if (unconstrainedRes && unconstrainedRes.ok) {
+              const data = await unconstrainedRes.json();
+              const rawContent = data.choices?.[0]?.message?.content || '';
+              const parsed = this.parseJSONResponse(rawContent);
+              if (parsed && Array.isArray(parsed.actions) && parsed.actions.length > 0) {
+                return parsed;
+              }
+            }
+          }
+        }
+
+        if (!isRetryable && status !== 0) {
+          // If non-retryable 4xx client error (other than 429), break retry loop
+          break;
+        }
+      } catch (err) {
+        lastError = err;
+      }
+
+      if (attempt < maxRetries) {
+        // Exponential Backoff with full random jitter
+        const expDelay = baseDelayMs * Math.pow(2, attempt);
+        const jitter = Math.random() * 250;
+        const totalDelay = Math.min(expDelay + jitter, 3500);
+
+        const nextModel = zeroCostModelCandidates[(attempt + 1) % zeroCostModelCandidates.length];
+        console.warn(`[ModelClient Backoff] Groq 503/Error encountered on attempt ${attempt + 1}/${maxRetries}. Retrying in ${Math.round(totalDelay)}ms with zero-cost model candidate: ${nextModel}...`);
+        await new Promise(r => setTimeout(r, totalDelay));
+      }
     }
 
-    // If HTTP 400 json_validate_failed or empty response, fallback to direct unconstrained JSON with gpt-oss-120b
-    if (!res || !res.ok) {
-      console.warn('[ModelClient] Retrying Groq with direct unconstrained JSON payload on 120b...');
-      res = await fetch(this.groqUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.groqKey}`
-        },
-        body: JSON.stringify({
-          model: 'openai/gpt-oss-120b',
-          messages: [
-            { role: 'system', content: this.systemPrompt + '\nIMPORTANT: Respond with RAW JSON ONLY. No markdown.' },
-            { role: 'user', content: prompt }
-          ],
-          temperature: 0.1,
-          max_tokens: 600
-        })
-      });
-    }
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Groq API error ${res.status}: ${text}`);
-    }
-
-    const data = await res.json();
-    const rawContent = data.choices?.[0]?.message?.content || '';
-    return this.parseJSONResponse(rawContent);
+    throw lastError || new Error('Max retries exceeded for Groq API');
   }
 
   /**

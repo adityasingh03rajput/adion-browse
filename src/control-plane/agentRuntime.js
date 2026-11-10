@@ -378,14 +378,45 @@ class AgentRuntime extends EventEmitter {
     }
 
     // Dynamic DOM Manipulation across ANY loaded web page or local file
+    // 0. Audio Parameter & Slider Controls (e.g. "change base frequency boost from zero to 10 decibels", "set bass boost to 10 dB", "change slider to 10")
+    const sliderMatch = lower.match(/(?:change|set|adjust|increase|decrease)\s+(?:the\s+)?(?:(bass|base|treble|frequency|boost|noise|threshold|vad|volume)\s*)*(?:frequency\s+)?(?:boost|slider|parameter|gain)?\s*(?:from\s+[a-z0-9\.\-]+\s+)?(?:to\s+|into\s+)?(-?\d+(?:\.\d+)?|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\b)\s*(?:decibels?|db|rms|%|hz)?$/i);
+    if (sliderMatch && !/(color|background|theme|mode)/i.test(lower)) {
+      const param = sliderMatch[1] ? sliderMatch[1].toLowerCase() : 'bass';
+      const rawTarget = sliderMatch[2];
+      const wordMap = { 'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'twelve': 12 };
+      const numericVal = wordMap[rawTarget] !== undefined ? wordMap[rawTarget] : rawTarget;
+
+      let selector = 'Bass Frequency Boost';
+      if (param.includes('vad') || param.includes('threshold')) selector = 'Voice Activity Threshold';
+      else if (param.includes('noise')) selector = 'Noise Suppression';
+
+      return {
+        type: ActionType.MODIFY_DOM,
+        selector: selector,
+        action: 'setValue',
+        value: String(numericVal)
+      };
+    }
+
     // 1. Text changing: e.g. "change text of button to Submit", "change title to Hello World"
-    const textMatch = lower.match(/(?:change|set)\s+(?:the\s+)?text\s+of\s+(?:the\s+)?(.+?)\s+to\s+["']?(.+?)["']?$/i);
+    const textMatch = text.match(/(?:change|set)\s+(?:the\s+)?text\s+of\s+(?:the\s+)?(.+?)\s+to\s+["']?(.+?)["']?$/i);
     if (textMatch) {
       return {
         type: ActionType.MODIFY_DOM,
         selector: textMatch[1].trim(),
         action: 'setText',
         value: textMatch[2].trim()
+      };
+    }
+
+    // 1b. Broader natural text editing: e.g. "change title to Hello", "edit header text to Welcome", "change X to Y"
+    const generalTextMatch = text.match(/(?:change|edit|update|set)\s+(?:the\s+)?(.+?)\s+(?:text\s+)?(?:from\s+.+?\s+)?to\s+["']?(.+?)["']?$/i);
+    if (generalTextMatch && !isKnownColor.test(generalTextMatch[2].trim()) && !/(http|www|tab|page|window|browser|volume|zoom|url)/i.test(generalTextMatch[1])) {
+      return {
+        type: ActionType.MODIFY_DOM,
+        selector: generalTextMatch[1].trim(),
+        action: 'setText',
+        value: generalTextMatch[2].trim().replace(/^["']|["']$/g, '')
       };
     }
 
@@ -984,9 +1015,30 @@ class AgentRuntime extends EventEmitter {
               openTag = openTag.replace(/>$/, ` style="${finalStyle}">`);
             }
           }
-          if (modResult.action === 'setText' && modResult.appliedValue) {
+          if ((modResult.action === 'setValue' || modResult.action === 'setSlider' || modResult.action === 'setText') && tag === 'input') {
+            const rawVal = String(modResult.appliedValue || '').replace(/[^\d\.-]/g, '');
+            if (rawVal) {
+              if (/value=["'][^"']*["']/i.test(openTag)) {
+                openTag = openTag.replace(/value=["'][^"']*["']/i, `value="${rawVal}"`);
+              } else {
+                openTag = openTag.replace(/>$/, ` value="${rawVal}">`);
+              }
+            }
+            content = content.replace(tagRegex, openTag);
+            // If updating bass slider, keep #valBass display span in sync
+            if (elId === 'sliderBass' && rawVal) {
+              content = content.replace(/(<span\s+id=["']valBass["'][^>]*>)[^<]*(<\/span>)/i, `$1${rawVal} dB$2`);
+            }
+          } else if (modResult.action === 'setText' && modResult.appliedValue) {
             const fullTagRegex = new RegExp(`(<${tag}[^>]*\\bid=["']${elId}["'][^>]*>)([\\s\\S]*?)(<\\/${tag}>)`, 'i');
             content = content.replace(fullTagRegex, `${openTag}${modResult.appliedValue}$3`);
+            // If updating valBass display, keep sliderBass value in sync
+            if (elId === 'valBass') {
+              const rawVal = String(modResult.appliedValue).replace(/[^\d\.-]/g, '');
+              if (rawVal) {
+                content = content.replace(/(<input[^>]*id=["']sliderBass["'][^>]*value=["'])[^"']*(")/i, `$1${rawVal}$2`);
+              }
+            }
           } else {
             content = content.replace(tagRegex, openTag);
           }
