@@ -782,6 +782,12 @@ document.addEventListener('DOMContentLoaded', () => {
     showAgentHud('LISTENING', 'Microphone active - speak now...', true);
     playAudioFeedbackCue(true);
 
+    // Tell Control Plane immediately that speech session has started
+    try {
+      window.adionAPI.agent.startVoice();
+      console.log('[Voice UI] 🎙️ Microphone button activated: listening started');
+    } catch (_) {}
+
     try {
       latestTranscript = '';
       audioStream = await navigator.mediaDevices.getUserMedia({
@@ -797,9 +803,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (audioContext.state === 'suspended') {
         await audioContext.resume();
       }
-
-      // Signal Control Plane that voice session has begun BEFORE streaming frames
-      window.adionAPI.agent.startVoice();
 
       const source = audioContext.createMediaStreamSource(audioStream);
 

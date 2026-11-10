@@ -135,6 +135,14 @@ async function createWindow() {
   // Load the browser chrome UI
   await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 
+  // Forward renderer voice and navigation logs to terminal
+  mainWindow.webContents.on('console-message', (event, level, message) => {
+    if (message.includes('Electron Security Warning') || message.includes('Autofill.')) return;
+    if (message.includes('[Voice') || message.includes('[Microphone') || message.includes('Speech') || message.includes('[AgentRuntime') || message.includes('Heard:') || message.includes('[STT') || message.includes('[Nav]')) {
+      console.log(`[Renderer Voice] ${message}`);
+    }
+  });
+
   // Initialize Tab Manager
   tabManager = new TabManager(mainWindow);
 

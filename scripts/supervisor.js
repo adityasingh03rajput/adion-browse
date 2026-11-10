@@ -93,8 +93,8 @@ function startBrowser() {
       const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 
       let formatted = line;
-      if (line.includes('[AgentRuntime Audio]') || line.includes('[AgentRuntime VAD]')) {
-        formatted = `[${timeStr}] 🎙️  ${line.replace(/\[AgentRuntime\s+/, '[')}`;
+      if (line.includes('[AgentRuntime Audio]') || line.includes('[AgentRuntime VAD]') || line.includes('[Renderer Voice]')) {
+        formatted = `[${timeStr}] 🎙️  ${line.replace(/\[AgentRuntime\s+/, '[').replace(/\[Renderer Voice\]\s+/, '')}`;
       } else if (line.includes('[STTEngine]') || line.includes('[AgentRuntime STT]')) {
         formatted = `[${timeStr}] 🗣️  ${line.replace('[AgentRuntime ', '[')}`;
       } else if (line.includes('[ModelClient]') || line.includes('[Claude]') || line.includes('[AnthropicProvider]')) {
@@ -131,20 +131,13 @@ function startBrowser() {
   browserProcess.on('exit', (code, signal) => {
     console.log(`\n[Adion Supervisor] Browser process (PID: ${currentPid}) exited with code ${code}, signal: ${signal || 'none'}`);
 
-    if (isShuttingDown) {
-      console.log('[Adion Supervisor] Clean shutdown complete. Exiting.');
+    if (isShuttingDown || code === 0 || signal === 'SIGINT' || signal === 'SIGTERM') {
+      console.log('[Adion Supervisor] Browser closed cleanly. Exiting supervisor.');
       process.exit(0);
       return;
     }
 
-    // Normal clean user close (e.g. user closed browser window normally)
-    if (code === 0 && !signal) {
-      console.log('[Adion Supervisor] Browser closed normally by user (code 0). Exiting supervisor.');
-      process.exit(0);
-      return;
-    }
-
-    // Unexpected exit, crash, or signal interruption
+    // Unexpected exit, crash, or non-signal error
     console.warn(`[Adion Supervisor] ⚠️  Unexpected termination detected (code: ${code}, signal: ${signal}).`);
     console.warn(`[Adion Supervisor] Resilient recovery triggered. Auto-restarting browser...`);
 
@@ -162,27 +155,16 @@ function scheduleRestart(delayMs) {
   }, delayMs);
 }
 
-// Graceful SIGINT / SIGTERM Handling
+// Clean SIGINT / SIGTERM Handling: immediate exit on Ctrl+C without auto-restart loops
 process.on('SIGINT', () => {
-  const now = Date.now();
-  if (now - lastSigintTime < 2500) {
-    console.log('\n[Adion Supervisor] Double Ctrl+C received. Force stopping supervisor and browser...');
-    isShuttingDown = true;
-    if (browserProcess && !browserProcess.killed) {
-      try {
-        browserProcess.kill('SIGKILL');
-      } catch (_) {}
-    }
-    process.exit(0);
-  } else {
-    lastSigintTime = now;
-    console.log('\n[Adion Supervisor] SIGINT (Ctrl+C) received. Press Ctrl+C again within 2.5s to terminate supervisor, or supervisor will maintain resilience.');
-    if (browserProcess && !browserProcess.killed) {
-      try {
-        browserProcess.kill('SIGINT');
-      } catch (_) {}
-    }
+  console.log('\n[Adion Supervisor] SIGINT (Ctrl+C) received. Terminating supervisor and browser...');
+  isShuttingDown = true;
+  if (browserProcess && !browserProcess.killed) {
+    try {
+      browserProcess.kill('SIGINT');
+    } catch (_) {}
   }
+  process.exit(0);
 });
 
 process.on('SIGTERM', () => {

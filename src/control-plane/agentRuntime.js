@@ -124,6 +124,10 @@ class AgentRuntime extends EventEmitter {
     this.audioSession.totalBytes += buffer.length;
     this.audioSession.chunkCount++;
 
+    if (this.audioSession.chunkCount === 1) {
+      console.log(`[AgentRuntime Audio] 🎙️ Speech audio frames streaming from hardware microphone`);
+    }
+
     // Calculate acoustic RMS energy
     let sumSquares = 0;
     const sampleCount = Math.floor(buffer.length / 2);
@@ -222,9 +226,9 @@ class AgentRuntime extends EventEmitter {
     }
 
     const durationMs = Date.now() - (this.audioSession.startTime || Date.now());
-    const totalBytes = this.audioSession.totalBytes;
-    const peakEnergy = this.audioSession.peakEnergy;
-    const chunkCount = this.audioSession.chunkCount;
+    const totalBytes = this.audioSession.totalBytes || 0;
+    const peakEnergy = this.audioSession.peakEnergy || 0;
+    const chunkCount = this.audioSession.chunkCount || 0;
 
     console.log(`[AgentRuntime Audio] Stream closed. Duration: ${durationMs}ms, Chunks: ${chunkCount}, Total Bytes: ${totalBytes}, Peak Energy: ${peakEnergy.toFixed(4)}`);
 
