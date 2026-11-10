@@ -52,73 +52,8 @@ function startBrowser() {
   browserProcess = spawn(ELECTRON_BIN, ['.'], {
     cwd: ROOT_DIR,
     env: getEnv(),
-    stdio: ['inherit', 'pipe', 'pipe']
+    stdio: 'inherit'
   });
-
-  const noisePatterns = [
-    /:\d+:\d+\/\d+\.\d+:(ERROR|WARNING|INFO):/i,
-    /gpu_process_host\.cc/i,
-    /gpu_init\.cc/i,
-    /sandbox_win\.cc/i,
-    /audio_manager_win\.cc/i,
-    /angle_platform_impl\.cc/i,
-    /gl_surface_egl\.cc/i,
-    /d3d11_device\.cc/i,
-    /cert_verify_proc/i,
-    /viz_main_impl\.cc/i,
-    /paint_controller\.cc/i,
-    /DevTools listening on ws:/i,
-    /DeprecationWarning/i,
-    /GetInterfaceInfo/i,
-    /ALSA/i,
-    /DirectSound/i,
-    /fallback to non-strict/i,
-    /\[AgentRuntime Audio\] Diagnostics: Frame #/i
-  ];
-
-  function formatAndLog(rawText, isStderr = false) {
-    if (!rawText) return;
-    try {
-      if (logStream) logStream.write(rawText);
-    } catch (_) {}
-
-    const lines = rawText.split(/\r?\n/);
-    for (const raw of lines) {
-      const line = raw.trim();
-      if (!line) continue;
-
-      if (noisePatterns.some(p => p.test(line))) continue;
-
-      const now = new Date();
-      const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-
-      let formatted = line;
-      if (line.includes('[AgentRuntime Audio]') || line.includes('[AgentRuntime VAD]') || line.includes('[Renderer Voice]')) {
-        formatted = `[${timeStr}] 🎙️  ${line.replace(/\[AgentRuntime\s+/, '[').replace(/\[Renderer Voice\]\s+/, '')}`;
-      } else if (line.includes('[STTEngine]') || line.includes('[AgentRuntime STT]')) {
-        formatted = `[${timeStr}] 🗣️  ${line.replace('[AgentRuntime ', '[')}`;
-      } else if (line.includes('[ModelClient]') || line.includes('[Claude]') || line.includes('[AnthropicProvider]')) {
-        formatted = `[${timeStr}] 🤖 ${line}`;
-      } else if (line.includes('[MCPServer]')) {
-        formatted = `[${timeStr}] 📡 ${line}`;
-      } else if (line.includes('[SessionManager]')) {
-        formatted = `[${timeStr}] 💾 ${line}`;
-      } else if (line.includes('[AgentRuntime FastPath]') || line.includes('[FastPath]')) {
-        formatted = `[${timeStr}] ⚡ ${line.replace('[AgentRuntime ', '[')}`;
-      } else if (isStderr && /error/i.test(line)) {
-        formatted = `[${timeStr}] ⚠️  [SYSTEM ERROR] ${line}`;
-      } else if (isStderr) {
-        continue;
-      } else {
-        formatted = `[${timeStr}] ℹ️  ${line}`;
-      }
-
-      process.stdout.write(formatted + '\n');
-    }
-  }
-
-  browserProcess.stdout.on('data', chunk => formatAndLog(chunk.toString(), false));
-  browserProcess.stderr.on('data', chunk => formatAndLog(chunk.toString(), true));
 
   const currentPid = browserProcess.pid;
   console.log(`[Adion Supervisor] Browser process active (PID: ${currentPid})`);
