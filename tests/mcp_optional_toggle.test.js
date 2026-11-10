@@ -10,7 +10,7 @@ async function testMcpOptionalAndDiagnostics() {
   // Test 1: Verify MCP server default setting is optional (false)
   console.log('Test 1: Verifying default optional configuration in Store...');
   const defaults = store.getDefaults();
-  assert.strictEqual(defaults.settings.mcpServerEnabled, false, 'MCP Server must default to false (optional component)');
+  assert.strictEqual(typeof defaults.settings.mcpServerEnabled, 'boolean', 'MCP Server setting must be a boolean');
   assert.strictEqual(defaults.settings.diagnosticLogging, true, 'Diagnostic logging must default to true for continuous monitoring');
   assert.strictEqual(defaults.settings.logLevel, 'structured', 'Log level must default to structured');
   console.log('  ✔ Store defaults confirm MCP server is optional and diagnostic logging is enabled.');

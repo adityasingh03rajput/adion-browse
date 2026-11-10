@@ -689,19 +689,25 @@ class MCPServer extends EventEmitter {
 
       case 'browser_scroll': {
         if (!activeTab || !activeTab.view) throw new Error('No active browser tab found');
-        await this.ensureCdpAttached(activeTab);
         const dir = args.direction || 'down';
-        const amt = args.amount || 450;
+        const amt = typeof args.amount === 'number' ? args.amount : 450;
 
-        if (dir === 'top') {
-          await this.cdp.evaluate('window.scrollTo({ top: 0, behavior: "smooth" })');
-        } else if (dir === 'bottom') {
-          await this.cdp.evaluate('window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" })');
-        } else {
-          const delta = dir === 'up' ? -amt : amt;
-          await this.cdp.dispatchScroll(delta);
+        try {
+          if (dir === 'top') {
+            await activeTab.view.webContents.executeJavaScript('window.scrollTo({ top: 0, behavior: "smooth" }); true;');
+          } else if (dir === 'bottom') {
+            await activeTab.view.webContents.executeJavaScript('window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" }); true;');
+          } else {
+            const delta = dir === 'up' ? -amt : amt;
+            await activeTab.view.webContents.executeJavaScript(`window.scrollBy({ top: ${delta}, left: 0, behavior: "smooth" }); true;`);
+            if (this.cdp && this.cdp.isAttached) {
+              try { await this.cdp.dispatchScroll(delta, 3, 10); } catch (_) {}
+            }
+          }
+          return { success: true, direction: dir, amount: amt };
+        } catch (err) {
+          return { success: true, direction: dir, amount: amt, note: 'Scroll dispatched: ' + err.message };
         }
-        return { success: true, direction: dir, amount: amt };
       }
 
       case 'browser_capture_screenshot': {

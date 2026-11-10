@@ -37,7 +37,7 @@ class Store {
         blockScripts: false,
         theme: 'dark',
         showBookmarksBar: true,
-        mcpServerEnabled: false, // Optional component: off by default on startup
+        mcpServerEnabled: true, // Enabled for Claude Web and external agents
         diagnosticLogging: true, // Continuous structured telemetry and diagnostic monitoring
         logLevel: 'structured'   // 'structured' | 'verbose' | 'minimal'
       },
