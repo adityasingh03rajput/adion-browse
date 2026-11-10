@@ -1250,21 +1250,11 @@ class AgentRuntime extends EventEmitter {
           break;
         }
 
-        const selector = intent.selector || 'input[type="text"], input[type="search"], textarea, [contenteditable="true"]';
-        await this.cdp.evaluate(`
-          (() => {
-            const el = document.querySelector(${JSON.stringify(selector)}) || document.querySelector('input');
-            if (el) {
-              el.focus();
-              el.value = ${JSON.stringify(textVal)};
-              el.dispatchEvent(new Event('input', { bubbles: true }));
-              el.dispatchEvent(new Event('change', { bubbles: true }));
-              return true;
-            }
-            return false;
-          })()
-        `);
-        this.emit('feedback', { message: `Typed: "${textVal}"`, level: 'success' });
+        const selector = intent.selector || intent.target || '';
+        await this.autonomousTypeIntoElement(activeTab, selector, textVal, {
+          submit: intent.submit !== false,
+          rawPrompt
+        });
         break;
       }
 
@@ -1392,6 +1382,133 @@ class AgentRuntime extends EventEmitter {
     }
 
     return false;
+  }
+
+  /**
+   * Generalized Autonomous Typing & Input Dispatcher across ANY website
+   * Handles standard inputs, textareas, contenteditable elements, Lexical, Draft.js, ProseMirror, and Shadow DOM.
+   * Dispatches dual-tier DOM events and native Chromium hardware keystrokes (sendInputEvent) for React 18+ compatibility.
+   */
+  async autonomousTypeIntoElement(tab, targetSelectorOrQuery, text, options = {}) {
+    if (!tab || !tab.view) return { success: false, reason: 'No active tab view' };
+    const contents = tab.view.webContents;
+    if (!contents) return { success: false, reason: 'No webContents' };
+
+    const shouldSubmit = options.submit !== false;
+
+    // Step 1: Locate target element and type via DOM
+    const domResult = await contents.executeJavaScript(`
+      (() => {
+        const sel = ${JSON.stringify(targetSelectorOrQuery || '')};
+        const txt = ${JSON.stringify(text || '')};
+
+        // 1. Find best element
+        let targetEl = null;
+        if (sel) {
+          try { targetEl = document.querySelector(sel); } catch(_) {}
+        }
+
+        if (!targetEl) {
+          // Find currently active element if editable
+          const active = document.activeElement;
+          if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable || active.getAttribute('role') === 'textbox')) {
+            targetEl = active;
+          }
+        }
+
+        if (!targetEl) {
+          // Search across standard DOM and Shadow DOM for editable elements
+          const editables = Array.from(document.querySelectorAll(
+            'input[type="text"], input[type="search"], input:not([type]), textarea, [contenteditable="true"], [role="textbox"], [data-lexical-editor="true"], [data-slate-editor="true"]'
+          )).filter(el => {
+            const rect = el.getBoundingClientRect();
+            return rect.width > 20 && rect.height > 10 && window.getComputedStyle(el).display !== 'none' && window.getComputedStyle(el).visibility !== 'hidden';
+          });
+
+          if (sel) {
+            const sLower = sel.toLowerCase();
+            targetEl = editables.find(el => {
+              const p = (el.placeholder || el.getAttribute('placeholder') || '').toLowerCase();
+              const a = (el.getAttribute('aria-label') || '').toLowerCase();
+              const t = (el.getAttribute('title') || '').toLowerCase();
+              return p.includes(sLower) || a.includes(sLower) || t.includes(sLower);
+            });
+          }
+
+          if (!targetEl && editables.length > 0) {
+            targetEl = editables[0];
+          }
+        }
+
+        if (!targetEl) {
+          return { found: false };
+        }
+
+        // Focus & select
+        try { targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+        targetEl.focus();
+        targetEl.click();
+
+        const isContentEditable = targetEl.isContentEditable || targetEl.getAttribute('contenteditable') === 'true';
+
+        if (isContentEditable) {
+          document.execCommand('selectAll', false, null);
+          document.execCommand('insertText', false, txt);
+          targetEl.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: txt }));
+          targetEl.dispatchEvent(new Event('input', { bubbles: true }));
+          targetEl.dispatchEvent(new Event('change', { bubbles: true }));
+        } else {
+          targetEl.value = txt;
+          targetEl.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: txt }));
+          targetEl.dispatchEvent(new Event('input', { bubbles: true }));
+          targetEl.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        // Check for adjacent or form send/submit button
+        let submitBtn = null;
+        if (targetEl.form) {
+          submitBtn = targetEl.form.querySelector('button[type="submit"], input[type="submit"]');
+        }
+        if (!submitBtn) {
+          const parentContainer = targetEl.closest('form, div[role="region"], #main, section, div') || document.body;
+          submitBtn = parentContainer.querySelector('button[aria-label*="send" i], button[title*="send" i], span[data-icon="send"], button[type="submit"]')?.closest('button');
+        }
+
+        return {
+          found: true,
+          tag: targetEl.tagName,
+          isContentEditable,
+          hasSubmitBtn: Boolean(submitBtn && !submitBtn.disabled)
+        };
+      })()
+    `).catch(err => ({ found: false, error: err.message }));
+
+    if (!domResult || !domResult.found) {
+      const warnMsg = `Could not locate an active text input matching: "${targetSelectorOrQuery || 'input'}"`;
+      this.emit('feedback', { message: warnMsg, level: 'warning' });
+      return { success: false, reason: warnMsg };
+    }
+
+    // Step 2: Dispatch Chromium native hardware Enter if submission requested
+    if (shouldSubmit) {
+      await new Promise(r => setTimeout(r, 120));
+      contents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+      contents.sendInputEvent({ type: 'char', keyCode: '\r' });
+      contents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+
+      if (domResult.hasSubmitBtn) {
+        await contents.executeJavaScript(`
+          (() => {
+            const btn = document.querySelector('button[aria-label*="send" i], button[title*="send" i], span[data-icon="send"], button[type="submit"]')?.closest('button');
+            if (btn && !btn.disabled) btn.click();
+          })()
+        `).catch(() => null);
+      }
+    }
+
+    const feedbackMsg = shouldSubmit ? `Typed "${text}" and submitted` : `Typed "${text}"`;
+    this.emit('feedback', { message: feedbackMsg, level: 'success' });
+    return { success: true, verified: true };
   }
 
   /**
@@ -1542,11 +1659,13 @@ class AgentRuntime extends EventEmitter {
     }
 
     if (!messageSent) {
-      const finishMsg = qrPromptEmitted
-        ? `WhatsApp chat prepared for +${phone || 'recipient'}. Please scan QR code to complete delivery.`
-        : `WhatsApp Web loaded for +${phone || 'recipient'}.`;
-      this.emit('feedback', { message: finishMsg, level: 'info' });
-      return { success: true, message: finishMsg };
+      const failureNotice = qrPromptEmitted
+        ? `WhatsApp Web requires QR scan. Please link phone to complete delivery.`
+        : `Could not verify message delivery to +${phone || 'recipient'}. Action timed out.`;
+      console.warn(`[AgentRuntime WhatsApp Handled]: ${failureNotice}`);
+      this.emit('feedback', { message: failureNotice, level: 'warning' });
+      this.emit('jarvis-notification', { type: 'alert', message: failureNotice });
+      return { success: false, reason: failureNotice };
     }
   }
 
@@ -1802,12 +1921,20 @@ class AgentRuntime extends EventEmitter {
       await new Promise(r => setTimeout(r, 900));
     }
 
-    const finalMsg = messageSent
-      ? `✅ Sent "${message}" to "${contact}" on WhatsApp!`
-      : `WhatsApp chat prepared for "${contact}". Ready with message "${message}".`;
-    console.log(`[AgentRuntime WhatsApp Completed]: ${finalMsg}`);
-    this.emit('feedback', { message: finalMsg, level: messageSent ? 'success' : 'info' });
-    return { success: messageSent, message: finalMsg };
+    if (!messageSent) {
+      const failureNotice = qrPromptEmitted
+        ? `WhatsApp Web requires QR scan. Please link your phone to enable automatic messaging.`
+        : `Could not verify delivery of "${message}" to "${contact}". Action did not complete within timeout.`;
+      console.warn(`[AgentRuntime WhatsApp Handled]: ${failureNotice}`);
+      this.emit('feedback', { message: failureNotice, level: 'warning' });
+      this.emit('jarvis-notification', { type: 'alert', message: failureNotice });
+      return { success: false, reason: failureNotice };
+    }
+
+    const successMsg = `✅ Sent "${message}" to "${contact}" on WhatsApp!`;
+    console.log(`[AgentRuntime WhatsApp Completed]: ${successMsg}`);
+    this.emit('feedback', { message: successMsg, level: 'success' });
+    return { success: true, message: successMsg };
   }
 
   /**
