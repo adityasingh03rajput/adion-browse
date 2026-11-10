@@ -3,10 +3,12 @@ const path = require('path');
 const shield = require('./shield');
 const store = require('./store');
 const TabManager = require('./tabManager');
+const ControlPlane = require('../control-plane/controlPlane');
 
 // Main Electron process
 let mainWindow = null;
 let tabManager = null;
+let controlPlane = null;
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -34,6 +36,12 @@ async function createWindow() {
   // Initialize Tab Manager
   tabManager = new TabManager(mainWindow);
 
+  // Initialize Decoupled AI Voice & Autonomous Control Plane
+  controlPlane = new ControlPlane(mainWindow, tabManager);
+  tabManager.tabSwitchedCallback = (tab) => {
+    controlPlane.onActiveTabChanged(tab);
+  };
+
   // Create initial tab
   tabManager.createTab('adion://newtab');
 
@@ -50,6 +58,8 @@ async function createWindow() {
   });
 
   mainWindow.on('closed', () => {
+    if (controlPlane) controlPlane.destroy();
+    controlPlane = null;
     mainWindow = null;
     tabManager = null;
   });

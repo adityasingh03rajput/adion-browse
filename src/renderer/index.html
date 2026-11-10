@@ -71,6 +71,16 @@
 
         <!-- Omnibox Action Buttons -->
         <div class="omnibox-actions">
+          <!-- AI Voice Control Button -->
+          <button class="btn-omnibox-action btn-voice-agent" id="btnVoiceAgent" title="AI Voice & Intent Commander (Ctrl+Space or click)">
+            <svg id="micIcon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+              <line x1="12" y1="19" x2="12" y2="23"></line>
+              <line x1="8" y1="23" x2="16" y2="23"></line>
+            </svg>
+          </button>
+
           <!-- Bookmark Star Button -->
           <button class="btn-omnibox-action" id="btnBookmark" title="Bookmark this tab">
             <svg id="starIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -273,6 +283,22 @@
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- AI VOICE CONTROL PLANE HUD OVERLAY -->
+  <div class="agent-hud-overlay" id="agentHudOverlay">
+    <div class="agent-hud-card" id="agentHudCard">
+      <div class="agent-hud-pulse" id="agentHudPulse"></div>
+      <div class="agent-hud-content">
+        <div class="agent-hud-header">
+          <span class="agent-hud-tag" id="agentHudTag">AURA AGENT</span>
+          <span class="agent-hud-state" id="agentHudState">IDLE</span>
+        </div>
+        <div class="agent-hud-message" id="agentHudMessage">Ready. Say "Scroll down", "Open YouTube", or "Click search"...</div>
+        <div class="agent-transcript-preview" id="agentTranscriptPreview"></div>
+      </div>
+      <button class="btn-agent-close" id="btnCancelAgent" title="Cancel Agent Task">✕</button>
     </div>
   </div>
 

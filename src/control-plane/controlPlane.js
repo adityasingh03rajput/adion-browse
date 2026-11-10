@@ -1,0 +1,106 @@
+const { ipcMain } = require('electron');
+const CDPBridge = require('./cdpBridge');
+const AgentRuntime = require('./agentRuntime');
+const { IPCChannels, AgentState } = require('./protocol');
+
+/**
+ * Decoupled Control Plane Orchestrator
+ * Connects the Electron Main process, TabManager, CDP Bridge, and Asynchronous Agent Runtime.
+ * Sets up bidirectional IPC between the browser UI and the autonomous engine.
+ */
+class ControlPlane {
+  constructor(mainWindow, tabManager) {
+    this.mainWindow = mainWindow;
+    this.tabManager = tabManager;
+    this.cdp = new CDPBridge();
+    this.runtime = new AgentRuntime(this.tabManager, this.cdp);
+
+    this.init();
+  }
+
+  init() {
+    this.bindRuntimeEvents();
+    this.registerIPCHandlers();
+  }
+
+  /**
+   * Forward events from the asynchronous Agent Runtime to the Renderer UI
+   */
+  bindRuntimeEvents() {
+    this.runtime.on('state-change', (data) => {
+      this.sendToUI(IPCChannels.AGENT_STATE_CHANGE, data);
+    });
+
+    this.runtime.on('action-started', (data) => {
+      this.sendToUI(IPCChannels.AGENT_ACTION_STARTED, data);
+    });
+
+    this.runtime.on('action-finished', (data) => {
+      this.sendToUI(IPCChannels.AGENT_ACTION_FINISHED, data);
+    });
+
+    this.runtime.on('feedback', (data) => {
+      this.sendToUI(IPCChannels.AGENT_FEEDBACK_MESSAGE, data);
+    });
+  }
+
+  /**
+   * Safely dispatch message to browser chrome renderer
+   */
+  sendToUI(channel, payload) {
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send(channel, payload);
+    }
+  }
+
+  /**
+   * Register IPC communication endpoints for the browser UI
+   */
+  registerIPCHandlers() {
+    // Direct natural language command from UI input / omnibox
+    ipcMain.handle(IPCChannels.AGENT_SEND_COMMAND, async (event, commandText) => {
+      await this.runtime.processCommand(commandText);
+      return { success: true, state: this.runtime.state };
+    });
+
+    // Voice stream initiated from microphone HUD
+    ipcMain.on(IPCChannels.AGENT_VOICE_STREAM_START, () => {
+      this.runtime.setState(AgentState.LISTENING);
+      this.runtime.emit('feedback', { message: 'Microphone active - listening...', level: 'info' });
+    });
+
+    // Voice stream finished / speech transcript delivered
+    ipcMain.handle(IPCChannels.AGENT_VOICE_STREAM_STOP, async (event, transcript) => {
+      if (transcript && transcript.trim()) {
+        this.sendToUI(IPCChannels.AGENT_VOICE_TRANSCRIPT, { text: transcript });
+        await this.runtime.processCommand(transcript);
+      } else {
+        this.runtime.setState(AgentState.IDLE);
+      }
+      return { success: true };
+    });
+
+    // Cancel active agent task
+    ipcMain.on(IPCChannels.AGENT_CANCEL_TASK, () => {
+      this.runtime.setState(AgentState.IDLE);
+      this.runtime.emit('feedback', { message: 'Agent task cancelled', level: 'warning' });
+    });
+  }
+
+  /**
+   * Called when active tab switches to auto-attach CDP if needed
+   */
+  async onActiveTabChanged(tab) {
+    if (tab && tab.view) {
+      await this.cdp.attach(tab.view.webContents);
+    } else {
+      this.cdp.detach();
+    }
+  }
+
+  destroy() {
+    this.cdp.detach();
+  }
+}
+
+module.exports = ControlPlane;

@@ -39,6 +39,18 @@ contextBridge.exposeInMainWorld('adionAPI', {
 
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),
-  updateSetting: (key, value) => ipcRenderer.invoke('update-setting', { key, value })
-});
+  updateSetting: (key, value) => ipcRenderer.invoke('update-setting', { key, value }),
 
+  // AI Voice & Autonomous Control Plane API
+  agent: {
+    sendCommand: (commandText) => ipcRenderer.invoke('agent:send-command', commandText),
+    startVoice: () => ipcRenderer.send('agent:voice-start'),
+    stopVoice: (transcript) => ipcRenderer.invoke('agent:voice-stop', transcript),
+    cancelTask: () => ipcRenderer.send('agent:cancel-task'),
+    onStateChange: (callback) => ipcRenderer.on('agent:state-change', (e, data) => callback(data)),
+    onTranscript: (callback) => ipcRenderer.on('agent:voice-transcript', (e, data) => callback(data)),
+    onActionStarted: (callback) => ipcRenderer.on('agent:action-started', (e, data) => callback(data)),
+    onActionFinished: (callback) => ipcRenderer.on('agent:action-finished', (e, data) => callback(data)),
+    onFeedback: (callback) => ipcRenderer.on('agent:feedback-message', (e, data) => callback(data))
+  }
+});

@@ -402,7 +402,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Global Keyboard Shortcuts
   window.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.key === 't') {
+    if (e.ctrlKey && e.code === 'Space') {
+      e.preventDefault();
+      toggleVoiceAgent();
+    } else if (e.ctrlKey && e.key === 't') {
       e.preventDefault();
       window.adionAPI.newTab();
     } else if (e.ctrlKey && e.key === 'w') {
@@ -423,5 +426,153 @@ document.addEventListener('DOMContentLoaded', () => {
       window.adionAPI.toggleDevTools();
     }
   });
+
+  // --- AI VOICE CONTROL PLANE & AGENT HUD ---
+  const btnVoiceAgent = document.getElementById('btnVoiceAgent');
+  const agentHudOverlay = document.getElementById('agentHudOverlay');
+  const agentHudState = document.getElementById('agentHudState');
+  const agentHudMessage = document.getElementById('agentHudMessage');
+  const agentHudPulse = document.getElementById('agentHudPulse');
+  const agentTranscriptPreview = document.getElementById('agentTranscriptPreview');
+  const btnCancelAgent = document.getElementById('btnCancelAgent');
+
+  let isListening = false;
+  let recognition = null;
+  let hudHideTimeout = null;
+
+  // Initialize Web Speech Recognition if supported by Chromium
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SpeechRecognition) {
+    try {
+      recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        isListening = true;
+        btnVoiceAgent.classList.add('listening');
+        showAgentHud('LISTENING', 'Listening to voice command...', true);
+        window.adionAPI.agent.startVoice();
+      };
+
+      recognition.onresult = (event) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          transcript += event.results[i][0].transcript;
+        }
+        agentTranscriptPreview.innerText = `"${transcript}"`;
+        agentTranscriptPreview.classList.add('has-text');
+
+        if (event.results[0].isFinal) {
+          showAgentHud('PROCESSING', `Heard: "${transcript}"`);
+          window.adionAPI.agent.stopVoice(transcript);
+        }
+      };
+
+      recognition.onerror = (event) => {
+        console.warn('[Voice Recognition]', event.error);
+        stopListening();
+        if (event.error === 'not-allowed') {
+          showAgentHud('ERROR', 'Microphone permission required');
+        }
+      };
+
+      recognition.onend = () => {
+        stopListening();
+      };
+    } catch (e) {
+      console.warn('Speech recognition init error:', e);
+    }
+  }
+
+  function showAgentHud(stateText, message, isListeningMode = false) {
+    if (hudHideTimeout) clearTimeout(hudHideTimeout);
+    agentHudOverlay.classList.add('visible');
+    agentHudState.innerText = stateText;
+    agentHudMessage.innerText = message;
+
+    agentHudPulse.className = 'agent-hud-pulse';
+    if (isListeningMode) {
+      agentHudPulse.classList.add('listening');
+    } else if (stateText === 'EXECUTING_ACTION' || stateText === 'PROCESSING') {
+      agentHudPulse.classList.add('executing');
+    }
+
+    if (!isListeningMode && stateText !== 'EXECUTING_ACTION') {
+      hudHideTimeout = setTimeout(() => {
+        agentHudOverlay.classList.remove('visible');
+        agentTranscriptPreview.classList.remove('has-text');
+      }, 4000);
+    }
+  }
+
+  function stopListening() {
+    isListening = false;
+    btnVoiceAgent.classList.remove('listening');
+    if (recognition) {
+      try { recognition.stop(); } catch(e){}
+    }
+  }
+
+  function toggleVoiceAgent() {
+    if (isListening) {
+      stopListening();
+      window.adionAPI.agent.cancelTask();
+      showAgentHud('IDLE', 'Voice listening stopped');
+    } else {
+      if (recognition) {
+        try {
+          recognition.start();
+        } catch (err) {
+          promptManualCommand();
+        }
+      } else {
+        // Fallback for typed natural language command
+        promptManualCommand();
+      }
+    }
+  }
+
+  function promptManualCommand() {
+    const cmd = prompt('AI Agent Command (e.g. "scroll down", "open youtube", "click search", "close tab"):');
+    if (cmd && cmd.trim()) {
+      showAgentHud('PARSING', `Executing: "${cmd}"`);
+      window.adionAPI.agent.sendCommand(cmd.trim());
+    }
+  }
+
+  if (btnVoiceAgent) {
+    btnVoiceAgent.addEventListener('click', () => {
+      toggleVoiceAgent();
+    });
+  }
+
+  if (btnCancelAgent) {
+    btnCancelAgent.addEventListener('click', () => {
+      stopListening();
+      window.adionAPI.agent.cancelTask();
+      agentHudOverlay.classList.remove('visible');
+    });
+  }
+
+  // Bind Decoupled Control Plane Event Listeners
+  if (window.adionAPI && window.adionAPI.agent) {
+    window.adionAPI.agent.onStateChange((data) => {
+      showAgentHud(data.state, `State: ${data.state}`);
+    });
+
+    window.adionAPI.agent.onActionStarted((action) => {
+      showAgentHud('EXECUTING_ACTION', `Executing: ${action.type}`);
+    });
+
+    window.adionAPI.agent.onActionFinished((action) => {
+      showAgentHud('COMPLETED', `Finished: ${action.type}`);
+    });
+
+    window.adionAPI.agent.onFeedback((feedback) => {
+      showAgentHud(feedback.level.toUpperCase(), feedback.message);
+    });
+  }
 });
 

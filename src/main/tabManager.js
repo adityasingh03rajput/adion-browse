@@ -13,6 +13,7 @@ class TabManager {
     this.activeTabId = null;
     this.nextTabId = 1;
     this.newTabPath = path.join(__dirname, '../newtab/newtab.html');
+    this.tabSwitchedCallback = null;
 
     // Handle window resize
     this.mainWindow.on('resize', () => {
@@ -194,6 +195,10 @@ class TabManager {
       tabId: id,
       stats
     });
+
+    if (this.tabSwitchedCallback) {
+      this.tabSwitchedCallback(tab);
+    }
   }
 
   closeTab(id) {
