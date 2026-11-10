@@ -16,6 +16,7 @@ class TabManager {
     this.newTabPath = path.join(__dirname, '../newtab/newtab.html');
     this.dashboardPath = path.join(__dirname, '../dashboard/dashboard.html');
     this.tabSwitchedCallback = null;
+    this.isOverlayActive = false;
 
     // Handle window resize
     this.mainWindow.on('resize', () => {
@@ -33,8 +34,27 @@ class TabManager {
     };
   }
 
-  resizeActiveTab() {
+  setOverlayActive(active) {
+    this.isOverlayActive = Boolean(active);
     if (!this.activeTabId) return;
+    const tab = this.tabs.get(this.activeTabId);
+    if (!tab || !tab.view) return;
+
+    if (this.isOverlayActive) {
+      try {
+        this.mainWindow.removeBrowserView(tab.view);
+      } catch (_) {}
+    } else {
+      try {
+        this.mainWindow.setBrowserView(tab.view);
+        tab.view.setBounds(this.getBounds());
+        try { tab.view.webContents.focus(); } catch (_) {}
+      } catch (_) {}
+    }
+  }
+
+  resizeActiveTab() {
+    if (!this.activeTabId || this.isOverlayActive) return;
     const tab = this.tabs.get(this.activeTabId);
     if (tab && tab.view) {
       tab.view.setBounds(this.getBounds());

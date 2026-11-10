@@ -229,15 +229,56 @@ document.addEventListener('DOMContentLoaded', () => {
     omniboxInput.select();
   });
 
+  // Helper to sync overlay / modal active state with native BrowserView layer
+  function updateOverlayState() {
+    const isAnyOpen = Boolean(
+      (shieldsOverlay && shieldsOverlay.classList.contains('show')) ||
+      (bookmarksModal && bookmarksModal.classList.contains('show')) ||
+      (historyModal && historyModal.classList.contains('show')) ||
+      (settingsModal && settingsModal.classList.contains('show')) ||
+      (telemetryOverlay && telemetryOverlay.classList.contains('show')) ||
+      (jarvisPanelOverlay && jarvisPanelOverlay.classList.contains('open'))
+    );
+    if (window.adionAPI && typeof window.adionAPI.setOverlayActive === 'function') {
+      window.adionAPI.setOverlayActive(isAnyOpen);
+    }
+  }
+
+  function closeAllModalsExcept(except = '') {
+    if (except !== 'shields' && shieldsOverlay) shieldsOverlay.classList.remove('show');
+    if (except !== 'bookmarks' && bookmarksModal) bookmarksModal.classList.remove('show');
+    if (except !== 'history' && historyModal) historyModal.classList.remove('show');
+    if (except !== 'settings' && settingsModal) settingsModal.classList.remove('show');
+    if (except !== 'telemetry' && telemetryOverlay) telemetryOverlay.classList.remove('show');
+    if (except !== 'jarvis' && jarvisPanelOverlay) jarvisPanelOverlay.classList.remove('open');
+  }
+
+  function closeAllModals() {
+    closeAllModalsExcept('');
+    updateOverlayState();
+  }
+
   // Bookmarking
-  btnBookmark.addEventListener('click', async () => {
+  btnBookmark.addEventListener('click', async (e) => {
+    e.stopPropagation();
     try {
-      if (!currentActiveUrl || currentActiveUrl.startsWith('adion://')) return;
+      if (!currentActiveUrl || currentActiveUrl.startsWith('adion://')) {
+        showJarvisToast('Built-in tabs (adion://) are internal system pages.');
+        btnBookmark.classList.add('bookmarked');
+        setTimeout(() => {
+          if (!currentActiveUrl || currentActiveUrl.startsWith('adion://')) {
+            btnBookmark.classList.remove('bookmarked');
+          }
+        }, 1200);
+        return;
+      }
       const res = await window.adionAPI.toggleBookmark(currentActiveTitle || currentActiveUrl, currentActiveUrl);
       if (res && res.isBookmarked) {
         btnBookmark.classList.add('bookmarked');
+        showJarvisToast(`★ Bookmarked: ${currentActiveTitle || currentActiveUrl}`);
       } else {
         btnBookmark.classList.remove('bookmarked');
+        showJarvisToast('Bookmark removed.');
       }
     } catch (err) {
       console.error('[Bookmark UI] Error toggling bookmark:', err);
@@ -259,12 +300,14 @@ document.addEventListener('DOMContentLoaded', () => {
   function toggleTelemetryOverlay(forceShow = null) {
     if (!telemetryOverlay) return;
     const shouldShow = forceShow !== null ? forceShow : !telemetryOverlay.classList.contains('show');
+    closeAllModalsExcept(shouldShow ? 'telemetry' : '');
     if (shouldShow) {
       telemetryOverlay.classList.add('show');
       refreshOverlayTelemetry();
     } else {
       telemetryOverlay.classList.remove('show');
     }
+    updateOverlayState();
   }
 
   async function refreshOverlayTelemetry() {
@@ -287,11 +330,17 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   if (btnTelemetryOverlay) {
-    btnTelemetryOverlay.addEventListener('click', () => toggleTelemetryOverlay());
+    btnTelemetryOverlay.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleTelemetryOverlay();
+    });
   }
 
   if (btnCloseTelemetry) {
-    btnCloseTelemetry.addEventListener('click', () => toggleTelemetryOverlay(false));
+    btnCloseTelemetry.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleTelemetryOverlay(false);
+    });
   }
 
   if (btnOverlayFullDashboard) {
@@ -319,9 +368,14 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // --- SHIELDS POPUP CONTROLLER ---
-  btnShield.addEventListener('click', async () => {
-    if (shieldsOverlay.classList.contains('show')) {
+  btnShield.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const willShow = !shieldsOverlay.classList.contains('show');
+    closeAllModalsExcept(willShow ? 'shields' : '');
+
+    if (!willShow) {
       shieldsOverlay.classList.remove('show');
+      updateOverlayState();
       return;
     }
 
@@ -343,10 +397,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     shieldsOverlay.classList.add('show');
+    updateOverlayState();
   });
 
-  btnCloseShields.addEventListener('click', () => {
+  btnCloseShields.addEventListener('click', (e) => {
+    e.stopPropagation();
     shieldsOverlay.classList.remove('show');
+    updateOverlayState();
   });
 
   mainShieldToggle.addEventListener('change', async () => {
@@ -365,14 +422,25 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // --- BOOKMARKS MODAL ---
-  btnBookmarksMenu.addEventListener('click', async () => {
+  btnBookmarksMenu.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const willShow = !bookmarksModal.classList.contains('show');
+    closeAllModalsExcept(willShow ? 'bookmarks' : '');
+    if (!willShow) {
+      bookmarksModal.classList.remove('show');
+      updateOverlayState();
+      return;
+    }
     const bookmarks = await window.adionAPI.getBookmarks();
     renderBookmarks(bookmarks);
     bookmarksModal.classList.add('show');
+    updateOverlayState();
   });
 
-  btnCloseBookmarks.addEventListener('click', () => {
+  btnCloseBookmarks.addEventListener('click', (e) => {
+    e.stopPropagation();
     bookmarksModal.classList.remove('show');
+    updateOverlayState();
   });
 
   function renderBookmarks(bookmarks) {
@@ -393,20 +461,32 @@ document.addEventListener('DOMContentLoaded', () => {
       li.addEventListener('click', () => {
         window.adionAPI.navigate(bm.url);
         bookmarksModal.classList.remove('show');
+        updateOverlayState();
       });
       bookmarksList.appendChild(li);
     });
   }
 
   // --- HISTORY MODAL ---
-  btnHistory.addEventListener('click', async () => {
+  btnHistory.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const willShow = !historyModal.classList.contains('show');
+    closeAllModalsExcept(willShow ? 'history' : '');
+    if (!willShow) {
+      historyModal.classList.remove('show');
+      updateOverlayState();
+      return;
+    }
     const history = await window.adionAPI.getHistory();
     renderHistory(history);
     historyModal.classList.add('show');
+    updateOverlayState();
   });
 
-  btnCloseHistory.addEventListener('click', () => {
+  btnCloseHistory.addEventListener('click', (e) => {
+    e.stopPropagation();
     historyModal.classList.remove('show');
+    updateOverlayState();
   });
 
   btnClearHistory.addEventListener('click', async () => {
@@ -432,6 +512,7 @@ document.addEventListener('DOMContentLoaded', () => {
       li.addEventListener('click', () => {
         window.adionAPI.navigate(h.url);
         historyModal.classList.remove('show');
+        updateOverlayState();
       });
       historyList.appendChild(li);
     });
@@ -445,16 +526,27 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // --- SETTINGS MODAL ---
-  btnSettings.addEventListener('click', async () => {
+  btnSettings.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const willShow = !settingsModal.classList.contains('show');
+    closeAllModalsExcept(willShow ? 'settings' : '');
+    if (!willShow) {
+      settingsModal.classList.remove('show');
+      updateOverlayState();
+      return;
+    }
     const settings = await window.adionAPI.getSettings();
     settingSearchEngine.value = settings.searchEngine || 'brave';
     settingShieldsDefault.checked = settings.shieldsEnabled !== false;
     settingUpgradeHttps.checked = settings.upgradeHttps !== false;
     settingsModal.classList.add('show');
+    updateOverlayState();
   });
 
-  btnCloseSettings.addEventListener('click', () => {
+  btnCloseSettings.addEventListener('click', (e) => {
+    e.stopPropagation();
     settingsModal.classList.remove('show');
+    updateOverlayState();
   });
 
   settingSearchEngine.addEventListener('change', async () => {
@@ -470,29 +562,45 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // --- DEVTOOLS TOGGLE ---
-  btnDevTools.addEventListener('click', () => {
+  btnDevTools.addEventListener('click', (e) => {
+    e.stopPropagation();
     window.adionAPI.toggleDevTools();
+    showJarvisToast('Developer Tools toggled.');
   });
 
   // Close overlays on clicking outside
   window.addEventListener('click', (e) => {
+    let changed = false;
     if (shieldsOverlay.classList.contains('show') && !shieldsOverlay.contains(e.target) && !btnShield.contains(e.target)) {
       shieldsOverlay.classList.remove('show');
+      changed = true;
     }
-    if (bookmarksModal.classList.contains('show') && e.target === bookmarksModal) {
+    if (telemetryOverlay && telemetryOverlay.classList.contains('show') && !telemetryOverlay.contains(e.target) && (!btnTelemetryOverlay || !btnTelemetryOverlay.contains(e.target))) {
+      telemetryOverlay.classList.remove('show');
+      changed = true;
+    }
+    if (bookmarksModal.classList.contains('show') && (e.target === bookmarksModal || !bookmarksModal.querySelector('.modal-card').contains(e.target))) {
       bookmarksModal.classList.remove('show');
+      changed = true;
     }
-    if (historyModal.classList.contains('show') && e.target === historyModal) {
+    if (historyModal.classList.contains('show') && (e.target === historyModal || !historyModal.querySelector('.modal-card').contains(e.target))) {
       historyModal.classList.remove('show');
+      changed = true;
     }
-    if (settingsModal.classList.contains('show') && e.target === settingsModal) {
+    if (settingsModal.classList.contains('show') && (e.target === settingsModal || !settingsModal.querySelector('.modal-card').contains(e.target))) {
       settingsModal.classList.remove('show');
+      changed = true;
+    }
+    if (changed) {
+      updateOverlayState();
     }
   });
 
   // Global Keyboard Shortcuts
   window.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.code === 'Space') {
+    if (e.key === 'Escape') {
+      closeAllModals();
+    } else if (e.ctrlKey && e.code === 'Space') {
       e.preventDefault();
       toggleVoiceAgent();
     } else if (e.ctrlKey && e.key === 't') {
@@ -734,7 +842,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   if (btnVoiceAgent) {
-    btnVoiceAgent.addEventListener('click', () => {
+    btnVoiceAgent.addEventListener('click', (e) => {
+      if (e) e.stopPropagation();
       toggleVoiceAgent();
     });
   }
@@ -1062,18 +1171,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Toggle Jarvis Panel ---
   if (btnToggleJarvis && jarvisPanelOverlay) {
-    btnToggleJarvis.addEventListener('click', () => {
+    btnToggleJarvis.addEventListener('click', (e) => {
+      if (e) e.stopPropagation();
       const isOpen = jarvisPanelOverlay.classList.toggle('open');
       if (isOpen) {
+        closeAllModalsExcept('jarvis');
         loadSessionHistory();
         if (jarvisChatInput) jarvisChatInput.focus();
       }
+      updateOverlayState();
     });
   }
 
   if (btnCloseJarvis && jarvisPanelOverlay) {
-    btnCloseJarvis.addEventListener('click', () => {
+    btnCloseJarvis.addEventListener('click', (e) => {
+      if (e) e.stopPropagation();
       jarvisPanelOverlay.classList.remove('open');
+      updateOverlayState();
     });
   }
 

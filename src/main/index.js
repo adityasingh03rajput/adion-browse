@@ -200,6 +200,12 @@ function setupIPC() {
     tabManager.toggleDevTools();
   });
 
+  ipcMain.on('set-overlay-active', (e, active) => {
+    if (tabManager) {
+      tabManager.setOverlayActive(Boolean(active));
+    }
+  });
+
   ipcMain.on('devtools-switch-panel', (e, panel) => {
     tabManager.switchDevToolsPanel(panel);
   });

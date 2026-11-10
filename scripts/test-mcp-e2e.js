@@ -504,3 +504,4 @@ runMcpFullSuite().catch(err => {
   console.error('\n❌ MCP End-to-End Verification Failed:', err);
   process.exit(1);
 });
+

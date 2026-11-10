@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('adionAPI', {
   focusDevTools: () => ipcRenderer.send('devtools-focus'),
   focusPage: () => ipcRenderer.send('page-focus'),
   switchTabByQuery: (query) => ipcRenderer.send('tab-switch-query', query),
+  setOverlayActive: (active) => ipcRenderer.send('set-overlay-active', active),
 
   // Event Listeners from Main
   onTabUpdated: (callback) => {
