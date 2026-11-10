@@ -280,7 +280,7 @@ class AgentRuntime extends EventEmitter {
 
         for (let i = 0; i < plan.actions.length; i++) {
           const act = plan.actions[i];
-          const intent = { type: act.type, ...(act.params || {}) };
+          const intent = { type: act.type, ...(act.params || {}), raw: text };
           await this.executeIntent(intent);
           if (i < plan.actions.length - 1) {
             await new Promise(r => setTimeout(r, 350));
@@ -299,6 +299,7 @@ class AgentRuntime extends EventEmitter {
       }
 
       // 3. Execute parsed intent
+      intent.raw = text;
       await this.executeIntent(intent);
     } catch (err) {
       console.error('[AgentRuntime] Execution error:', err);
@@ -588,20 +589,59 @@ class AgentRuntime extends EventEmitter {
         const action = intent.action || 'setText';
         const value = intent.value || '⚡ Enhanced Live Acoustic Stream Matrix';
         const attribute = intent.attribute || '';
-        if (activeTab && activeTab.view) {
-          await this.cdp.attach(activeTab.view.webContents);
-          const res = await this.cdp.modifyDOM(selector, action, value, attribute);
-          if (res && res.success) {
-            this.emit('feedback', {
-              message: `DOM Updated: "${selector}" -> "${res.current}". Render verified!`,
-              level: 'success'
-            });
-          } else {
-            this.emit('feedback', {
-              message: `DOM modification notice: ${res?.error || 'Element not found on active page'}`,
-              level: 'warning'
-            });
+
+        let targetTab = activeTab;
+        let res = null;
+
+        if (targetTab && targetTab.view) {
+          await this.cdp.attach(targetTab.view.webContents);
+          res = await this.cdp.modifyDOM(selector, action, value, attribute);
+        }
+
+        // If not found on active tab, inspect other open tabs (e.g. user has audio.html in another tab)
+        if ((!res || !res.success) && this.tabManager) {
+          const allTabs = Array.from(this.tabManager.tabs.values());
+          for (const tab of allTabs) {
+            if (tab.id !== activeTab?.id && tab.view) {
+              const urlMatch = /audio\.html|dashboard/i.test(tab.url);
+              const titleMatch = /audio|lab|dsp/i.test(tab.title);
+              if (urlMatch || titleMatch) {
+                console.log(`[AgentRuntime DOM] Switching to tab ${tab.id} (${tab.title || tab.url}) to apply DOM modification...`);
+                this.tabManager.switchTab(tab.id);
+                targetTab = tab;
+                await new Promise(r => setTimeout(r, 200));
+                await this.cdp.attach(targetTab.view.webContents);
+                res = await this.cdp.modifyDOM(selector, action, value, attribute);
+                if (res && res.success) break;
+              }
+            }
           }
+        }
+
+        // If still not found and the user instruction refers to audio/test tone, open audio.html
+        if ((!res || !res.success) && this.tabManager && /(tone|audio|dsp|sound|playback|synthesizer)/i.test(`${selector} ${value} ${intent.raw || ''}`)) {
+          console.log('[AgentRuntime DOM] Target element belongs to audio.html lab. Opening local file tab...');
+          const audioPath = 'file:///' + path.resolve(process.cwd(), 'audio.html').replace(/\\/g, '/');
+          const openedTab = this.tabManager.createTab(audioPath);
+          await new Promise(r => setTimeout(r, 650));
+          if (openedTab && openedTab.view) {
+            await this.cdp.attach(openedTab.view.webContents);
+            res = await this.cdp.modifyDOM(selector, action, value, attribute);
+          }
+        }
+
+        console.log('[AgentRuntime DOM] Result:', res);
+
+        if (res && res.success) {
+          this.emit('feedback', {
+            message: `DOM Updated: <${res.renderedTag}> (${res.resolvedSelector}) -> "${res.appliedValue || res.current}". Render verified!`,
+            level: 'success'
+          });
+        } else {
+          this.emit('feedback', {
+            message: `DOM modification notice: ${res?.error || 'Element not found on active page'}`,
+            level: 'warning'
+          });
         }
         break;
       }

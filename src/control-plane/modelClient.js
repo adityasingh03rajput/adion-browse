@@ -79,6 +79,15 @@ Output:
   ]
 }
 
+User: "Can you change the color to yellow of generate test tone button?" or "turn generate test tone button yellow"
+Output:
+{
+  "thought": "Change generate test tone button background color to yellow",
+  "actions": [
+    { "type": "MODIFY_DOM", "params": { "selector": "#btnTogglePlayback", "action": "setStyle", "value": "background: yellow; color: #000;" } }
+  ]
+}
+
 Examples:
 User: "Bookmark this page" or "add bookmark"
 Output:

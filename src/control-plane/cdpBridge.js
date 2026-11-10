@@ -315,29 +315,155 @@ class CDPBridge {
 
   /**
    * Modify the Document Object Model (DOM) of the active page/local file in real-time
-   * Supports setting text, innerHTML, style properties, and attributes with render verification
+   * Supports smart fuzzy selector resolution, text, innerHTML, style properties,
+   * CSS gradient overrides, and attributes with instant render verification.
    */
   async modifyDOM(selector, action = 'setText', value = '', attribute = '') {
     if (!this.isAttached) throw new Error('CDP not attached to active tab');
 
     const expr = `
       (() => {
-        const el = document.querySelector(${JSON.stringify(selector)});
+        const rawSelector = ${JSON.stringify(selector || '')}.trim();
+        const actionType = ${JSON.stringify(action || 'setText')};
+        const val = ${JSON.stringify(value || '')};
+        const attr = ${JSON.stringify(attribute || '')};
+
+        // Multi-tier Smart Element Resolver
+        function resolveElement(sel) {
+          if (!sel) return null;
+
+          // 1. Exact CSS querySelector
+          try {
+            const el = document.querySelector(sel);
+            if (el) return el;
+          } catch(e) {}
+
+          // 2. Direct ID or Class lookup (strip leading # or .)
+          const cleanId = sel.replace(/^[#\\.]/, '').trim();
+          const elById = document.getElementById(cleanId);
+          if (elById) return elById;
+
+          // 3. Data attributes lookup
+          try {
+            const dataMatch = document.querySelector(
+              '[data-id="' + cleanId + '"], [data-testid="' + cleanId + '"], [name="' + cleanId + '"], [data-action="' + cleanId + '"]'
+            );
+            if (dataMatch) return dataMatch;
+          } catch(e) {}
+
+          // 4. Token-based semantic & text search across all elements
+          const cleanText = sel
+            .toLowerCase()
+            .replace(/^[#\\.]/, '')
+            .replace(/([a-z])([A-Z])/g, '$1 $2')
+            .replace(/[-_]/g, ' ')
+            .replace(/\\b(button|btn|input|field|link|div|element|selector)\\b/gi, '')
+            .trim();
+
+          const all = Array.from(document.querySelectorAll('button, a, input, select, textarea, div, span, p, h1, h2, h3, h4, h5, h6, label, canvas, [role="button"]'));
+
+          // 4A. Text, Title, Aria-label, or ID exact/substring match
+          for (const el of all) {
+            const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+            const id = (el.id || '').toLowerCase();
+            const title = (el.getAttribute('title') || '').toLowerCase();
+            const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+            const testid = (el.getAttribute('data-testid') || '').toLowerCase();
+
+            if (cleanText && (
+              text.includes(cleanText) ||
+              id.includes(cleanText.replace(/\\s+/g, '')) ||
+              title.includes(cleanText) ||
+              aria.includes(cleanText) ||
+              testid.includes(cleanText.replace(/\\s+/g, ''))
+            )) {
+              return el.closest('button, a, [role="button"]') || el;
+            }
+          }
+
+          // 4B. Word token matching (all keywords present)
+          const tokens = cleanText.split(/\\s+/).filter(t => t.length > 1);
+          if (tokens.length > 0) {
+            for (const el of all) {
+              const combined = [
+                el.innerText || '',
+                el.id || '',
+                el.getAttribute('title') || '',
+                el.getAttribute('aria-label') || '',
+                el.getAttribute('data-testid') || ''
+              ].join(' ').toLowerCase();
+
+              if (tokens.every(token => combined.includes(token))) {
+                return el.closest('button, a, [role="button"]') || el;
+              }
+            }
+          }
+
+          // 5. Fallback: if selector was button and there is a primary button
+          if (/button|btn/i.test(sel)) {
+            const firstBtn = document.querySelector('button.btn, button');
+            if (firstBtn) return firstBtn;
+          }
+
+          return null;
+        }
+
+        const el = resolveElement(rawSelector);
         if (!el) {
-          return { success: false, error: 'Element not found for selector: ' + ${JSON.stringify(selector)} };
+          return {
+            success: false,
+            error: 'Element not found for selector: ' + rawSelector,
+            triedSelector: rawSelector
+          };
         }
 
         const prevContent = el.innerText || el.value || el.innerHTML || '';
-        const actionType = ${JSON.stringify(action)};
-        const val = ${JSON.stringify(value)};
-        const attr = ${JSON.stringify(attribute)};
+        const prevStyle = el.getAttribute('style') || '';
 
+        // Apply DOM Action
         if (actionType === 'setText' || actionType === 'text') {
           el.innerText = val;
         } else if (actionType === 'setHTML' || actionType === 'html') {
           el.innerHTML = val;
-        } else if (actionType === 'setStyle' || actionType === 'style') {
-          el.style.cssText += ';' + val;
+        } else if (actionType === 'setStyle' || actionType === 'style' || actionType === 'setColor' || actionType === 'setBackground') {
+          // If val is raw color (e.g. "yellow", "#ff0", "rgb(...)") or contains color/background
+          const isRawColor = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(val.trim()) ||
+            /^(yellow|red|green|blue|orange|purple|pink|cyan|white|black|gold|crimson)$/i.test(val.trim()) ||
+            val.trim().startsWith('rgb');
+
+          if (isRawColor || actionType === 'setColor' || actionType === 'setBackground') {
+            const color = val.trim().replace(/;$/, '');
+            el.style.setProperty('background', color, 'important');
+            el.style.setProperty('background-color', color, 'important');
+            el.style.setProperty('background-image', 'none', 'important');
+            if (/yellow|gold|#ff|#fe|white|cyan/i.test(color)) {
+              el.style.setProperty('color', '#0f1117', 'important');
+            }
+            el.style.setProperty('box-shadow', '0 0 20px ' + color, 'important');
+          } else {
+            // Parse CSS property string (e.g. "background-color: yellow; font-size: 14px")
+            const declarations = val.split(';').map(s => s.trim()).filter(Boolean);
+            let hasBgChange = false;
+            for (const decl of declarations) {
+              const colonIdx = decl.indexOf(':');
+              if (colonIdx > 0) {
+                const prop = decl.slice(0, colonIdx).trim();
+                const rawV = decl.slice(colonIdx + 1).replace(/!important/g, '').trim();
+                el.style.setProperty(prop, rawV, 'important');
+                if (prop === 'background' || prop === 'background-color') {
+                  hasBgChange = true;
+                  el.style.setProperty('background-image', 'none', 'important');
+                  if (/yellow|gold|#ff|#fe|white|cyan/i.test(rawV)) {
+                    el.style.setProperty('color', '#0f1117', 'important');
+                  }
+                  el.style.setProperty('box-shadow', '0 0 20px ' + rawV, 'important');
+                }
+              }
+            }
+            if (!hasBgChange && declarations.length === 0 && val) {
+              el.style.cssText += ';' + val;
+            }
+          }
         } else if (actionType === 'setAttribute' || actionType === 'attr') {
           el.setAttribute(attr || 'data-ai-modified', val);
         } else if (actionType === 'append') {
@@ -348,23 +474,31 @@ class CDPBridge {
         el.dispatchEvent(new Event('change', { bubbles: true }));
         el.dispatchEvent(new Event('input', { bubbles: true }));
 
-        // Flash temporary highlight to verify render update
+        // Scroll into center view smoothly so the user sees the modification
+        try {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+        } catch(e) {}
+
+        // Flash visual highlight pulse to confirm render update
         const origOutline = el.style.outline;
         const origTransition = el.style.transition;
-        el.style.transition = 'outline 0.3s ease';
-        el.style.outline = '3px solid #00f2fe';
+        el.style.transition = 'all 0.3s ease';
+        el.style.outline = '3px solid #ffeb3b';
         setTimeout(() => {
           el.style.outline = origOutline;
           el.style.transition = origTransition;
-        }, 1200);
+        }, 1500);
 
         return {
           success: true,
-          selector: ${JSON.stringify(selector)},
+          resolvedSelector: el.id ? '#' + el.id : el.tagName.toLowerCase(),
+          renderedTag: el.tagName,
           action: actionType,
+          appliedValue: val,
           previous: prevContent.slice(0, 80),
           current: (el.innerText || el.value || el.innerHTML || '').slice(0, 80),
-          renderedTag: el.tagName
+          computedBackground: window.getComputedStyle(el).backgroundColor,
+          computedColor: window.getComputedStyle(el).color
         };
       })()
     `;
