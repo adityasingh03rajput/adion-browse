@@ -242,18 +242,69 @@ class QueryPreprocessor {
       };
     }
 
-    // D. Direct WhatsApp Messaging & Chat Automation
-    const waMatch = lower.match(/(?:text|say|tell|send(?:\s+a)?(?:\s+message)?|message)\s+(.+?)\s+to\s+([+0-9]{7,15})\s+(?:on|in|via)\s+whatsapp/i);
-    if (waMatch) {
-      const msg = waMatch[1].trim().replace(/^["']|["']$/g, '');
-      const phone = waMatch[2].replace(/[^0-9]/g, '');
-      return {
-        type: 'WHATSAPP_SEND',
-        phone,
-        message: msg,
-        url: `https://web.whatsapp.com/send/?phone=${phone}&text=${encodeURIComponent(msg)}`,
-        thought: `Send WhatsApp message "${msg}" to +${phone}`
-      };
+    // D. Context-Aware WhatsApp Contact Messaging & Direct Dispatch
+    const isWhatsAppContext = (pageContext && pageContext.url && pageContext.url.includes('whatsapp.com')) || /(?:on|in|via)\s+whatsapp/i.test(lower);
+    if (isWhatsAppContext) {
+      let cleaned = lower.trim().replace(/\s+(?:on|in|via)\s+whatsapp(?:\s*[\.\?!])?$/i, '');
+      cleaned = cleaned.replace(/[\.\?!]+$/, '').trim();
+
+      let contact = null;
+      let msg = null;
+
+      // 1. "say/send/tell/text/message/write/type <message> to <contact>"
+      const mTo = cleaned.match(/^(?:say|send(?:\s+a)?(?:\s+message)?|tell|text|message|write|type)\s+(.+?)\s+to\s+(.+)$/i);
+      if (mTo) {
+        msg = mTo[1].trim();
+        contact = mTo[2].trim();
+        if (msg === 'message' || msg === 'a message') {
+          const parts = contact.split(/\s+/);
+          contact = parts[0];
+          msg = parts.slice(1).join(' ');
+        }
+      } else {
+        // 2. "say/send/tell to <contact> <message>"
+        const mSayTo = cleaned.match(/^(?:say|send|tell|write|type)\s+to\s+([a-zA-Z0-9_\+\-]+)\s+(.+)$/i);
+        if (mSayTo) {
+          contact = mSayTo[1].trim();
+          msg = mSayTo[2].trim();
+        } else {
+          // 3. "text/message/tell <contact> <message>"
+          const mVerb = cleaned.match(/^(?:text|message|tell)\s+([a-zA-Z0-9_\+\-]+)\s+(.+)$/i);
+          if (mVerb) {
+            contact = mVerb[1].trim();
+            msg = mVerb[2].trim();
+          }
+        }
+      }
+
+      if (contact && msg) {
+        // Strip conversational lead-ins like "saying" or "that"
+        msg = msg.replace(/^(saying|that)\s+/i, '').trim().replace(/^["']|["']$/g, '');
+        contact = contact.replace(/^["']|["']$/g, '');
+        const cleanPhone = contact.replace(/[^0-9]/g, '');
+        const isNumericPhone = cleanPhone.length >= 7 && cleanPhone.length <= 15 && !/[a-zA-Z]/.test(contact);
+
+        // If numeric phone and not on WhatsApp Web, use WHATSAPP_SEND direct link
+        if (isNumericPhone && (!pageContext?.url || !pageContext.url.includes('whatsapp.com'))) {
+          return {
+            type: 'WHATSAPP_SEND',
+            phone: cleanPhone,
+            contact: contact,
+            message: msg,
+            url: `https://web.whatsapp.com/send/?phone=${cleanPhone}&text=${encodeURIComponent(msg)}`,
+            thought: `Send WhatsApp message "${msg}" to +${cleanPhone}`
+          };
+        }
+
+        // Context-aware or named contact search on WhatsApp Web
+        return {
+          type: 'WHATSAPP_CHAT_SEND',
+          contact: contact,
+          phone: isNumericPhone ? cleanPhone : null,
+          message: msg,
+          thought: `Search for contact "${contact}" in WhatsApp and send "${msg}"`
+        };
+      }
     }
 
     // E. Browser Tabs & History (including "shut down this", "close this tab")

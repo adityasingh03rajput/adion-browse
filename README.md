@@ -149,10 +149,19 @@ Adion Browse/
 │   │   └── newtab.html        # Privacy dashboard with live stats & search
 │   └── dashboard/
 │       └── dashboard.html     # Live Telemetry & Network Diagnostics (adion://dashboard)
-├── tests/                     # 7 automated test suites
+├── tests/                     # 8 automated test suites
 ├── bench_tokens.py            # Token reduction benchmark vs Playwright
 └── run-adion.bat              # One-click Windows launcher
 ```
+
+---
+
+## 🧠 Context-Aware In-Page Intelligence
+
+Adion Browse goes beyond rigid regex matching: it grounds natural language instructions in active webpage context to execute human intention:
+- **WhatsApp Web Contact Search & Dispatch**: Entering commands like `say hi to pidduk`, `text contact hello`, or `message pidduk are you coming` automatically searches WhatsApp Web's chat list, activates the contact conversation, populates the composer, and dispatches Send without premature task termination.
+- **Autonomous Gateway Navigation**: Automatically detects and taps through intermediate gateway prompts (e.g. `Use WhatsApp Web`, `Continue to chat`, `Continue on browser`).
+- **Live Autonomous Step Streaming**: Every progress step (`Searching for contact`, `Opening chat`, `Message sent`) streams in real-time into the Chrome Gemini-style Copilot side panel timeline (`Ctrl + J`).
 
 ---
 

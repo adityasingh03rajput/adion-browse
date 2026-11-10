@@ -62,6 +62,7 @@ Available Action Types and their parameters:
 - "CAPTURE_VIEWPORT": {}
 - "ANALYZE_IMAGES": { "criteria": "image search criteria" }
 - "PLAY_VIDEO_FROM_THUMBNAIL": { "query": "video topic or thumbnail description" } - provisions zero-cost vision models (Qwen-VL / Groq Vision Free Tier) to analyze YouTube thumbnails and initiate playback
+- "WHATSAPP_CHAT_SEND": { "contact": "contact name or phone number", "message": "message content" } - Automatically searches WhatsApp Web for the specified contact name or number, opens their chat, types the message, and sends it. Use this whenever the user intends to message, text, or say something to a contact on WhatsApp.
 
 Examples:
 User: "play the first video about space exploration" or "click on the video with thumbnail showing Mars"

@@ -881,6 +881,26 @@ class AgentRuntime extends EventEmitter {
         break;
       }
 
+      case 'WHATSAPP_CHAT_SEND': {
+        const contact = intent.contact || intent.target || intent.phone || '';
+        const message = intent.message || intent.text || '';
+        
+        let targetTab = activeTab;
+        if (!targetTab || !targetTab.url || !targetTab.url.includes('whatsapp.com')) {
+          const waUrl = 'https://web.whatsapp.com/';
+          if (activeTab && activeTab.url && !activeTab.url.startsWith('adion://newtab')) {
+            targetTab = this.tabManager.createTab(waUrl);
+            this.emit('feedback', { message: `Opened WhatsApp Web in new tab for "${contact}"`, level: 'info' });
+          } else {
+            this.tabManager.navigateActiveTab(waUrl);
+            this.emit('feedback', { message: `Navigating to WhatsApp Web for "${contact}"`, level: 'info' });
+          }
+        }
+
+        await this.sendWhatsAppChat(targetTab, contact, message);
+        break;
+      }
+
       case ActionType.NAVIGATE: {
         const destination = intent.url || intent.query || '';
         this.tabManager.navigateActiveTab(destination);
@@ -1459,6 +1479,164 @@ class AgentRuntime extends EventEmitter {
       this.emit('feedback', { message: finishMsg, level: 'info' });
       return { success: true, message: finishMsg };
     }
+  }
+
+  /**
+   * Autonomous in-page WhatsApp contact search, chat activation, and message dispatch.
+   * Handles user intentions like "say hi to pidduk" or "text contact hello" directly
+   * inside the authenticated WhatsApp Web interface.
+   */
+  async sendWhatsAppChat(tab, contact = '', message = '') {
+    if (!tab || !tab.view) return { success: false, reason: 'No active tab view' };
+    const contents = tab.view.webContents;
+    if (!contents) return { success: false, reason: 'No webContents' };
+
+    this.emit('feedback', { message: `Step 1/3: Searching for contact "${contact}" in WhatsApp...`, level: 'info' });
+    this.emit('jarvis-notification', { type: 'info', message: `Searching for contact "${contact}" in WhatsApp...` });
+
+    let searchSubmitted = false;
+    let messageSent = false;
+    let qrPromptEmitted = false;
+    const startTime = Date.now();
+    const timeoutMs = 35000;
+
+    while (!messageSent && (Date.now() - startTime < timeoutMs)) {
+      try {
+        const currentUrl = typeof contents.getURL === 'function' ? contents.getURL() : '';
+
+        // If at gateway screen, click through
+        if (currentUrl.includes('api.whatsapp.com') || currentUrl.includes('wa.me')) {
+          await contents.executeJavaScript(`
+            (() => {
+              const webLink = Array.from(document.querySelectorAll('a, button')).find(el => 
+                /use WhatsApp Web/i.test(el.textContent) || (el.href && el.href.includes('web.whatsapp.com'))
+              );
+              if (webLink) { webLink.click(); return 'webLink'; }
+              const actionBtn = document.getElementById('action-button') || Array.from(document.querySelectorAll('a, button')).find(el => /continue to chat/i.test(el.textContent));
+              if (actionBtn) { actionBtn.click(); return 'actionBtn'; }
+              return null;
+            })()
+          `).catch(() => null);
+        }
+
+        // WhatsApp Web client state inspection
+        const stepState = await contents.executeJavaScript(`
+          (() => {
+            // 1. Check for QR code screen
+            const hasQr = Boolean(
+              document.querySelector('canvas[aria-label*="Scan"], div[data-ref], [data-testid="qrcode"]') ||
+              /scan this qr code|link with phone number/i.test(document.body.innerText)
+            );
+            if (hasQr) return { status: 'qr_code_required' };
+
+            const target = ${JSON.stringify(contact)}.trim().toLowerCase();
+            const msg = ${JSON.stringify(message)};
+
+            // 2. Check if a conversation is already open matching target
+            const headerTitleEl = document.querySelector('header span[title], header div[title], header span[dir="auto"]');
+            const headerTitle = headerTitleEl ? (headerTitleEl.getAttribute('title') || headerTitleEl.innerText || '').toLowerCase() : '';
+            const isTargetChatOpen = headerTitle.includes(target) || target.includes(headerTitle);
+
+            // 3. Locate composer if conversation is open
+            const composer = document.querySelector('footer div[contenteditable="true"], [data-testid="conversation-compose-box-input"], div[data-tab="10"][contenteditable="true"]');
+            
+            // If composer is found and target chat is open, dispatch message!
+            if (composer && (isTargetChatOpen || ${JSON.stringify(!searchSubmitted)} === 'false')) {
+              composer.focus();
+              document.execCommand('selectAll', false, null);
+              document.execCommand('insertText', false, msg);
+              composer.dispatchEvent(new Event('input', { bubbles: true }));
+              composer.dispatchEvent(new Event('change', { bubbles: true }));
+
+              // Try clicking Send button
+              const sendBtn = document.querySelector('button[aria-label="Send"], span[data-icon="send"]')?.closest('button') ||
+                             document.querySelector('button[data-testid="compose-btn-send"]');
+              if (sendBtn && !sendBtn.disabled) {
+                sendBtn.click();
+                return { status: 'message_sent' };
+              }
+
+              // Dispatch Enter key in composer
+              const enterDown = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
+              composer.dispatchEvent(enterDown);
+              const enterUp = new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
+              composer.dispatchEvent(enterUp);
+              return { status: 'message_sent' };
+            }
+
+            // 4. Locate search input in the side pane
+            const searchBox = document.querySelector(
+              '#side div[contenteditable="true"], [data-testid="chat-list-search"], div[title="Search or start new chat"], div[role="textbox"][data-tab="3"], #side [role="textbox"]'
+            ) || Array.from(document.querySelectorAll('#side div[contenteditable="true"], div[role="textbox"]')).find(el => {
+              const t = (el.getAttribute('title') || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.innerText || '').toLowerCase();
+              return t.includes('search') || t.includes('start');
+            });
+
+            if (searchBox) {
+              // Focus and input contact name
+              searchBox.focus();
+              document.execCommand('selectAll', false, null);
+              document.execCommand('insertText', false, ${JSON.stringify(contact)});
+              searchBox.dispatchEvent(new Event('input', { bubbles: true }));
+              searchBox.dispatchEvent(new Event('change', { bubbles: true }));
+
+              // Look for matching chat item in chat list
+              const sidePane = document.getElementById('pane-side') || document.querySelector('#side');
+              if (sidePane) {
+                const spans = Array.from(sidePane.querySelectorAll('span[title], div[title], span[dir="auto"]'));
+                const matchSpan = spans.find(s => {
+                  const title = (s.getAttribute('title') || s.innerText || '').toLowerCase();
+                  return title.includes(target);
+                });
+                if (matchSpan) {
+                  const clickTarget = matchSpan.closest('div[role="listitem"], div[role="row"], div[data-testid^="list-item"]') || matchSpan;
+                  clickTarget.click();
+                  return { status: 'chat_selected' };
+                }
+              }
+
+              // Press Enter to open the first match found by WhatsApp search
+              const enterEvent = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
+              searchBox.dispatchEvent(enterEvent);
+              return { status: 'search_entered' };
+            }
+
+            return { status: 'waiting_ui' };
+          })()
+        `).catch(() => ({ status: 'eval_error' }));
+
+        if (stepState && stepState.status === 'qr_code_required' && !qrPromptEmitted) {
+          qrPromptEmitted = true;
+          const qrMsg = `WhatsApp Web requires QR code scan. Please link WhatsApp; I will send "${message}" to "${contact}" once logged in.`;
+          this.emit('feedback', { message: qrMsg, level: 'warning' });
+          this.emit('jarvis-notification', { type: 'info', message: qrMsg });
+        }
+
+        if (stepState && (stepState.status === 'chat_selected' || stepState.status === 'search_entered')) {
+          searchSubmitted = true;
+          this.emit('feedback', { message: `Step 2/3: Opening chat with "${contact}"...`, level: 'info' });
+        }
+
+        if (stepState && stepState.status === 'message_sent') {
+          messageSent = true;
+          const successMsg = `✅ Sent "${message}" to "${contact}" on WhatsApp!`;
+          this.emit('feedback', { message: successMsg, level: 'success' });
+          this.emit('jarvis-notification', { type: 'success', message: successMsg });
+          console.log(`[AgentRuntime] ✅ ${successMsg}`);
+          return { success: true, message: successMsg };
+        }
+      } catch (err) {
+        console.warn('[AgentRuntime sendWhatsAppChat Error]:', err.message);
+      }
+
+      await new Promise(r => setTimeout(r, 1000));
+    }
+
+    const finalMsg = messageSent
+      ? `✅ Sent "${message}" to "${contact}" on WhatsApp!`
+      : `Searched for "${contact}" on WhatsApp. Chat ready for "${message}".`;
+    this.emit('feedback', { message: finalMsg, level: messageSent ? 'success' : 'info' });
+    return { success: messageSent, message: finalMsg };
   }
 
   /**

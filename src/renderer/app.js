@@ -1757,6 +1757,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (data && data.message) {
         const isAlert = data.level === 'warning' || data.level === 'error';
         showJarvisToast(data.message, isAlert ? 'alert' : 'success');
+        if (sidePanelTimeline) {
+          appendCopilotMessage('agent', data.message, data.level === 'info');
+        }
       }
     });
   }

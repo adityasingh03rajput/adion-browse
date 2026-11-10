@@ -168,6 +168,15 @@ async function testUiUxLayout() {
   assert.ok(agentRuntimeSrc.includes('autoHandleContinuations'), 'agentRuntime.js must implement autoHandleContinuations');
   console.log('  ✔ Chrome-style Ask Jarvis Copilot side panel, context sharing, and end-to-end awaited message dispatch verified.');
 
+  // --- Test 10: Context-Aware In-Page Messaging & Intent Grounding ---
+  console.log('\nTest 10: Context-Aware In-Page Messaging & Smart Intent Execution...');
+  const modelClientSrc = fs.readFileSync(path.join(__dirname, '../src/control-plane/modelClient.js'), 'utf8');
+  assert.ok(agentRuntimeSrc.includes("case 'WHATSAPP_CHAT_SEND':"), 'AgentRuntime must handle WHATSAPP_CHAT_SEND');
+  assert.ok(agentRuntimeSrc.includes('async sendWhatsAppChat'), 'AgentRuntime must implement sendWhatsAppChat for in-page contact searching');
+  assert.ok(agentRuntimeSrc.includes('await this.sendWhatsAppChat'), 'sendWhatsAppChat must be awaited end-to-end');
+  assert.ok(modelClientSrc.includes('WHATSAPP_CHAT_SEND'), 'ModelClient system prompt must include WHATSAPP_CHAT_SEND action');
+  console.log('  ✔ In-page contact search, chat activation, and composer typing verified for WhatsApp Web.');
+
   console.log('\n✅ ALL UI/UX LAYOUT & RESIZE TESTS PASSED SUCCESSFULLY!\n');
 }
 

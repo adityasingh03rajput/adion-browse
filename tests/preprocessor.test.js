@@ -134,6 +134,36 @@ async function testPreprocessorPerformance() {
   assert.strictEqual(waIntent2.message, 'hello there');
   console.log('  ✔ WhatsApp direct messaging actions extracted to WHATSAPP_SEND fast-path with prefilled URL.');
 
+  // Test 10: Context-Aware WhatsApp Contact Search & Smart In-Page Intent
+  console.log('\nTest 10: Context-Aware WhatsApp Contact Search & Smart In-Page Intent...');
+  const waContext = { url: 'https://web.whatsapp.com/', title: '(20) WhatsApp' };
+  
+  const piddukPrep = preprocessor.preprocess('say hi to pidduk');
+  const piddukIntent = preprocessor.extractFastIntent(piddukPrep, waContext);
+  assert.ok(piddukIntent !== null, 'piddukIntent should not be null');
+  assert.strictEqual(piddukIntent.type, 'WHATSAPP_CHAT_SEND');
+  assert.strictEqual(piddukIntent.contact, 'pidduk');
+  assert.strictEqual(piddukIntent.message, 'hi');
+
+  const textPiddukPrep = preprocessor.preprocess('text pidduk hello');
+  const textPiddukIntent = preprocessor.extractFastIntent(textPiddukPrep, waContext);
+  assert.strictEqual(textPiddukIntent.type, 'WHATSAPP_CHAT_SEND');
+  assert.strictEqual(textPiddukIntent.contact, 'pidduk');
+  assert.strictEqual(textPiddukIntent.message, 'hello');
+
+  const tellPiddukPrep = preprocessor.preprocess('tell pidduk that I am coming');
+  const tellPiddukIntent = preprocessor.extractFastIntent(tellPiddukPrep, waContext);
+  assert.strictEqual(tellPiddukIntent.type, 'WHATSAPP_CHAT_SEND');
+  assert.strictEqual(tellPiddukIntent.contact, 'pidduk');
+  assert.strictEqual(tellPiddukIntent.message, 'i am coming');
+
+  const sendMsgPrep = preprocessor.preprocess('send message to pidduk hi');
+  const sendMsgIntent = preprocessor.extractFastIntent(sendMsgPrep, waContext);
+  assert.strictEqual(sendMsgIntent.type, 'WHATSAPP_CHAT_SEND');
+  assert.strictEqual(sendMsgIntent.contact, 'pidduk');
+  assert.strictEqual(sendMsgIntent.message, 'hi');
+  console.log('  ✔ Context-aware contact search and message extraction verified for WhatsApp Web!');
+
   console.log('\n✅ ALL QUERY PREPROCESSING & PERFORMANCE BENCHMARKS PASSED!');
 }
 
