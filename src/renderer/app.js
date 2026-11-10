@@ -165,7 +165,10 @@ document.addEventListener('DOMContentLoaded', () => {
       currentActiveTitle = tab.title;
 
       if (sidePanelPageTitle) {
-        sidePanelPageTitle.textContent = tab.title || (tab.url === 'adion://newtab' ? 'New Tab' : tab.url);
+        sidePanelPageTitle.textContent = `"${tab.title || (tab.url === 'adion://newtab' ? 'New Tab' : tab.url)}"`;
+      }
+      if (typeof updatePageSharingContext === 'function') {
+        updatePageSharingContext();
       }
 
       // Update Omnibox display
@@ -735,6 +738,85 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // --- CHROME GEMINI-STYLE JARVIS COPILOT SIDE PANEL CONTROLLER ---
+  let isPageShared = true;
+
+  async function updatePageSharingContext() {
+    if (!window.adionAPI || !window.adionAPI.agent || typeof window.adionAPI.agent.getPageContext !== 'function') return;
+    try {
+      const pageCtx = await window.adionAPI.agent.getPageContext();
+      if (!pageCtx) return;
+
+      if (sidePanelPageTitle) {
+        const titleText = pageCtx.title || (currentActiveUrl === 'adion://newtab' ? 'New Tab' : 'Current Page');
+        sidePanelPageTitle.textContent = `"${titleText}"`;
+      }
+
+      const sharingFavicon = document.getElementById('sharingFavicon');
+      if (sharingFavicon) {
+        if (pageCtx.favicon) {
+          sharingFavicon.innerHTML = `<img src="${pageCtx.favicon}" width="13" height="13" style="border-radius:2px; vertical-align:middle;" onerror="this.parentElement.innerHTML='🌐'">`;
+        } else {
+          sharingFavicon.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>`;
+        }
+      }
+
+      // Populate Dynamic Contextual Suggestion Chips (Chrome Gemini Architecture)
+      const chipsContainer = document.getElementById('contextualChipsContainer');
+      if (chipsContainer && Array.isArray(pageCtx.suggestions) && pageCtx.suggestions.length > 0) {
+        chipsContainer.innerHTML = '';
+        pageCtx.suggestions.slice(0, 3).forEach(suggestionText => {
+          const btn = document.createElement('button');
+          btn.className = 'gemini-chip';
+          btn.textContent = suggestionText;
+          btn.setAttribute('data-task', suggestionText);
+          btn.addEventListener('click', () => {
+            submitSidePanelTask(suggestionText);
+          });
+          chipsContainer.appendChild(btn);
+        });
+      }
+    } catch (_) {}
+  }
+
+  function togglePageSharing() {
+    const pill = document.getElementById('sharingPill');
+    if (!pill) return;
+    isPageShared = !isPageShared;
+
+    if (window.adionAPI && window.adionAPI.agent && typeof window.adionAPI.agent.setPageSharing === 'function') {
+      window.adionAPI.agent.setPageSharing(isPageShared);
+    }
+
+    if (isPageShared) {
+      pill.classList.remove('paused');
+      pill.innerHTML = `
+        <span class="sharing-pill-icon" id="sharingFavicon">🌐</span>
+        <span class="sharing-pill-text">Sharing <strong id="sidePanelPageTitle">"${currentActiveTitle || 'Current Page'}"</strong></span>
+        <button class="btn-sharing-dismiss" id="btnSharingDismiss" title="Stop sharing this page">&times;</button>
+      `;
+      const dismissBtn = document.getElementById('btnSharingDismiss');
+      if (dismissBtn) dismissBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePageSharing(); });
+      updatePageSharingContext();
+    } else {
+      pill.classList.add('paused');
+      pill.innerHTML = `
+        <span class="sharing-pill-icon">✦</span>
+        <span class="sharing-pill-text">Page sharing paused</span>
+        <button class="btn-sharing-resume" id="btnSharingResume">Share page</button>
+      `;
+      const resumeBtn = document.getElementById('btnSharingResume');
+      if (resumeBtn) resumeBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePageSharing(); });
+    }
+  }
+
+  const btnSharingDismiss = document.getElementById('btnSharingDismiss');
+  if (btnSharingDismiss) {
+    btnSharingDismiss.addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePageSharing();
+    });
+  }
+
   function openSidePanel() {
     if (!jarvisSidePanel) return;
     jarvisSidePanel.classList.add('open');
@@ -742,6 +824,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.adionAPI && typeof window.adionAPI.setSidePanelOpen === 'function') {
       window.adionAPI.setSidePanelOpen(true);
     }
+    updatePageSharingContext();
     setTimeout(() => {
       if (sidePanelInput) sidePanelInput.focus();
     }, 50);
@@ -791,7 +874,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (sidePanelInput) sidePanelInput.value = '';
     appendCopilotMessage('user', task);
-    appendCopilotMessage('agent', `Analyzing current page context & executing: "${task}"...`, true);
+    appendCopilotMessage('agent', `Analyzing current page context & coordinating: "${task}"...`, true);
 
     setJarvisState('THINKING');
     showJarvisToast(`Copilot: Coordinating "${task.slice(0, 35)}..."`, 'success');
@@ -843,8 +926,23 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Side panel suggestion chips
-  document.querySelectorAll('.side-chip').forEach(chip => {
+  // Model selector dropdown toggle / cycle in side panel footer
+  const modelSelectorBadge = document.getElementById('modelSelectorBadge');
+  const activeModelLabel = document.getElementById('activeModelLabel');
+  if (modelSelectorBadge) {
+    const models = ['Auto', 'Gemini', 'Claude', 'GPT-4o', 'Groq'];
+    let currentModelIndex = 0;
+    modelSelectorBadge.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      currentModelIndex = (currentModelIndex + 1) % models.length;
+      const chosen = models[currentModelIndex];
+      if (activeModelLabel) activeModelLabel.textContent = chosen;
+      showJarvisToast(`AI Model switched to ${chosen}`, 'info');
+    });
+  }
+
+  // Initial contextual chips click binding
+  document.querySelectorAll('.gemini-chip, .side-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       const task = chip.getAttribute('data-task');
       if (task) {

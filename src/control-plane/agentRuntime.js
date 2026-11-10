@@ -32,6 +32,7 @@ class AgentRuntime extends EventEmitter {
     this.continuousVoice = false;
     this.lastDOMSelector = null;
     this.lastDOMAction = null;
+    this.isPageShared = true; // Chrome Gemini-style active page context sharing
     this.verboseAudioLogging = false; // Filtered to suppress repetitive audio frame status spam
 
     // Audio stream session state & VAD tracking
@@ -386,13 +387,12 @@ class AgentRuntime extends EventEmitter {
       }
 
       // TIER 3: COMPLEX / MULTI-STEP REASONING (Groq Cloud / Local Model)
-      // If active tab has content loaded, retrieve structural summary
-      if (activeTab && activeTab.view && !activeTab.url.startsWith('adion://newtab')) {
+      // If active tab has content loaded and page sharing is enabled, retrieve shared page context
+      if (activeTab && activeTab.view && !activeTab.url.startsWith('adion://newtab') && this.isPageShared !== false) {
         try {
-          await this.cdp.attach(activeTab.view.webContents);
-          const summary = await this.cdp.getPageSummary();
-          if (summary) {
-            pageContext = { ...pageContext, ...summary };
+          const sharedCtx = await this.getActivePageContext();
+          if (sharedCtx) {
+            pageContext = { ...pageContext, ...sharedCtx };
           }
         } catch (_) {}
       }
@@ -408,7 +408,7 @@ class AgentRuntime extends EventEmitter {
         if (plan.actions.length === 0) {
           this.setState(AgentState.IDLE);
           const feedbackMsg = plan.thought || 'Standing by for browser commands.';
-          this.emit('feedback', { message: feedbackMsg, level: 'info' });
+          this.emit('feedback', { message: feedbackMsg, level: 'success' });
           this.emit('jarvis-notification', { type: 'info', message: feedbackMsg });
           this.sessionManager.recordInteraction({
             source: source,
@@ -1664,6 +1664,98 @@ class AgentRuntime extends EventEmitter {
         })()
       `).catch(() => null);
     } catch (_) {}
+  }
+  /**
+   * Chrome Gemini-style Page Sharing Extractor
+   * Retrieves active webpage title, headings, favicon, and clean article content
+   * to provide real context for questions, summaries, and smart prompt suggestions.
+   */
+  async getActivePageContext() {
+    const activeTab = this.tabManager ? this.tabManager.getActiveTab() : null;
+    if (!activeTab) {
+      return {
+        url: 'adion://newtab',
+        title: 'New Tab',
+        favicon: '',
+        headings: [],
+        suggestions: ['Explore top tech news', 'Check system diagnostics', 'Open GitHub'],
+        isShared: this.isPageShared !== false
+      };
+    }
+
+    const basicContext = {
+      url: activeTab.url || '',
+      title: activeTab.title || 'Untitled Tab',
+      favicon: activeTab.favicon || '',
+      headings: [],
+      suggestions: [],
+      isShared: this.isPageShared !== false
+    };
+
+    if (activeTab.view && activeTab.view.webContents && !activeTab.url.startsWith('adion://newtab')) {
+      try {
+        const details = await activeTab.view.webContents.executeJavaScript(`
+          (() => {
+            const title = document.title || '';
+            const headings = Array.from(document.querySelectorAll('h1, h2, h3'))
+              .slice(0, 10)
+              .map(h => (h.innerText || '').trim())
+              .filter(t => t.length > 2 && t.length < 80);
+
+            const favEl = document.querySelector('link[rel*="icon"]');
+            const favicon = favEl ? favEl.href : '';
+
+            // Clean visible text snippet (up to 4000 chars)
+            const text = (document.body ? document.body.innerText : '')
+              .replace(/\\s+/g, ' ')
+              .trim()
+              .slice(0, 4000);
+
+            return { title, headings: headings.slice(0, 6), favicon, text };
+          })()
+        `).catch(() => null);
+
+        if (details) {
+          if (details.title) basicContext.title = details.title;
+          if (details.favicon) basicContext.favicon = details.favicon;
+          if (Array.isArray(details.headings) && details.headings.length > 0) {
+            basicContext.headings = details.headings;
+            // Generate smart contextual suggestions from headings (Chrome Gemini Style)
+            basicContext.suggestions = details.headings.slice(0, 3).map((h, idx) => {
+              const cleanH = h.replace(/^[^a-zA-Z0-9]+/, '');
+              if (idx === 0) return `Explain ${cleanH}`;
+              if (idx === 1) return `Describe ${cleanH}`;
+              return `Compare ${cleanH} to standard browsers`;
+            });
+          }
+          basicContext.pageText = details.text;
+        }
+      } catch (_) {}
+    }
+
+    if (!basicContext.suggestions || basicContext.suggestions.length === 0) {
+      if (basicContext.url.includes('whatsapp.com')) {
+        basicContext.suggestions = [
+          'Say hi to recent chat',
+          'Search unread messages',
+          'Summarize latest messages'
+        ];
+      } else if (basicContext.url.includes('youtube.com')) {
+        basicContext.suggestions = [
+          'Summarize this video',
+          'Explain key topics in this video',
+          'Play next recommended video'
+        ];
+      } else {
+        basicContext.suggestions = [
+          'Summarize this page',
+          'Explain main points of this page',
+          'Extract key takeaways & links'
+        ];
+      }
+    }
+
+    return basicContext;
   }
 }
 

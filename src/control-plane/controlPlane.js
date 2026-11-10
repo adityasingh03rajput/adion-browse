@@ -179,6 +179,16 @@ class ControlPlane {
       this.runtime.emit('feedback', { message: 'Agent task cancelled', level: 'warning' });
     });
 
+    // Context-Aware Page Extraction & Page Sharing (Chrome Gemini Architecture)
+    ipcMain.handle('agent:get-page-context', async () => {
+      return this.runtime.getActivePageContext();
+    });
+
+    ipcMain.handle('agent:set-page-sharing', (event, isShared) => {
+      this.runtime.isPageShared = Boolean(isShared);
+      return { success: true, isShared: this.runtime.isPageShared };
+    });
+
     // Query Context Engine Stats
     ipcMain.handle('agent:get-context-stats', () => {
       return this.context.getStats();

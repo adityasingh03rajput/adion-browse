@@ -177,6 +177,20 @@ async function testUiUxLayout() {
   assert.ok(modelClientSrc.includes('WHATSAPP_CHAT_SEND'), 'ModelClient system prompt must include WHATSAPP_CHAT_SEND action');
   console.log('  ✔ In-page contact search, chat activation, and composer typing verified for WhatsApp Web.');
 
+  // --- Test 11: Chrome Gemini-Style Page Sharing Architecture & Bottom Docked Pill ---
+  console.log('\nTest 11: Chrome Gemini-Style Page Sharing Architecture & Bottom Docked Pill...');
+  const preloadSrc = fs.readFileSync(path.join(__dirname, '../src/preload/preload.js'), 'utf8');
+  assert.ok(indexHtml.includes('id="sharingPillWrapper"'), 'index.html must have sharingPillWrapper docked at bottom');
+  assert.ok(indexHtml.includes('id="sharingPill"'), 'index.html must have sharingPill');
+  assert.ok(indexHtml.includes('id="btnSharingDismiss"'), 'index.html must have btnSharingDismiss');
+  assert.ok(indexHtml.includes('id="contextualChipsContainer"'), 'index.html must have contextualChipsContainer for dynamic prompts');
+  assert.ok(css.includes('.gemini-sparkle-hero'), 'styles.css must style .gemini-sparkle-hero with gradient');
+  assert.ok(css.includes('.gemini-chip'), 'styles.css must style .gemini-chip');
+  assert.ok(preloadSrc.includes('getPageContext'), 'preload.js must expose getPageContext in agent namespace');
+  assert.ok(preloadSrc.includes('setPageSharing'), 'preload.js must expose setPageSharing in agent namespace');
+  assert.ok(agentRuntimeSrc.includes('getActivePageContext'), 'agentRuntime.js must implement getActivePageContext');
+  console.log('  ✔ Chrome Gemini-style page sharing, bottom docked pill, and dynamic contextual chips verified.');
+
   console.log('\n✅ ALL UI/UX LAYOUT & RESIZE TESTS PASSED SUCCESSFULLY!\n');
 }
 

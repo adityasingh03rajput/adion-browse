@@ -557,36 +557,34 @@
   <aside class="jarvis-side-panel" id="jarvisSidePanel">
     <div class="side-panel-header">
       <div class="side-panel-brand">
-        <div class="side-panel-sparkle-badge">✦</div>
+        <div class="gemini-sparkle-mini"></div>
         <div>
-          <h3 class="side-panel-title">JARVIS COPILOT</h3>
+          <h3 class="side-panel-title">Ask Jarvis</h3>
           <span class="side-panel-subtitle">Autonomous Browser Intelligence</span>
         </div>
       </div>
-      <button class="btn-side-panel-close" id="btnCloseSidePanel" title="Close Copilot (Ctrl+J)">&times;</button>
-    </div>
-
-    <!-- Active Tab Context Pill (Sharing current page) -->
-    <div class="side-panel-context-card" id="sidePanelContextCard">
-      <div class="context-pill">
-        <span class="context-sparkle">✦</span>
-        <span class="context-label">Sharing:</span>
-        <span class="context-page-title" id="sidePanelPageTitle">New Tab</span>
+      <div class="side-panel-header-actions">
+        <button class="btn-side-panel-options" id="btnSidePanelOptions" title="Options">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="12" cy="5" r="2"></circle>
+            <circle cx="12" cy="12" r="2"></circle>
+            <circle cx="12" cy="19" r="2"></circle>
+          </svg>
+        </button>
+        <button class="btn-side-panel-close" id="btnCloseSidePanel" title="Close Copilot (Ctrl+J)">&times;</button>
       </div>
     </div>
 
     <!-- Copilot Conversation & Live Autonomous Steps Timeline -->
     <div class="side-panel-body" id="sidePanelBody">
       <div class="side-panel-empty-state" id="sidePanelEmptyState">
-        <div class="empty-sparkle-logo">✦</div>
-        <h4>Where should we start?</h4>
-        <p>I can navigate, complete web workflows, interact with active pages, or analyze text alongside your browsing.</p>
+        <div class="gemini-sparkle-hero"></div>
+        <h2 class="side-panel-greeting" id="sidePanelGreeting">Hi Aditya Singh, what's on your mind?</h2>
         
-        <div class="side-panel-suggestions">
-          <button class="side-chip" data-task="Summarize this page">📄 Summarize page</button>
-          <button class="side-chip" data-task="text hi to 9424831233 in whatsapp">💬 WhatsApp Message</button>
-          <button class="side-chip" data-task="Extract key data and links">🔗 Extract all links</button>
-          <button class="side-chip" data-task="Scroll down to explore">📜 Scroll down</button>
+        <div class="contextual-chips-container" id="contextualChipsContainer">
+          <button class="gemini-chip" data-task="Explain Adion's MCP server functionality">Explain Adion's MCP server functionality</button>
+          <button class="gemini-chip" data-task="Describe Adion's core technical components">Describe Adion's core technical components</button>
+          <button class="gemini-chip" data-task="Compare Adion's token usage to standard browsers">Compare Adion's token usage to standard browsers</button>
         </div>
       </div>
       <div class="side-panel-timeline" id="sidePanelTimeline">
@@ -594,18 +592,36 @@
       </div>
     </div>
 
-    <!-- Copilot Bottom Command & Speech Input -->
+    <!-- Copilot Bottom Docked Card (Sharing Pill + Input Row) -->
     <div class="side-panel-footer">
-      <div class="side-panel-input-container">
-        <input type="text" id="sidePanelInput" class="side-panel-input" placeholder="Ask Jarvis or give browser task..." autocomplete="off">
-        <div class="side-panel-input-actions">
-          <button class="btn-side-panel-mic" id="btnSidePanelMic" title="Speak command">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-              <line x1="12" y1="19" x2="12" y2="23"></line>
-              <line x1="8" y1="23" x2="16" y2="23"></line>
+      <!-- Active Tab Context Pill (Sharing Current Page, Chrome Gemini Style) -->
+      <div class="sharing-pill-wrapper" id="sharingPillWrapper">
+        <div class="sharing-pill" id="sharingPill">
+          <span class="sharing-pill-icon" id="sharingFavicon">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="2" y1="12" x2="22" y2="12"></line>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
             </svg>
+          </span>
+          <span class="sharing-pill-text">Sharing <strong id="sidePanelPageTitle">"Browser Token Usage"</strong></span>
+          <button class="btn-sharing-dismiss" id="btnSharingDismiss" title="Stop sharing this page">&times;</button>
+        </div>
+      </div>
+
+      <div class="side-panel-input-container">
+        <button class="btn-input-add" id="btnSidePanelAdd" title="Tools & skills">+</button>
+        <input type="text" id="sidePanelInput" class="side-panel-input" placeholder="Type / to use skills" autocomplete="off">
+        <div class="side-panel-input-actions">
+          <div class="model-badge-dropdown" id="modelSelectorBadge" title="AI Model">
+            <span id="activeModelLabel">Auto</span>
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </div>
+          <button class="btn-side-panel-mic" id="btnSidePanelMic" title="Voice Commander">
+            <span class="mic-wave"></span>
+            <span class="mic-wave"></span>
+            <span class="mic-wave"></span>
+            <span class="mic-wave"></span>
           </button>
           <button class="btn-side-panel-send" id="btnSidePanelSend" title="Run Task (Enter)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">

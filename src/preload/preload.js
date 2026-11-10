@@ -66,7 +66,9 @@ contextBridge.exposeInMainWorld('adionAPI', {
     onShellAction: (callback) => ipcRenderer.on('shell:action', (e, data) => callback(data)),
     getContextStats: () => ipcRenderer.invoke('agent:get-context-stats'),
     getTabClusters: () => ipcRenderer.invoke('agent:get-tab-clusters'),
-    verifyBiometric: (vector) => ipcRenderer.invoke('agent:verify-biometric', vector)
+    verifyBiometric: (vector) => ipcRenderer.invoke('agent:verify-biometric', vector),
+    getPageContext: () => ipcRenderer.invoke('agent:get-page-context'),
+    setPageSharing: (isShared) => ipcRenderer.invoke('agent:set-page-sharing', isShared)
   },
 
   // Distributed Multi-Agent Pool
