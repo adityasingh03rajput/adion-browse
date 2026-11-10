@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Adion Browse</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body class="dark-theme">
+  <!-- Top Browser Chrome (Fixed 80px) -->
+  <header class="browser-header">
+    <!-- Tabs Strip -->
+    <div class="tabs-bar">
+      <div class="tabs-container" id="tabsContainer">
+        <!-- Tabs rendered dynamically -->
+      </div>
+      <button class="btn-icon new-tab-btn" id="newTabBtn" title="New Tab (Ctrl+T)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Navigation & Omnibox Bar -->
+    <div class="nav-bar">
+      <div class="nav-controls">
+        <button class="btn-icon" id="btnBack" title="Back (Alt+Left)" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+        </button>
+        <button class="btn-icon" id="btnForward" title="Forward (Alt+Right)" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
+        <button class="btn-icon" id="btnReload" title="Reload (Ctrl+R)">
+          <svg id="reloadIcon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+        </button>
+        <button class="btn-icon" id="btnHome" title="Home (New Tab)">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+            <polyline points="9 22 9 12 15 12 15 22"></polyline>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Omnibox (Address & Search Bar) -->
+      <div class="omnibox-wrapper">
+        <div class="omnibox-security-icon" id="securityIcon" title="Security Status">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </div>
+        <input type="text" id="omniboxInput" class="omnibox-input" placeholder="Search with Brave or enter web address"
+          autocomplete="off" spellcheck="false">
+
+        <!-- Omnibox Action Buttons -->
+        <div class="omnibox-actions">
+          <!-- Bookmark Star Button -->
+          <button class="btn-omnibox-action" id="btnBookmark" title="Bookmark this tab">
+            <svg id="starIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon
+                points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2">
+              </polygon>
+            </svg>
+          </button>
+
+          <!-- Brave Shield Icon Button with Live Badge -->
+          <button class="btn-omnibox-shield" id="btnShield" title="Adion Shields">
+            <div class="shield-badge-container">
+              <svg class="shield-icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                <path d="m9 12 2 2 4-4" stroke-width="2"></path>
+              </svg>
+              <span class="shield-badge" id="shieldBadge">0</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Browser Menu / Tool Buttons -->
+      <div class="menu-controls">
+        <button class="btn-icon" id="btnBookmarksMenu" title="Bookmarks">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="m19 21-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+          </svg>
+        </button>
+        <button class="btn-icon" id="btnHistory" title="History (Ctrl+H)">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+        </button>
+        <button class="btn-icon" id="btnSettings" title="Settings">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path
+              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+            </path>
+          </svg>
+        </button>
+        <button class="btn-icon" id="btnDevTools" title="Developer Tools (F12)">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="16 18 22 12 16 6"></polyline>
+            <polyline points="8 6 2 12 8 18"></polyline>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- SHIELDS DROPDOWN POPUP (Brave-like) -->
+  <div class="shields-popup-overlay" id="shieldsOverlay">
+    <div class="shields-popup" id="shieldsPopup">
+      <div class="shields-header">
+        <div class="shields-brand">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff5500" stroke-width="2.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+          </svg>
+          <span class="shields-title">ADION SHIELDS</span>
+        </div>
+        <button class="btn-close-sm" id="btnCloseShields">&times;</button>
+      </div>
+
+      <div class="shields-site-info">
+        <span class="site-domain" id="shieldSiteDomain">example.com</span>
+      </div>
+
+      <!-- Main Shields Up/Down Big Switch -->
+      <div class="shields-main-toggle-card">
+        <div class="toggle-info">
+          <div class="toggle-label" id="shieldStatusText">Shields are UP for this site</div>
+          <div class="toggle-sub">Protecting you from cross-site trackers and intrusive ads</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="mainShieldToggle" checked>
+          <span class="slider round"></span>
+        </label>
+      </div>
+
+      <!-- Stats on this page -->
+      <div class="shields-stats-box">
+        <div class="stat-number" id="siteBlockedCount">0</div>
+        <div class="stat-label">Trackers & ads blocked on this page</div>
+      </div>
+
+      <!-- Granular Controls -->
+      <div class="shields-controls-list">
+        <div class="control-item">
+          <div class="control-text">
+            <span>Block Trackers & Ads</span>
+            <small>EasyList & Adion heuristic engine</small>
+          </div>
+          <span class="status-pill active">Aggressive</span>
+        </div>
+        <div class="control-item">
+          <div class="control-text">
+            <span>Upgrade Connections to HTTPS</span>
+            <small>Encrypt all requests automatically</small>
+          </div>
+          <span class="status-pill active">Enabled</span>
+        </div>
+        <div class="control-item">
+          <div class="control-text">
+            <span>Block Scripts (NoScript)</span>
+            <small>Disable all JavaScript on this domain</small>
+          </div>
+          <label class="switch switch-sm">
+            <input type="checkbox" id="blockScriptsToggle">
+            <span class="slider round"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="shields-footer">
+        <span id="lifetimeStatsText">Lifetime: 0 blocked</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOOKMARKS DROPDOWN / MODAL -->
+  <div class="modal-overlay" id="bookmarksModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Bookmarks</h3>
+        <button class="btn-close-sm" id="btnCloseBookmarks">&times;</button>
+      </div>
+      <div class="modal-body">
+        <ul class="bookmarks-list" id="bookmarksList">
+          <!-- Rendered dynamically -->
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- HISTORY MODAL -->
+  <div class="modal-overlay" id="historyModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Browsing History</h3>
+        <div class="header-actions">
+          <button class="btn-sm btn-danger" id="btnClearHistory">Clear All History</button>
+          <button class="btn-close-sm" id="btnCloseHistory">&times;</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <input type="text" id="historySearchInput" class="filter-input" placeholder="Search history...">
+        <ul class="history-list" id="historyList">
+          <!-- Rendered dynamically -->
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- SETTINGS MODAL -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Adion Browse Settings</h3>
+        <button class="btn-close-sm" id="btnCloseSettings">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="settings-group">
+          <label class="settings-label">Default Search Engine</label>
+          <select id="settingSearchEngine" class="settings-select">
+            <option value="brave">Brave Search (Private & Independent)</option>
+            <option value="duckduckgo">DuckDuckGo (Privacy focused)</option>
+            <option value="google">Google</option>
+            <option value="bing">Microsoft Bing</option>
+          </select>
+        </div>
+        <div class="settings-group">
+          <label class="settings-label">Adion Shields Default</label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="settingShieldsDefault" checked>
+            <span>Enable Shields by default on all sites</span>
+          </label>
+        </div>
+        <div class="settings-group">
+          <label class="settings-label">HTTPS Upgrade</label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="settingUpgradeHttps" checked>
+            <span>Always upgrade insecure HTTP to HTTPS</span>
+          </label>
+        </div>
+        <div class="settings-group">
+          <label class="settings-label">Appearance</label>
+          <div class="theme-row">
+            <span>Dark Cyber Theme (Brave Aesthetic)</span>
+            <span class="status-pill active">Active</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+
+</html>

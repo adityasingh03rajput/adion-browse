@@ -1,0 +1,317 @@
+const { BrowserView, app } = require('electron');
+const path = require('path');
+const { URL } = require('url');
+const shield = require('./shield');
+const store = require('./store');
+
+const TOP_BAR_HEIGHT = 80;
+
+class TabManager {
+  constructor(mainWindow) {
+    this.mainWindow = mainWindow;
+    this.tabs = new Map(); // id -> tabObject
+    this.activeTabId = null;
+    this.nextTabId = 1;
+    this.newTabPath = path.join(__dirname, '../newtab/newtab.html');
+
+    // Handle window resize
+    this.mainWindow.on('resize', () => {
+      this.resizeActiveTab();
+    });
+  }
+
+  getBounds() {
+    const [width, height] = this.mainWindow.getContentSize();
+    return {
+      x: 0,
+      y: TOP_BAR_HEIGHT,
+      width: width,
+      height: Math.max(0, height - TOP_BAR_HEIGHT)
+    };
+  }
+
+  resizeActiveTab() {
+    if (!this.activeTabId) return;
+    const tab = this.tabs.get(this.activeTabId);
+    if (tab && tab.view) {
+      tab.view.setBounds(this.getBounds());
+    }
+  }
+
+  resolveUrl(input) {
+    if (!input || input === 'adion://newtab' || input === 'about:blank') {
+      const stats = store.get('stats');
+      return `file://${this.newTabPath}?blocked=${stats.totalBlocked}&kb=${stats.estimatedBandwidthSavedKB}&sec=${stats.estimatedTimeSavedSec}`;
+    }
+
+    const trimmed = input.trim();
+    // Check if it's already a valid url with protocol
+    if (/^[a-zA-Z]+:\/\//.test(trimmed)) {
+      return trimmed;
+    }
+
+    // Check if it's a domain name like example.com or localhost
+    if (/^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(:\d+)?(\/.*)?$/.test(trimmed) || /^localhost(:\d+)?(\/.*)?$/.test(trimmed)) {
+      return `https://${trimmed}`;
+    }
+
+    // Otherwise, treat as search query using the configured search engine
+    const engine = store.getSetting('searchEngine') || 'brave';
+    const query = encodeURIComponent(trimmed);
+    switch (engine) {
+      case 'duckduckgo':
+        return `https://duckduckgo.com/?q=${query}`;
+      case 'google':
+        return `https://www.google.com/search?q=${query}`;
+      case 'bing':
+        return `https://www.bing.com/search?q=${query}`;
+      case 'brave':
+      default:
+        return `https://search.brave.com/search?q=${query}`;
+    }
+  }
+
+  createTab(initialUrl = 'adion://newtab') {
+    const id = `tab_${this.nextTabId++}`;
+    const view = new BrowserView({
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        spellcheck: true
+      }
+    });
+
+    view.setAutoResize({ width: true, height: true });
+
+    const tab = {
+      id,
+      view,
+      url: initialUrl,
+      title: 'New Tab',
+      favicon: '',
+      isLoading: false,
+      canGoBack: false,
+      canGoForward: false,
+      webContentsId: view.webContents.id
+    };
+
+    this.tabs.set(id, tab);
+
+    // Setup WebContents handlers
+    const wc = view.webContents;
+
+    wc.setWindowOpenHandler(({ url }) => {
+      this.createTab(url);
+      return { action: 'deny' };
+    });
+
+    const canGoBack = (wc) => (wc.navigationHistory ? wc.navigationHistory.canGoBack() : (wc.canGoBack ? wc.canGoBack() : false));
+    const canGoForward = (wc) => (wc.navigationHistory ? wc.navigationHistory.canGoForward() : (wc.canGoForward ? wc.canGoForward() : false));
+
+    wc.on('did-start-loading', () => {
+      tab.isLoading = true;
+      this.sendTabUpdate(tab);
+    });
+
+    wc.on('did-stop-loading', () => {
+      tab.isLoading = false;
+      tab.canGoBack = canGoBack(wc);
+      tab.canGoForward = canGoForward(wc);
+      this.sendTabUpdate(tab);
+    });
+
+    wc.on('page-title-updated', (e, title) => {
+      tab.title = title || 'Untitled';
+      this.sendTabUpdate(tab);
+    });
+
+    wc.on('page-favicon-updated', (e, favicons) => {
+      if (favicons && favicons.length > 0) {
+        tab.favicon = favicons[0];
+        this.sendTabUpdate(tab);
+      }
+    });
+
+    wc.on('did-navigate', (e, url) => {
+      this.handleNavigation(tab, url);
+    });
+
+    wc.on('did-navigate-in-page', (e, url) => {
+      this.handleNavigation(tab, url);
+    });
+
+    // Load initial URL
+    const targetUrl = this.resolveUrl(initialUrl);
+    view.webContents.loadURL(targetUrl);
+
+    // Make active
+    this.switchTab(id);
+    this.sendTabsList();
+    return tab;
+  }
+
+  handleNavigation(tab, url) {
+    const isNewTab = url.startsWith('file://') && url.includes('newtab.html');
+    tab.url = isNewTab ? 'adion://newtab' : url;
+    const wc = tab.view.webContents;
+    tab.canGoBack = wc.navigationHistory ? wc.navigationHistory.canGoBack() : (wc.canGoBack ? wc.canGoBack() : false);
+    tab.canGoForward = wc.navigationHistory ? wc.navigationHistory.canGoForward() : (wc.canGoForward ? wc.canGoForward() : false);
+
+    let domain = '';
+    try {
+      if (!isNewTab) {
+        domain = new URL(url).hostname;
+        store.addHistory({ title: tab.title, url: tab.url });
+      }
+    } catch (e) {}
+
+    shield.resetTabStats(tab.webContentsId, domain);
+    this.sendTabUpdate(tab);
+  }
+
+  switchTab(id) {
+    const tab = this.tabs.get(id);
+    if (!tab) return;
+
+    if (this.activeTabId && this.tabs.has(this.activeTabId)) {
+      const prevTab = this.tabs.get(this.activeTabId);
+      if (prevTab && prevTab.view) {
+        this.mainWindow.removeBrowserView(prevTab.view);
+      }
+    }
+
+    this.activeTabId = id;
+    this.mainWindow.setBrowserView(tab.view);
+    tab.view.setBounds(this.getBounds());
+
+    this.sendTabsList();
+    this.sendTabUpdate(tab);
+
+    // Notify shield stats for this tab
+    const stats = shield.getTabStats(tab.webContentsId);
+    this.mainWindow.webContents.send('shield-stats-update', {
+      tabId: id,
+      stats
+    });
+  }
+
+  closeTab(id) {
+    const tab = this.tabs.get(id);
+    if (!tab) return;
+
+    shield.cleanTab(tab.webContentsId);
+
+    if (this.activeTabId === id) {
+      this.mainWindow.removeBrowserView(tab.view);
+    }
+
+    // Destroy webContents
+    try {
+      tab.view.webContents.destroy();
+    } catch (e) {}
+
+    this.tabs.delete(id);
+
+    if (this.tabs.size === 0) {
+      // If no tabs left, open a new one or close app
+      this.createTab();
+    } else if (this.activeTabId === id) {
+      // Switch to the last remaining tab
+      const remainingIds = Array.from(this.tabs.keys());
+      const nextId = remainingIds[remainingIds.length - 1];
+      this.switchTab(nextId);
+    } else {
+      this.sendTabsList();
+    }
+  }
+
+  navigateActiveTab(input) {
+    if (!this.activeTabId) return;
+    const tab = this.tabs.get(this.activeTabId);
+    if (!tab) return;
+
+    const url = this.resolveUrl(input);
+    tab.view.webContents.loadURL(url);
+  }
+
+  reloadActiveTab() {
+    if (!this.activeTabId) return;
+    const tab = this.tabs.get(this.activeTabId);
+    if (tab) tab.view.webContents.reload();
+  }
+
+  stopActiveTab() {
+    if (!this.activeTabId) return;
+    const tab = this.tabs.get(this.activeTabId);
+    if (tab) tab.view.webContents.stop();
+  }
+
+  goBackActiveTab() {
+    if (!this.activeTabId) return;
+    const tab = this.tabs.get(this.activeTabId);
+    if (!tab) return;
+    const wc = tab.view.webContents;
+    const canBack = wc.navigationHistory ? wc.navigationHistory.canGoBack() : (wc.canGoBack ? wc.canGoBack() : false);
+    if (canBack) {
+      if (wc.navigationHistory && wc.navigationHistory.goBack) wc.navigationHistory.goBack();
+      else wc.goBack();
+    }
+  }
+
+  goForwardActiveTab() {
+    if (!this.activeTabId) return;
+    const tab = this.tabs.get(this.activeTabId);
+    if (!tab) return;
+    const wc = tab.view.webContents;
+    const canFwd = wc.navigationHistory ? wc.navigationHistory.canGoForward() : (wc.canGoForward ? wc.canGoForward() : false);
+    if (canFwd) {
+      if (wc.navigationHistory && wc.navigationHistory.goForward) wc.navigationHistory.goForward();
+      else wc.goForward();
+    }
+  }
+
+  toggleDevTools() {
+    if (!this.activeTabId) return;
+    const tab = this.tabs.get(this.activeTabId);
+    if (tab) {
+      tab.view.webContents.toggleDevTools();
+    }
+  }
+
+  getActiveTab() {
+    return this.tabs.get(this.activeTabId);
+  }
+
+  sendTabUpdate(tab) {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
+    this.mainWindow.webContents.send('tab-updated', {
+      id: tab.id,
+      title: tab.title,
+      url: tab.url,
+      favicon: tab.favicon,
+      isLoading: tab.isLoading,
+      canGoBack: tab.canGoBack,
+      canGoForward: tab.canGoForward,
+      isBookmarked: store.isBookmarked(tab.url)
+    });
+  }
+
+  sendTabsList() {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
+    const list = Array.from(this.tabs.values()).map(t => ({
+      id: t.id,
+      title: t.title,
+      url: t.url,
+      favicon: t.favicon,
+      isLoading: t.isLoading,
+      isActive: t.id === this.activeTabId
+    }));
+    this.mainWindow.webContents.send('tabs-list-updated', {
+      tabs: list,
+      activeTabId: this.activeTabId
+    });
+  }
+}
+
+module.exports = TabManager;

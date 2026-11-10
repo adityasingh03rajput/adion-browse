@@ -1,0 +1,26 @@
+{
+  "name": "adion-browse",
+  "version": "1.0.0",
+  "description": "Adion Browse - High-performance privacy browser powered by Chromium with built-in Shields ad & tracker blocker",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "cmd /c \"set ELECTRON_RUN_AS_NODE=&& electron .\"",
+    "dev": "cmd /c \"set ELECTRON_RUN_AS_NODE=&& electron .\""
+  },
+  "keywords": [
+    "browser",
+    "chromium",
+    "adblocker",
+    "brave",
+    "privacy"
+  ],
+  "author": "Adion",
+  "license": "ISC",
+  "dependencies": {
+    "@ghostery/adblocker-electron": "^2.20.3",
+    "cross-fetch": "^4.1.0"
+  },
+  "devDependencies": {
+    "electron": "^24.22.2"
+  }
+}
