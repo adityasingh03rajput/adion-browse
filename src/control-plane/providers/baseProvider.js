@@ -56,7 +56,7 @@ class BaseProvider {
         try {
           const candidate = text.substring(startIdx, endIdx + 1);
           return JSON.parse(candidate);
-        } catch (_) {}
+        } catch (_) { }
       }
     }
     return null;
@@ -64,3 +64,4 @@ class BaseProvider {
 }
 
 module.exports = BaseProvider;
+

@@ -73,3 +73,4 @@ class CustomProvider extends BaseProvider {
 }
 
 module.exports = CustomProvider;
+

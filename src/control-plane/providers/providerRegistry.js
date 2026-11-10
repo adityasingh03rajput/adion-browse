@@ -146,3 +146,4 @@ class ProviderRegistry {
 }
 
 module.exports = ProviderRegistry;
+
