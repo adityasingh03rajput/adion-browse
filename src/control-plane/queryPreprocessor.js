@@ -243,7 +243,7 @@ class QueryPreprocessor {
     }
 
     // D. Direct WhatsApp Messaging & Chat Automation
-    const waMatch = lower.match(/(?:text|send\s+(?:message\s+)?|message)\s+(.+?)\s+to\s+([+0-9]{7,15})\s+(?:on|in|via)\s+whatsapp/i);
+    const waMatch = lower.match(/(?:text|say|tell|send(?:\s+a)?(?:\s+message)?|message)\s+(.+?)\s+to\s+([+0-9]{7,15})\s+(?:on|in|via)\s+whatsapp/i);
     if (waMatch) {
       const msg = waMatch[1].trim().replace(/^["']|["']$/g, '');
       const phone = waMatch[2].replace(/[^0-9]/g, '');

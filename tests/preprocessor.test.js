@@ -117,6 +117,23 @@ async function testPreprocessorPerformance() {
   assert.strictEqual(correctedPrompt, 'hey, can you search instagram.com?');
   console.log('  ✔ Ambient outro hallucinations discarded and "hie" phonetics cleanly normalized.');
 
+  // Test 9: WhatsApp Fast-Path Messaging Intent
+  console.log('\nTest 9: WhatsApp Fast-Path Messaging Intent Extraction...');
+  const waPrep1 = preprocessor.preprocess('say hi to 9424831233 in whatsapp .');
+  const waIntent1 = preprocessor.extractFastIntent(waPrep1);
+  assert.ok(waIntent1 !== null, 'waIntent1 should not be null');
+  assert.strictEqual(waIntent1.type, 'WHATSAPP_SEND');
+  assert.strictEqual(waIntent1.phone, '9424831233');
+  assert.strictEqual(waIntent1.message, 'hi');
+  assert.ok(waIntent1.url.includes('web.whatsapp.com/send'));
+
+  const waPrep2 = preprocessor.preprocess('text hello there to 919876543210 on whatsapp');
+  const waIntent2 = preprocessor.extractFastIntent(waPrep2);
+  assert.strictEqual(waIntent2.type, 'WHATSAPP_SEND');
+  assert.strictEqual(waIntent2.phone, '919876543210');
+  assert.strictEqual(waIntent2.message, 'hello there');
+  console.log('  ✔ WhatsApp direct messaging actions extracted to WHATSAPP_SEND fast-path with prefilled URL.');
+
   console.log('\n✅ ALL QUERY PREPROCESSING & PERFORMANCE BENCHMARKS PASSED!');
 }
 
