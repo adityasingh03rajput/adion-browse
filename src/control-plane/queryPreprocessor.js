@@ -217,6 +217,16 @@ class QueryPreprocessor {
       };
     }
 
+    // H. Conversational Courtesy & Ambient Speech Fast-Path
+    // Gracefully handles conversational speech, thanks, greetings, and video outro audio without API failure
+    if (/(?:thank\s*you|thanks|thx|gracias|merci|danke|hello|hi|hey|good\s*(morning|afternoon|evening)|bye|goodbye|cool|awesome|ok|okay)/i.test(lower)) {
+      return {
+        type: 'CONVERSATIONAL_ACKNOWLEDGE',
+        thought: 'Standing by: ready for your browser commands.',
+        actions: []
+      };
+    }
+
     return null;
   }
 

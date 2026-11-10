@@ -31,7 +31,7 @@ function loadEnv() {
   return {
     groqApiKey: process.env.GROQ_API_KEY || '',
     groqApiUrl: process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions',
-    groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
+    groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
     groqWhisperUrl: process.env.GROQ_WHISPER_URL || 'https://api.groq.com/openai/v1/audio/transcriptions',
     groqWhisperModel: process.env.GROQ_WHISPER_MODEL || 'whisper-large-v3-turbo',
     mercuryApiKey: process.env.MERCURY_API_KEY || '',

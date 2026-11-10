@@ -240,12 +240,17 @@ JSON Action Plan:
       try {
         console.log(`[ModelClient] Querying Groq Cloud (${this.groqModel})...`);
         const result = await this.queryGroq(prompt);
-        if (result && result.actions && result.actions.length > 0) {
-          console.log(`[ModelClient] Groq generated ${result.actions.length} action(s):`, result.thought);
+        if (result && (Array.isArray(result.actions) || result.thought)) {
+          if (!Array.isArray(result.actions)) result.actions = [];
+          if (result.actions.length > 0) {
+            console.log(`[ModelClient] Groq generated ${result.actions.length} action(s):`, result.thought);
+          } else {
+            console.log(`[ModelClient] Groq conversational evaluation:`, result.thought);
+          }
           return result;
         }
       } catch (err) {
-        console.warn('[ModelClient] Groq API call failed:', err.message);
+        console.warn('[ModelClient] Groq API notice:', err.message);
       }
     }
 
@@ -279,21 +284,23 @@ JSON Action Plan:
 
   /**
    * Resilient Groq Cloud query with exponential backoff, jitter, and zero-cost model failover
-   * Gracefully handles 503 (Service Unavailable), 429 (Rate Limit), 502/504 (Bad Gateway), and network errors.
+   * Gracefully handles 503 (Service Unavailable), 429 (Rate Limit), 502/504 (Bad Gateway), 404 (Missing model), and network errors.
    */
   async queryGroq(prompt) {
+    // Validated zero-cost models available on the active Groq account
     const zeroCostModelCandidates = [
       this.groqModel || 'openai/gpt-oss-120b',
-      'llama-3.3-70b-versatile',
-      'meta-llama/llama-4-scout-preview',
-      'llama-3.1-8b-instant'
-    ];
+      'openai/gpt-oss-120b',
+      'openai/gpt-oss-20b',
+      'qwen/qwen3.8-27b',
+      'allam-2-7b'
+    ].filter((m, idx, arr) => arr.indexOf(m) === idx);
 
-    const maxRetries = 3;
-    const baseDelayMs = 500;
+    const maxRetries = zeroCostModelCandidates.length;
+    const baseDelayMs = 400;
     let lastError = null;
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
       const candidateModel = zeroCostModelCandidates[attempt % zeroCostModelCandidates.length];
 
       try {
@@ -325,14 +332,15 @@ JSON Action Plan:
           const data = await res.json();
           const rawContent = data.choices?.[0]?.message?.content || '';
           const parsed = this.parseJSONResponse(rawContent);
-          if (parsed && Array.isArray(parsed.actions) && parsed.actions.length > 0) {
+          if (parsed && (Array.isArray(parsed.actions) || parsed.thought)) {
+            if (!Array.isArray(parsed.actions)) parsed.actions = [];
             return parsed;
           }
         }
 
-        // Analyze HTTP status for retryable errors (503 Service Unavailable, 429 Rate Limit, 502/504 Bad Gateway)
+        // Retryable conditions: 503, 429, 502, 504, 404 (unsupported model on key), or network timeout (0)
         const status = res ? res.status : 0;
-        const isRetryable = status === 503 || status === 429 || status === 502 || status === 504 || status === 0;
+        const isRetryable = status === 503 || status === 429 || status === 502 || status === 504 || status === 404 || status === 0;
 
         if (res && !res.ok) {
           const errBody = await res.text().catch(() => '');
@@ -362,21 +370,21 @@ JSON Action Plan:
         }
 
         if (!isRetryable && status !== 0) {
-          // If non-retryable 4xx client error (other than 429), break retry loop
+          // If permanent client error other than 404/429 (e.g. 401 unauthorized), break
           break;
         }
       } catch (err) {
         lastError = err;
       }
 
-      if (attempt < maxRetries) {
-        // Exponential Backoff with full random jitter
-        const expDelay = baseDelayMs * Math.pow(2, attempt);
-        const jitter = Math.random() * 250;
-        const totalDelay = Math.min(expDelay + jitter, 3500);
+      if (attempt < maxRetries - 1) {
+        // Exponential backoff with jitter (minimal delay on 404 model failover)
+        const expDelay = baseDelayMs * Math.pow(1.8, attempt);
+        const jitter = Math.random() * 200;
+        const totalDelay = Math.min(expDelay + jitter, 2500);
 
         const nextModel = zeroCostModelCandidates[(attempt + 1) % zeroCostModelCandidates.length];
-        console.warn(`[ModelClient Backoff] Groq 503/Error encountered on attempt ${attempt + 1}/${maxRetries}. Retrying in ${Math.round(totalDelay)}ms with zero-cost model candidate: ${nextModel}...`);
+        console.warn(`[ModelClient Backoff] Groq retryable condition on ${candidateModel}. Failover to verified model: ${nextModel} in ${Math.round(totalDelay)}ms...`);
         await new Promise(r => setTimeout(r, totalDelay));
       }
     }
@@ -406,8 +414,9 @@ JSON Action Plan:
     });
 
     if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Mercury API error ${res.status}: ${text}`);
+      const text = await res.text().catch(() => '');
+      const cleanSummary = res.status === 503 ? 'Service Temporarily Unavailable' : text.replace(/<[^>]*>/g, '').trim().slice(0, 80);
+      throw new Error(`Mercury HTTP ${res.status}: ${cleanSummary}`);
     }
 
     const data = await res.json();

@@ -372,7 +372,24 @@ class AgentRuntime extends EventEmitter {
         console.warn('[AgentRuntime] Model planning notice:', err.message);
       }
 
-      if (plan && Array.isArray(plan.actions) && plan.actions.length > 0) {
+      if (plan && Array.isArray(plan.actions)) {
+        if (plan.actions.length === 0) {
+          this.setState(AgentState.IDLE);
+          const feedbackMsg = plan.thought || 'Standing by for browser commands.';
+          this.emit('feedback', { message: feedbackMsg, level: 'info' });
+          this.emit('jarvis-notification', { type: 'info', message: feedbackMsg });
+          this.sessionManager.recordInteraction({
+            source: source,
+            rawPrompt: exactPrompt,
+            transcription: text,
+            pageContext: pageContext,
+            modelResponse: plan,
+            status: 'success',
+            feedback: feedbackMsg
+          });
+          return;
+        }
+
         executedPlan = plan;
         this.preprocessor.cachePlan(activeTab?.url, prep.normalized, plan);
         this.emit('feedback', { message: `AI Plan: ${plan.thought || 'Executing actions'}`, level: 'success' });
@@ -765,6 +782,11 @@ class AgentRuntime extends EventEmitter {
     }
 
     switch (intent.type) {
+      case 'CONVERSATIONAL_ACKNOWLEDGE': {
+        this.setState(AgentState.IDLE);
+        break;
+      }
+
       case ActionType.SCROLL: {
         if (intent.direction === 'top') {
           await this.cdp.evaluate('window.scrollTo({ top: 0, behavior: "smooth" })');
