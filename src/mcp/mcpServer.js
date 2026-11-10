@@ -963,41 +963,10 @@ class MCPServer extends EventEmitter {
         const parsedUrl = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
         const pathname = parsedUrl.pathname;
 
-        // Health endpoint
-        if (pathname === '/health' || pathname === '/') {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            status: 'online',
-            server: this.serverInfo.name,
-            version: this.serverInfo.version,
-            protocolVersion: MCP_PROTOCOL_VERSION,
-            port: this.port,
-            toolsCount: this.tools.length,
-            resourcesCount: this.resources.length
-          }, null, 2));
-          return;
-        }
-
-        // Direct JSON-RPC endpoint: POST /mcp or POST /jsonrpc
-        if ((pathname === '/mcp' || pathname === '/jsonrpc') && req.method === 'POST') {
-          let body = '';
-          req.on('data', chunk => { body += chunk; });
-          req.on('end', async () => {
-            try {
-              const json = JSON.parse(body);
-              const rpcResponse = await this.handleJsonRpc(json);
-              if (rpcResponse) {
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify(rpcResponse));
-              } else {
-                res.writeHead(204);
-                res.end();
-              }
-            } catch (err) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }));
-            }
-          });
+        // HEAD requests
+        if (req.method === 'HEAD') {
+          res.writeHead(200);
+          res.end();
           return;
         }
 
@@ -1047,6 +1016,44 @@ class MCPServer extends EventEmitter {
               res.end(JSON.stringify({ error: err.message }));
             }
           });
+          return;
+        }
+
+        // Universal JSON-RPC / Streamable HTTP endpoint: POST to /mcp, /sse, /, /jsonrpc
+        if (req.method === 'POST') {
+          let body = '';
+          req.on('data', chunk => { body += chunk; });
+          req.on('end', async () => {
+            try {
+              const json = JSON.parse(body);
+              const rpcResponse = await this.handleJsonRpc(json);
+              if (rpcResponse) {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(rpcResponse));
+              } else {
+                res.writeHead(204);
+                res.end();
+              }
+            } catch (err) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }));
+            }
+          });
+          return;
+        }
+
+        // Universal GET info & discovery endpoint: GET /, /health, /mcp, /sse
+        if (req.method === 'GET') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            status: 'online',
+            server: this.serverInfo.name,
+            version: this.serverInfo.version,
+            protocolVersion: MCP_PROTOCOL_VERSION,
+            port: this.port,
+            toolsCount: this.tools.length,
+            resourcesCount: this.resources.length
+          }, null, 2));
           return;
         }
 
