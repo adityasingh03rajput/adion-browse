@@ -87,6 +87,21 @@
             </svg>
           </button>
 
+          <!-- AI Text Task & Command Button -->
+          <button class="btn-omnibox-action btn-text-agent" id="btnTextAgent" title="AI Text Task Commander (Type task • Ctrl+K)">
+            <svg id="textTaskIcon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
+              <line x1="6" y1="8" x2="6.01" y2="8"></line>
+              <line x1="10" y1="8" x2="10.01" y2="8"></line>
+              <line x1="14" y1="8" x2="14.01" y2="8"></line>
+              <line x1="18" y1="8" x2="18.01" y2="8"></line>
+              <line x1="8" y1="12" x2="8.01" y2="12"></line>
+              <line x1="12" y1="12" x2="12.01" y2="12"></line>
+              <line x1="16" y1="12" x2="16.01" y2="12"></line>
+              <line x1="7" y1="16" x2="17" y2="16"></line>
+            </svg>
+          </button>
+
           <!-- Bookmark Star Button -->
           <button class="btn-omnibox-action" id="btnBookmark" title="Bookmark this tab">
             <svg id="starIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -313,6 +328,57 @@
           <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
             Maintains structured logging and performance metrics across restarts without terminal buffering lockups.
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI TASK COMMANDER MODAL (TEXT TASK INPUT) -->
+  <div class="modal-overlay" id="taskModal">
+    <div class="modal-card task-modal-card">
+      <div class="modal-header">
+        <div class="task-modal-brand">
+          <div class="task-modal-icon-badge">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00f2fe" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
+              <line x1="6" y1="8" x2="6.01" y2="8"></line>
+              <line x1="10" y1="8" x2="10.01" y2="8"></line>
+              <line x1="14" y1="8" x2="14.01" y2="8"></line>
+              <line x1="18" y1="8" x2="18.01" y2="8"></line>
+              <line x1="8" y1="12" x2="8.01" y2="12"></line>
+              <line x1="12" y1="12" x2="12.01" y2="12"></line>
+              <line x1="16" y1="12" x2="16.01" y2="12"></line>
+              <line x1="7" y1="16" x2="17" y2="16"></line>
+            </svg>
+          </div>
+          <div>
+            <h3 style="margin: 0; font-size: 15px; color: var(--text-main); font-weight: 600;">AI TASK COMMANDER</h3>
+            <span style="font-size: 11.5px; color: var(--text-muted);">Write a task or instruction for Jarvis to perform</span>
+          </div>
+        </div>
+        <button class="btn-close-sm" id="btnCloseTaskModal">&times;</button>
+      </div>
+      <div class="modal-body" style="padding-top: 14px;">
+        <div class="task-input-box">
+          <input type="text" id="taskInputText" class="task-input-field" placeholder="Type a task (e.g. 'Scroll down', 'Open youtube.com', 'Search for ...')..." autocomplete="off">
+          <button class="btn-task-run" id="btnRunTask">
+            <span>Run Task</span>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+              <polyline points="12 5 19 12 12 19"></polyline>
+            </svg>
+          </button>
+        </div>
+        <div class="task-suggestions-row">
+          <span class="task-sugg-label">Quick Suggestions:</span>
+          <button class="task-sugg-pill" data-task="Scroll down">📜 Scroll down</button>
+          <button class="task-sugg-pill" data-task="Scroll up">⬆️ Scroll up</button>
+          <button class="task-sugg-pill" data-task="Open youtube.com">▶️ YouTube</button>
+          <button class="task-sugg-pill" data-task="Go to github.com">🐙 GitHub</button>
+          <button class="task-sugg-pill" data-task="Set base frequency boost to 10 decibels">🎚️ Set Bass Boost</button>
+        </div>
+        <div class="task-footer-hint">
+          <span>Tip: Press <kbd>Enter</kbd> to run • <kbd>Esc</kbd> to dismiss • Shortcut: <kbd>Ctrl+K</kbd></span>
         </div>
       </div>
     </div>

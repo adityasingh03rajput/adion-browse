@@ -120,6 +120,23 @@ async function testUiUxLayout() {
   assert.ok(indexSrc.includes('sec-ch-ua'), 'index.js must set sec-ch-ua headers');
   console.log('  ✔ Standard Chrome 100+ User-Agent and Client Hints verified for WhatsApp Web & external services.');
 
+  // --- Test 8: AI Text Task Commander (Writing Tasks via Keyboard / Text Icon) ---
+  console.log('\nTest 8: AI Text Task Commander (Text Task Icon & Modal)...');
+  const indexHtml = fs.readFileSync(path.join(__dirname, '../src/renderer/index.html'), 'utf8');
+  assert.ok(indexHtml.includes('id="btnTextAgent"'), 'index.html must have btnTextAgent button');
+  assert.ok(indexHtml.includes('id="taskModal"'), 'index.html must have taskModal');
+  assert.ok(indexHtml.includes('id="taskInputText"'), 'index.html must have taskInputText input');
+  assert.ok(indexHtml.includes('id="btnRunTask"'), 'index.html must have btnRunTask');
+
+  assert.ok(css.includes('.btn-text-agent'), 'styles.css must have .btn-text-agent class');
+  assert.ok(css.includes('.task-modal-card'), 'styles.css must have .task-modal-card class');
+  assert.ok(css.includes('.task-input-box'), 'styles.css must have .task-input-box class');
+
+  assert.ok(appSrc.includes('toggleTaskModal'), 'app.js must define toggleTaskModal');
+  assert.ok(appSrc.includes('executeWrittenTask'), 'app.js must define executeWrittenTask');
+  assert.ok(appSrc.includes("key === 'k'"), 'app.js must support Ctrl+K shortcut for task commander');
+  console.log('  ✔ AI Text Task Commander button, modal, Ctrl+K shortcut, and task execution verified.');
+
   console.log('\n✅ ALL UI/UX LAYOUT & RESIZE TESTS PASSED SUCCESSFULLY!\n');
 }
 

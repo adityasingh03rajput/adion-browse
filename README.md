@@ -161,6 +161,7 @@ Adion Browse/
 | Shortcut | Action |
 |---|---|
 | `Ctrl + Space` | Toggle AI Voice Commander (start / stop microphone stream) |
+| `Ctrl + K` | Open AI Text Task Commander (type a task / command without speaking) |
 | `F12` or `Ctrl + Shift + I` | Toggle Detached Developer Tools (works on webpage or browser UI) |
 | `Ctrl + T` | Open New Tab (`adion://newtab`) |
 | `Ctrl + W` | Close Active Tab |

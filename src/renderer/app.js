@@ -43,6 +43,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingMcpServer = document.getElementById('settingMcpServer');
   const settingDiagnosticLogging = document.getElementById('settingDiagnosticLogging');
 
+  // AI Text Task Commander Elements
+  const btnTextAgent = document.getElementById('btnTextAgent');
+  const taskModal = document.getElementById('taskModal');
+  const btnCloseTaskModal = document.getElementById('btnCloseTaskModal');
+  const taskInputText = document.getElementById('taskInputText');
+  const btnRunTask = document.getElementById('btnRunTask');
+
   let currentTabs = [];
   let currentActiveTabId = null;
   let currentActiveUrl = '';
@@ -250,7 +257,8 @@ document.addEventListener('DOMContentLoaded', () => {
       (historyModal && historyModal.classList.contains('show')) ||
       (settingsModal && settingsModal.classList.contains('show')) ||
       (telemetryOverlay && telemetryOverlay.classList.contains('show')) ||
-      (jarvisPanelOverlay && jarvisPanelOverlay.classList.contains('open'))
+      (jarvisPanelOverlay && jarvisPanelOverlay.classList.contains('open')) ||
+      (taskModal && taskModal.classList.contains('show'))
     );
     if (window.adionAPI && typeof window.adionAPI.setOverlayActive === 'function') {
       window.adionAPI.setOverlayActive(isAnyOpen);
@@ -264,6 +272,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (except !== 'settings' && settingsModal) settingsModal.classList.remove('show');
     if (except !== 'telemetry' && telemetryOverlay) telemetryOverlay.classList.remove('show');
     if (except !== 'jarvis' && jarvisPanelOverlay) jarvisPanelOverlay.classList.remove('open');
+    if (except !== 'task' && taskModal) {
+      taskModal.classList.remove('show');
+      if (btnTextAgent) btnTextAgent.classList.remove('active');
+    }
   }
 
   function closeAllModals() {
@@ -609,6 +621,103 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // --- AI TEXT TASK COMMANDER (TEXT TASK MODAL) ---
+  function openTaskModal() {
+    closeAllModalsExcept('task');
+    if (taskModal) {
+      taskModal.classList.add('show');
+      if (btnTextAgent) btnTextAgent.classList.add('active');
+      updateOverlayState();
+      setTimeout(() => {
+        if (taskInputText) {
+          taskInputText.focus();
+          taskInputText.select();
+        }
+      }, 50);
+    }
+  }
+
+  function closeTaskModal() {
+    if (taskModal) taskModal.classList.remove('show');
+    if (btnTextAgent) btnTextAgent.classList.remove('active');
+    updateOverlayState();
+  }
+
+  function toggleTaskModal() {
+    if (taskModal && taskModal.classList.contains('show')) {
+      closeTaskModal();
+    } else {
+      openTaskModal();
+    }
+  }
+
+  async function executeWrittenTask(specifiedTask = null) {
+    const rawVal = specifiedTask !== null ? specifiedTask : (taskInputText ? taskInputText.value : '');
+    const task = (rawVal || '').trim();
+    if (!task) return;
+
+    if (taskInputText) taskInputText.value = '';
+    closeTaskModal();
+
+    // Show visual confirmation in HUD, Jarvis toast, and session
+    showAgentHud('EXECUTING', `Executing task: "${task.slice(0, 45)}"`);
+    showJarvisToast(`JARVIS: Executing task "${task.slice(0, 35)}..."`, 'success');
+    setJarvisState('THINKING');
+
+    try {
+      if (window.adionAPI && window.adionAPI.agent && typeof window.adionAPI.agent.sendCommand === 'function') {
+        await window.adionAPI.agent.sendCommand(task);
+      } else if (window.adionAPI && window.adionAPI.session && typeof window.adionAPI.session.sendChat === 'function') {
+        await window.adionAPI.session.sendChat(task);
+      }
+      loadSessionHistory();
+    } catch (err) {
+      console.error('[TaskCommander] Error executing task:', err);
+      showJarvisToast('Error coordinating task.', 'alert');
+    }
+  }
+
+  if (btnTextAgent) {
+    btnTextAgent.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleTaskModal();
+    });
+  }
+
+  if (btnCloseTaskModal) {
+    btnCloseTaskModal.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeTaskModal();
+    });
+  }
+
+  if (btnRunTask) {
+    btnRunTask.addEventListener('click', (e) => {
+      e.stopPropagation();
+      executeWrittenTask();
+    });
+  }
+
+  if (taskInputText) {
+    taskInputText.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        executeWrittenTask();
+      }
+    });
+  }
+
+  // Quick suggestion chips
+  document.querySelectorAll('.task-sugg-pill').forEach(pill => {
+    pill.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const task = pill.getAttribute('data-task');
+      if (task) {
+        executeWrittenTask(task);
+      }
+    });
+  });
+
   // Close overlays on clicking outside
   window.addEventListener('click', (e) => {
     let changed = false;
@@ -632,6 +741,11 @@ document.addEventListener('DOMContentLoaded', () => {
       settingsModal.classList.remove('show');
       changed = true;
     }
+    if (taskModal && taskModal.classList.contains('show') && (e.target === taskModal || !taskModal.querySelector('.modal-card').contains(e.target))) {
+      taskModal.classList.remove('show');
+      if (btnTextAgent) btnTextAgent.classList.remove('active');
+      changed = true;
+    }
     if (changed) {
       updateOverlayState();
     }
@@ -644,6 +758,9 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (e.ctrlKey && e.code === 'Space') {
       e.preventDefault();
       toggleVoiceAgent();
+    } else if (e.ctrlKey && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      toggleTaskModal();
     } else if (e.ctrlKey && e.key === 't') {
       e.preventDefault();
       window.adionAPI.newTab();

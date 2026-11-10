@@ -59,6 +59,7 @@ async function testToolbarInteractions() {
 
   const requiredButtons = [
     'btnVoiceAgent',
+    'btnTextAgent',
     'btnBookmark',
     'btnShield',
     'btnBookmarksMenu',
@@ -74,7 +75,13 @@ async function testToolbarInteractions() {
       `index.html must contain button element with id="${btnId}"`
     );
   }
-  console.log(`  ✔ All ${requiredButtons.length} toolbar buttons confirmed present in DOM.`);
+  console.log(`  ✔ All ${requiredButtons.length} toolbar buttons (including AI Voice & Text Task buttons) confirmed present in DOM.`);
+
+  // Verify AI Task Commander Modal
+  assert.ok(html.includes('id="taskModal"'), 'index.html must contain taskModal');
+  assert.ok(html.includes('id="taskInputText"'), 'index.html must contain taskInputText');
+  assert.ok(html.includes('id="btnRunTask"'), 'index.html must contain btnRunTask');
+  console.log('  ✔ AI Task Commander modal, input text, and run button confirmed present in DOM.');
 
   // Test 3: Verify Preload IPC bridge exposes setOverlayActive
   console.log('\nTest 3: Verifying Preload IPC contract exposes setOverlayActive...');
