@@ -2209,15 +2209,28 @@ class AgentRuntime extends EventEmitter {
               )?.closest('button') || null;
             };
 
-            // Check if active open chat header matches contact
-            const headerTitleEl = (mainPane ? mainPane.querySelector('header') : document.querySelector('header'))
-              ?.querySelector('span[title], div[title], span[dir="auto"], span.x1rg5ohu');
-            const headerTitle = headerTitleEl ? (headerTitleEl.getAttribute('title') || headerTitleEl.innerText || '').toLowerCase() : '';
-            const isOpenChat = isMainOpen && target && (headerTitle.includes(target) || target.includes(headerTitle));
+            // Helper: Clean emojis and symbols for rigorous recipient matching
+            const cleanStr = s => (s || '')
+              .toLowerCase()
+              .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}]/gu, '')
+              .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
 
-            // C. If conversation pane is open or was selected, locate composer and type!
+            const cleanTarget = cleanStr(target);
+
+            // Check if active open chat header strictly matches target contact
+            const headerTitleEl = (mainPane ? mainPane.querySelector('header') : document.querySelector('header'))
+              ?.querySelector('span[title], div[title], span[dir="auto"], span.x1rg5ohu, h2, [data-testid="conversation-info-header-chat-title"]');
+            const rawHeader = headerTitleEl ? (headerTitleEl.getAttribute('title') || headerTitleEl.innerText || '') : '';
+            const cleanHeader = cleanStr(rawHeader);
+
+            // Strict Recipient Verification: Header MUST match target contact
+            const isOpenChat = isMainOpen && Boolean(cleanTarget && cleanHeader && (cleanHeader.includes(cleanTarget) || cleanTarget.includes(cleanHeader)));
+
+            // C. STRICT SAFETY: Only interact with composer IF the open chat is confirmed to match target contact!
             const composer = findComposer();
-            if (composer && (isOpenChat || ${JSON.stringify(chatSelected)} || isMainOpen)) {
+            if (composer && isOpenChat) {
               composer.focus();
               composer.click();
               document.execCommand('selectAll', false, null);
@@ -2236,27 +2249,30 @@ class AgentRuntime extends EventEmitter {
               return { action: 'composer_typed' };
             }
 
-            // D. Check recent chat list (#pane-side) directly for target contact
-            // Guard: If conversation pane is ALREADY open, DO NOT re-click side chat items!
-            if (isOpenChat || (${JSON.stringify(chatSelected)} && isMainOpen) || isMainOpen) {
+            // D. Guard: If target conversation pane is ALREADY open and verified, wait for composer
+            if (isOpenChat) {
               return { action: 'waiting_for_composer' };
             }
+
+            // If another person's chat is open (e.g. Mummy is open, but target is pidduk):
+            // We MUST NOT touch composer! We must find and switch to target contact!
+            const isUnmatchedChat = isMainOpen && !isOpenChat;
 
             const sidePane = document.getElementById('pane-side') || document.querySelector('#side');
             if (sidePane) {
               const allChatItems = Array.from(sidePane.querySelectorAll('div[role="listitem"], div[role="row"], div[data-testid^="list-item"]'));
               for (const item of allChatItems) {
-                const text = (item.innerText || item.textContent || '').toLowerCase();
-                if (text.includes(target)) {
+                const text = cleanStr(item.innerText || item.textContent || '');
+                if (text.includes(cleanTarget)) {
                   item.click();
-                  return { action: 'chat_clicked', contactMatch: text.split('\\n')[0] };
+                  return { action: 'chat_clicked', contactMatch: text.split('\n')[0] };
                 }
               }
 
               const spans = Array.from(sidePane.querySelectorAll('span[title], div[title], span[dir="auto"]'));
               const matchSpan = spans.find(s => {
-                const t = (s.getAttribute('title') || s.innerText || '').toLowerCase();
-                return t.includes(target);
+                const t = cleanStr(s.getAttribute('title') || s.innerText || '');
+                return t.includes(cleanTarget);
               });
               if (matchSpan) {
                 const clickTarget = matchSpan.closest('div[role="listitem"], div[role="row"], div[data-testid^="list-item"]') || matchSpan;
@@ -2269,7 +2285,7 @@ class AgentRuntime extends EventEmitter {
             const searchBox = document.querySelector(
               '#side div[contenteditable="true"], [data-testid="chat-list-search"], div[title="Search or start new chat"], div[role="textbox"][data-tab="3"], #side [role="textbox"]'
             ) || Array.from(document.querySelectorAll('#side div[contenteditable="true"], div[role="textbox"]')).find(el => {
-              const t = (el.getAttribute('title') || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.innerText || '').toLowerCase();
+              const t = cleanStr(el.getAttribute('title') || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.innerText || '');
               return t.includes('search') || t.includes('start');
             });
 
@@ -2280,16 +2296,11 @@ class AgentRuntime extends EventEmitter {
                 document.execCommand('insertText', false, ${JSON.stringify(contact)});
                 searchBox.dispatchEvent(new Event('input', { bubbles: true }));
                 searchBox.dispatchEvent(new Event('change', { bubbles: true }));
-                return { action: 'search_typed' };
-              } else {
-                // If already typed, press Enter to open top search result
-                const enterEvent = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
-                searchBox.dispatchEvent(enterEvent);
-                return { action: 'search_entered' };
+                return { action: 'search_typed', currentHeader: rawHeader };
               }
             }
 
-            return { action: 'waiting_for_ui' };
+            return { action: isUnmatchedChat ? 'unmatched_chat_open' : 'waiting_for_ui', currentHeader: rawHeader };
           })()
         `).catch(err => ({ action: 'eval_error', error: err.message }));
 
@@ -2299,6 +2310,12 @@ class AgentRuntime extends EventEmitter {
           console.log(`[AgentRuntime WhatsApp] ⚠️ ${qrMsg}`);
           this.emit('feedback', { message: qrMsg, level: 'warning' });
           this.emit('jarvis-notification', { type: 'info', message: qrMsg });
+        }
+
+        if (result && result.action === 'unmatched_chat_open') {
+          const current = result.currentHeader ? `"${result.currentHeader}"` : 'another chat';
+          console.log(`[AgentRuntime WhatsApp] ⚠️ Active conversation is ${current}, but requested target is "${contact}". Switching to "${contact}"...`);
+          this.emit('feedback', { message: `Active conversation is ${current}. Switching to "${contact}"...`, level: 'info' });
         }
 
         if (result && result.action === 'search_typed' && !searchTyped) {

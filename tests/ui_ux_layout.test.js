@@ -178,6 +178,8 @@ async function testUiUxLayout() {
   assert.ok(agentRuntimeSrc.includes('sendInputEvent'), 'sendWhatsAppChat must dispatch native hardware Enter via sendInputEvent');
   assert.ok(agentRuntimeSrc.includes('findComposer'), 'sendWhatsAppChat must use robust findComposer resolver');
   assert.ok(agentRuntimeSrc.includes('waiting_for_composer'), 'sendWhatsAppChat must guard against infinite chat re-clicking when conversation is open');
+  assert.ok(agentRuntimeSrc.includes('composer && isOpenChat'), 'sendWhatsAppChat must strictly enforce recipient matching before typing or sending message');
+  assert.ok(agentRuntimeSrc.includes('unmatched_chat_open'), 'sendWhatsAppChat must detect unmatched open chats and safely switch to target contact');
   assert.ok(agentRuntimeSrc.includes('async autonomousUnlockWithSecret'), 'AgentRuntime must implement autonomousUnlockWithSecret for hidden/locked chat unlock');
   assert.ok(agentRuntimeSrc.includes('secretCode'), 'sendWhatsAppChat must support secretCode parameter for hidden/locked chats');
   assert.ok(queryPreprocessorSrc.includes("target === 'whatsapp'"), 'queryPreprocessor must map whatsapp shortcut to https://web.whatsapp.com');
