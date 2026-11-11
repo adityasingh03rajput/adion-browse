@@ -847,24 +847,94 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function formatCopilotText(rawText) {
+    if (!rawText) return '';
+    // Highlight URLs as interactive cyan pill chips
+    let formatted = rawText.replace(/(https?:\/\/[^\s<]+)/g, '<a class="copilot-url-chip" href="$1" target="_blank" onclick="event.preventDefault(); if (window.adionAPI && window.adionAPI.tabs) window.adionAPI.tabs.createTab(\'$1\');">$1 ↗</a>');
+    // Highlight quoted targets as emerald badges
+    formatted = formatted.replace(/"([^"]+)"/g, '<span class="copilot-entity-chip">"$1"</span>');
+    return formatted;
+  }
+
   function appendCopilotMessage(sender, text, isStep = false) {
     if (!sidePanelTimeline) return;
     if (sidePanelEmptyState) sidePanelEmptyState.style.display = 'none';
 
     const msgEl = document.createElement('div');
+
     if (sender === 'user') {
       msgEl.className = 'copilot-msg-user';
-      msgEl.textContent = text;
+      msgEl.innerHTML = `
+        <div class="copilot-user-header">
+          <span class="copilot-user-badge">You</span>
+        </div>
+        <div class="copilot-user-content">${text}</div>
+      `;
     } else {
-      msgEl.className = 'copilot-msg-agent';
-      if (isStep) {
-        msgEl.innerHTML = `<span class="copilot-step-badge">⚡ Autonomous Step</span><div>${text}</div>`;
+      const lower = (text || '').toLowerCase();
+
+      // Intelligently categorize messages to break monochromacy with distinct color palettes
+      if (lower.startsWith('ai plan:') || lower.includes('plan:')) {
+        msgEl.className = 'copilot-msg-agent copilot-card-plan';
+        const planContent = text.replace(/^ai plan:\s*/i, '');
+        msgEl.innerHTML = `
+          <div class="copilot-card-header">
+            <span class="copilot-badge badge-purple">🧠 AI Strategy Plan</span>
+          </div>
+          <div class="copilot-card-body">${formatCopilotText(planContent)}</div>
+        `;
+      } else if (lower.includes('navigating to:') || lower.startsWith('navigating') || lower.includes('http://') || lower.includes('https://')) {
+        msgEl.className = 'copilot-msg-agent copilot-card-nav';
+        msgEl.innerHTML = `
+          <div class="copilot-card-header">
+            <span class="copilot-badge badge-cyan">🌐 Web Navigation</span>
+          </div>
+          <div class="copilot-card-body">${formatCopilotText(text)}</div>
+        `;
+      } else if (lower.includes('closed active tab') || lower.includes('tab closed') || lower.includes('opened tab') || lower.includes('new tab')) {
+        msgEl.className = 'copilot-msg-agent copilot-card-tab';
+        msgEl.innerHTML = `
+          <div class="copilot-card-header">
+            <span class="copilot-badge badge-coral">📑 Tab Manager</span>
+          </div>
+          <div class="copilot-card-body">${formatCopilotText(text)}</div>
+        `;
+      } else if (lower.includes('grounding target:') || lower.includes('inspected') || lower.includes('clicked') || lower.includes('typing')) {
+        msgEl.className = 'copilot-msg-agent copilot-card-target';
+        msgEl.innerHTML = `
+          <div class="copilot-card-header">
+            <span class="copilot-badge badge-emerald">🎯 Element Grounding</span>
+          </div>
+          <div class="copilot-card-body">${formatCopilotText(text)}</div>
+        `;
+      } else if (lower.includes('success') || lower.includes('completed') || lower.includes('verified')) {
+        msgEl.className = 'copilot-msg-agent copilot-card-success';
+        msgEl.innerHTML = `
+          <div class="copilot-card-header">
+            <span class="copilot-badge badge-green">✓ Task Verified</span>
+          </div>
+          <div class="copilot-card-body">${formatCopilotText(text)}</div>
+        `;
+      } else if (isStep || lower.includes('coordinating') || lower.includes('analyzing')) {
+        msgEl.className = 'copilot-msg-agent copilot-card-step';
+        msgEl.innerHTML = `
+          <div class="copilot-card-header">
+            <span class="copilot-badge badge-blue"><span class="step-live-dot"></span> Autonomous Step</span>
+          </div>
+          <div class="copilot-card-body">${formatCopilotText(text)}</div>
+        `;
       } else {
-        msgEl.textContent = text;
+        msgEl.className = 'copilot-msg-agent copilot-card-default';
+        msgEl.innerHTML = `
+          <div class="copilot-card-body">${formatCopilotText(text)}</div>
+        `;
       }
     }
+
     sidePanelTimeline.appendChild(msgEl);
-    if (sidePanelBody) sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
+    if (sidePanelBody) {
+      sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
+    }
   }
 
   async function submitSidePanelTask(specifiedTask = null) {
