@@ -58,9 +58,9 @@ Available Action Types and Parameters:
 Key Instructions:
 1. AI-First Decision Making: Always interpret user intent thoughtfully based on the active page, progress history, and visible elements.
 2. Goal Execution & Re-planning Loop:
-   - For multi-step tasks (e.g. "go to nomoney.in and signup"), plan the immediate next logical action.
-   - If the action will complete the user's overarching goal, set "goalAccomplished": true.
-   - If further observation or subsequent steps are required after this action executes, set "goalAccomplished": false.
+   - Understand Brand Aliasing & Redirects: When navigating to a URL (e.g. nomoney.in), websites frequently show their brand name or store title (e.g. "BooksByMohit"), and auth buttons may redirect to an authentication portal (e.g. "EatCells.com" or OAuth). NEVER assume the current page is "unrelated" if you already navigated there. Trust the current page.
+   - No Redundant Navigation: If step progress shows you already navigated to the target site, DO NOT re-navigate to the same site. Proceed immediately with interactive elements (click button, input text).
+   - Recognize Goal Completion: If the user asked to find/click a button or initiate a flow (e.g. "check for signup and signup", "click login"), and that button was already clicked, or the destination portal/form is now open, the goal is COMPLETE! Set "goalAccomplished": true, "actions": [], and summarize the completion in "thought". NEVER loop back or re-click.
 3. Greetings & Courtesies: For greetings (hi, hello, hie, hey, thanks, standing by), return actions: [] with a friendly thought and "goalAccomplished": true. NEVER trigger INPUT_TEXT.
 4. WhatsApp Web: When messaging a contact on WhatsApp, use WHATSAPP_CHAT_SEND. If a secret code or PIN is provided, put it in secretCode and keep message clean.
 5. Site Search: If user says "search X in Y.com", NAVIGATE to the site or search query scoped to that site.
@@ -106,7 +106,11 @@ User Command: "${userInput}"
 Conversational & Goal Execution Instructions:
 - Maintain conversational memory across turns. When the user says "it", "this", "that", "them", "open it", "click it", or asks a follow-up, resolve the reference using the Recent Conversation History and Current Active Page.
 - Never output generic search queries for pronouns like "it". Instead, target the specific item, search result, link, or entity discussed.
-- Autonomous Goal Re-planning: For multi-step goals (e.g. "go to nomoney.in and signup"), inspect current progress and webpage state. Set "goalAccomplished": true if this action completes the user's objective, or "goalAccomplished": false if further observation or subsequent actions are needed.
+- Autonomous Goal Re-planning:
+  * For multi-step goals, review Recent Conversation History to see what actions have already succeeded.
+  * If the target site was already reached, do NOT output NAVIGATE again. Instead, inspect the Visible Interactive Buttons to click or type.
+  * Websites often have store names (e.g. nomoney.in shows BooksByMohit) and auth portals (e.g. EatCells.com). Treat them as legitimate destinations, not "unrelated".
+  * If the requested action (e.g. clicking "Sign Up") was already performed, the goal is COMPLETE! Set "goalAccomplished": true and "actions": [].
 
 JSON Action Plan:
 `;

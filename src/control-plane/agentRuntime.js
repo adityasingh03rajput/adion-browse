@@ -387,6 +387,25 @@ class AgentRuntime extends EventEmitter {
             const act = actionsInTurn[i];
             const intent = { type: act.type, ...(act.params || {}), raw: exactPrompt };
 
+            // Anti-Loop Guard: If we already navigated to the target site/domain in a previous step,
+            // skip redundant NAVIGATE so the agent focuses on interacting with the page
+            if (act.type === ActionType.NAVIGATE) {
+              const dest = (intent.url || intent.query || '').toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
+              const alreadyNavigated = stepHistory.some(s => s.action === ActionType.NAVIGATE && s.status === 'SUCCESS');
+              const curTab = this.tabManager ? this.tabManager.getActiveTab() : null;
+              const curUrl = (curTab?.url || '').toLowerCase();
+              if (alreadyNavigated && (curUrl.includes(dest) || (curTab?.title && !curUrl.startsWith('adion://newtab')))) {
+                console.log(`[AgentRuntime GoalLoop] Already on target site (${curTab.title || curTab.url}); skipping redundant NAVIGATE to: ${intent.url}`);
+                stepHistory.push({
+                  iteration,
+                  action: act.type,
+                  status: 'SUCCESS',
+                  summary: `NAVIGATE ${intent.url} (Already on site)`
+                });
+                continue;
+              }
+            }
+
             const execRes = await this.executeIntent(intent);
             const isSuccess = execRes ? execRes.success !== false : true;
 
@@ -408,6 +427,24 @@ class AgentRuntime extends EventEmitter {
               if (execRes?.crossQuestion) {
                 goalAccomplished = true;
                 finalFeedback = execRes.crossQuestion;
+                break;
+              }
+            } else if (act.type === ActionType.CLICK_SELECTOR) {
+              // Post-Click Goal Completion Detection:
+              // If the user's goal was to click an element (e.g. "signup", "sign in", "login", "register", "submit")
+              // and that element was just clicked successfully:
+              const rawLower = exactPrompt.toLowerCase();
+              const targetLower = (intent.target || '').toLowerCase();
+              const isGoalTarget = (targetLower && rawLower.includes(targetLower)) ||
+                (rawLower.includes('sign') && (targetLower.includes('sign') || targetLower.includes('log'))) ||
+                (rawLower.includes('log') && targetLower.includes('log')) ||
+                (rawLower.includes('register') && targetLower.includes('register')) ||
+                rawLower.includes('click');
+
+              if (isGoalTarget) {
+                console.log(`[AgentRuntime GoalLoop] Primary target "${intent.target}" clicked successfully; goal accomplished!`);
+                goalAccomplished = true;
+                finalFeedback = `Successfully clicked "${intent.target}". Page transitioned to destination portal.`;
                 break;
               }
             }
@@ -442,7 +479,8 @@ class AgentRuntime extends EventEmitter {
           augmentedHistory.push({
             user: `Goal: "${exactPrompt}"`,
             agent: `Progress so far:\n` + stepHistory.map(s => `- [Step ${s.iteration}] ${s.summary} (${s.status})`).join('\n') +
-                   `\nCurrent Active Page: "${livePageContext.title || livePageContext.url}" with buttons: [${(livePageContext.buttons || []).slice(0, 8).join(', ')}]`
+                   `\nCurrent Active Page: "${livePageContext.title || livePageContext.url}" (URL: ${livePageContext.url}) with buttons: [${(livePageContext.buttons || []).slice(0, 10).join(', ')}]\n` +
+                   `CRITICAL INSTRUCTION: If you already reached the site or clicked the requested button, DO NOT navigate back or repeat actions. If goal is satisfied, return "goalAccomplished": true, "actions": [].`
           });
 
           // Re-plan: Query model with observed state and step history
@@ -2901,6 +2939,7 @@ class AgentRuntime extends EventEmitter {
       try {
         const details = await activeTab.view.webContents.executeJavaScript(`
           (() => {
+            const liveUrl = window.location.href || '';
             const title = document.title || '';
             const headings = Array.from(document.querySelectorAll('h1, h2, h3'))
               .slice(0, 10)
@@ -2922,11 +2961,15 @@ class AgentRuntime extends EventEmitter {
               .trim()
               .slice(0, 4000);
 
-            return { title, headings: headings.slice(0, 6), buttons: Array.from(new Set(buttons)), favicon, text };
+            return { liveUrl, title, headings: headings.slice(0, 6), buttons: Array.from(new Set(buttons)), favicon, text };
           })()
         `).catch(() => null);
 
         if (details) {
+          if (details.liveUrl && !details.liveUrl.startsWith('about:')) {
+            basicContext.url = details.liveUrl;
+            activeTab.url = details.liveUrl;
+          }
           if (details.title) basicContext.title = details.title;
           if (details.favicon) basicContext.favicon = details.favicon;
           if (Array.isArray(details.buttons)) basicContext.buttons = details.buttons;
