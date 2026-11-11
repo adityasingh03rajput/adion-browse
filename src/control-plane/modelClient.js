@@ -60,6 +60,9 @@ Available Action Types and Parameters:
 - "TERMINAL_EXEC": { "command": "local terminal command (e.g. dir, ls, git status, ping, node -v, echo...)" }
 - "PAGE_ANALYSIS_OR_QA": Synthesize direct helpful answer in "thought", "actions": []
 
+Computer Use & Local PC Mode (/pc, /computer, /workspace):
+When instructed to operate on the local PC or workspace, act as an autonomous computer-use agent. Use "TERMINAL_EXEC" with {"command": "<command>"} to run local system commands (PowerShell/cmd on Windows, bash/zsh on POSIX), inspect directories, execute scripts, and verify outcomes directly on the user's computer.
+
 Key Instructions:
 1. AI-First Decision Making: Always interpret user intent thoughtfully based on the active page, progress history, and visible elements.
 2. Handling Account Login, Credentials & Forms:
@@ -111,11 +114,26 @@ Key Instructions:
         }).join('\n') + '\n';
     }
 
+    let computerUseSection = '';
+    if (pageContext.isComputerUse || pageContext.terminal) {
+      const term = pageContext.terminal || {};
+      computerUseSection = `\n[COMPUTER USE / LOCAL WORKSPACE PC MODE ACTIVE]:
+- Target Environment: Local PC / Host Workspace
+- Host Platform: ${term.platform || process.platform} (${term.username || 'user'}@${term.hostname || 'localhost'})
+- Terminal Shell: ${term.shell || (process.platform === 'win32' ? 'powershell.exe' : 'bash')}
+- Working Directory: ${term.cwd || process.cwd()}
+- Directives:
+  * You are authorized to execute local system commands on the user's PC using {"type": "TERMINAL_EXEC", "params": {"command": "<command>"}}.
+  * Formulate correct commands tailored to ${term.shell || 'the active shell'}.
+  * For multi-step tasks (e.g. inspecting files, running build tools, diagnosing issues), break into structured "tasks" and output sequential or initial actions.
+  * When terminal output verifies the task is done, set "goalAccomplished": true, "actions": [], and summarize the results in "thought".\n`;
+    }
+
     const prompt = `
 Current Active Page:
 - URL: ${pageContext.url || 'adion://newtab'}
 - Title: ${pageContext.title || 'New Tab'}${elementsInfo}
-${historySection}
+${historySection}${computerUseSection}
 User Command: "${userInput}"
 
 Conversational & Goal Execution Instructions:

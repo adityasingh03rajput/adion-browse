@@ -350,6 +350,16 @@ class AgentRuntime extends EventEmitter {
     this.setState(AgentState.PARSING_INTENT, { input: exactPrompt });
     this.emit('feedback', { message: `Autonomous Agent coordinating: "${text}"`, level: 'info' });
 
+    // Detect Computer Use / Local Workspace Mode (/pc, /computer, /workspace)
+    const isComputerUse = /^\/(?:pc|computer|workspace)\b/i.test(exactPrompt) ||
+                          /^(?:run\s+on\s+(?:pc|computer|workspace)|on\s+(?:my\s+)?(?:pc|computer|workspace))\b/i.test(exactPrompt);
+
+    let plannedText = text;
+    if (isComputerUse) {
+      plannedText = text.replace(/^(?:\/pc\s+|\/computer\s+|\/workspace\s+|run\s+on\s+(?:pc|computer|workspace)\s+|on\s+(?:my\s+)?(?:pc|computer|workspace)\s*)/i, '').trim();
+      if (!plannedText) plannedText = 'inspect current directory and system status';
+    }
+
     let activeTab = null;
     let pageContext = {};
     let executedPlan = null;
@@ -361,8 +371,25 @@ class AgentRuntime extends EventEmitter {
         pageContext.lastDOMSelector = this.lastDOMSelector;
       }
 
+      // Computer Use environment setup: ensure local terminal bridge is active
+      if (isComputerUse) {
+        pageContext.isComputerUse = true;
+        if (this.terminalBridge) {
+          if (!this.terminalBridge.isConnected) {
+            try {
+              await this.terminalBridge.start();
+            } catch (_) {}
+          }
+          pageContext.terminal = this.terminalBridge.getStatus();
+        }
+        this.emit('feedback', {
+          message: `🖥️ Computer Use Mode: Directing execution to local PC terminal (${pageContext.terminal?.shell || 'powershell'})`,
+          level: 'info'
+        });
+      }
+
       // 1. Gather Active Page Context (including shared page context if page sharing is enabled)
-      if (activeTab && activeTab.view && !activeTab.url.startsWith('adion://newtab') && this.isPageShared !== false) {
+      if (!isComputerUse && activeTab && activeTab.view && !activeTab.url.startsWith('adion://newtab') && this.isPageShared !== false) {
         try {
           const sharedCtx = await this.getActivePageContext();
           if (sharedCtx) {
@@ -380,7 +407,7 @@ class AgentRuntime extends EventEmitter {
       })).filter(h => h.user && h.user.trim().length > 0);
 
       // 3. TIER 1: AI-FIRST AUTONOMOUS GOAL EXECUTION & RE-PLANNING LOOP
-      // Sense -> Plan -> Act -> Verify. The agent senses live page state after each action,
+      // Sense -> Plan -> Act -> Verify. The agent senses live state after each action,
       // reports execution results back to the model, tracks subtask breakdown, and iteratively replans until the goal is accomplished.
       let maxGoalIterations = this.maxGoalIterations || 15;
       const absoluteSafetyCap = 30;
@@ -392,7 +419,7 @@ class AgentRuntime extends EventEmitter {
 
       if (this.model) {
         try {
-          initialPlan = await this.model.planActions(text, pageContext, conversationHistory);
+          initialPlan = await this.model.planActions(plannedText, pageContext, conversationHistory);
         } catch (err) {
           console.warn('[AgentRuntime] Initial AI Model planning error:', err.message);
         }
@@ -591,25 +618,33 @@ class AgentRuntime extends EventEmitter {
           await new Promise(r => setTimeout(r, 600));
 
           const currentTab = this.tabManager ? this.tabManager.getActiveTab() : null;
-          const livePageContext = await this.getActivePageContext(currentTab);
+          const livePageContext = isComputerUse
+            ? { ...pageContext, terminal: this.terminalBridge ? this.terminalBridge.getStatus() : null }
+            : await this.getActivePageContext(currentTab);
 
           // Build augmented conversational history containing live goal execution progress
           const augmentedHistory = [...conversationHistory];
           augmentedHistory.push({
             user: `Goal: "${exactPrompt}"`,
             agent: `Progress so far:\n` + stepHistory.map(s => `- [Step ${s.iteration}] ${s.summary} (${s.status})`).join('\n') +
-                   `\nCurrent Active Page: "${livePageContext.title || livePageContext.url}" (URL: ${livePageContext.url}) with buttons: [${(livePageContext.buttons || []).slice(0, 10).join(', ')}]\n` +
-                   `CRITICAL INSTRUCTION: If you already reached the site or clicked the requested button, DO NOT navigate back or repeat actions. If more turns are needed, specify "extendCapBy". If goal is satisfied, return "goalAccomplished": true, "actions": [].`
+                   (isComputerUse
+                     ? `\n[Operating Environment: Host PC / Local Terminal (${livePageContext.terminal?.cwd || process.cwd()})]\nCRITICAL INSTRUCTION: Analyze the output of the previous step. If additional terminal commands are required to fulfill the user's PC task, output {"type": "TERMINAL_EXEC", "params": {"command": "..."}}. When the task is complete, return "goalAccomplished": true, "actions": [], and summarize results.`
+                     : `\nCurrent Active Page: "${livePageContext.title || livePageContext.url}" (URL: ${livePageContext.url}) with buttons: [${(livePageContext.buttons || []).slice(0, 10).join(', ')}]\n` +
+                       `CRITICAL INSTRUCTION: If you already reached the site or clicked the requested button, DO NOT navigate back or repeat actions. If more turns are needed, specify "extendCapBy". If goal is satisfied, return "goalAccomplished": true, "actions": [].`
+                   )
           });
 
           // Re-plan: Query model with observed state and step history
           try {
-            console.log(`[AgentRuntime GoalLoop] Re-planning next step on "${livePageContext.title || livePageContext.url}"...`);
+            const planTarget = isComputerUse ? `Local Terminal (${livePageContext.terminal?.shell || 'powershell'})` : (livePageContext.title || livePageContext.url);
+            console.log(`[AgentRuntime GoalLoop] Re-planning next step on ${planTarget}...`);
             this.emit('feedback', { 
-              message: `Inspected page "${livePageContext.title || livePageContext.url}". Evaluating next step for goal...`, 
+              message: isComputerUse 
+                ? `Evaluating next terminal step on local PC...`
+                : `Inspected page "${livePageContext.title || livePageContext.url}". Evaluating next step for goal...`, 
               level: 'info' 
             });
-            const nextPlan = await this.model.planActions(exactPrompt, livePageContext, augmentedHistory);
+            const nextPlan = await this.model.planActions(plannedText, livePageContext, augmentedHistory);
             if (nextPlan && (Array.isArray(nextPlan.actions) || nextPlan.thought)) {
               if (!Array.isArray(nextPlan.actions)) nextPlan.actions = [];
               if (nextPlan.actions.length === 0 || (nextPlan.goalAccomplished === true && nextPlan.actions.length === 0)) {

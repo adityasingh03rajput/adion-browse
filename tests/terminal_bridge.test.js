@@ -158,10 +158,45 @@ async function runTests() {
     assert.strictEqual(intent3.command, 'npm --version');
     console.log(`  ✔ "run local command: npm --version" parsed to TERMINAL_EXEC`);
 
+    // ----------------------------------------------------
+    // Test 8: Computer Use Slash Commands (/pc, /computer, /workspace)
+    // ----------------------------------------------------
+    console.log('\nTest 8: Testing Computer Use slash commands (/pc, /computer, /workspace)...');
+    
+    // Direct CLI execution via /pc
+    const pPc = preprocessor.preprocess('/pc git status');
+    const intentPc = preprocessor.extractFastIntent(pPc);
+    assert.ok(intentPc);
+    assert.strictEqual(intentPc.type, ActionType.TERMINAL_EXEC);
+    assert.strictEqual(intentPc.command, 'git status');
+    console.log('  ✔ "/pc git status" parsed to TERMINAL_EXEC');
+
+    // Direct CLI execution via /computer
+    const pComp = preprocessor.preprocess('/computer npm test');
+    const intentComp = preprocessor.extractFastIntent(pComp);
+    assert.ok(intentComp);
+    assert.strictEqual(intentComp.type, ActionType.TERMINAL_EXEC);
+    assert.strictEqual(intentComp.command, 'npm test');
+    console.log('  ✔ "/computer npm test" parsed to TERMINAL_EXEC');
+
+    // Direct CLI execution via /workspace
+    const pWs = preprocessor.preprocess('/workspace node -v');
+    const intentWs = preprocessor.extractFastIntent(pWs);
+    assert.ok(intentWs);
+    assert.strictEqual(intentWs.type, ActionType.TERMINAL_EXEC);
+    assert.strictEqual(intentWs.command, 'node -v');
+    console.log('  ✔ "/workspace node -v" parsed to TERMINAL_EXEC');
+
+    // Natural language prompt routing to cognitive planner
+    const pNl = preprocessor.preprocess('/pc check all modified files and tell me the git status');
+    const intentNl = preprocessor.extractFastIntent(pNl);
+    assert.strictEqual(intentNl, null, 'Natural language PC command should route to cognitive goal planner');
+    console.log('  ✔ Natural language computer use command gracefully routes to cognitive goal planner');
+
     // Clean teardown
     await bridge.stop();
     console.log('\n========================================================');
-    console.log('🎉 ALL STANDALONE TERMINAL BRIDGE TESTS PASSED (7/7)');
+    console.log('🎉 ALL STANDALONE TERMINAL BRIDGE & COMPUTER USE TESTS PASSED (8/8)');
     console.log('========================================================\n');
     process.exit(0);
 
@@ -175,3 +210,4 @@ async function runTests() {
 }
 
 runTests();
+

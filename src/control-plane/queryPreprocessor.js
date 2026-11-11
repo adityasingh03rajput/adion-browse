@@ -372,7 +372,7 @@ class QueryPreprocessor {
       }
     }
 
-    // E. Standalone Local PC Terminal Bridge Commands
+    // E. Standalone Local PC Terminal Bridge & Computer Use Commands
     const terminalMatch = text.match(/^(?:\/terminal\s+|terminal:\s*|run\s+(?:local\s+|pc\s+)?(?:terminal\s+|system\s+)?command:\s*|exec:\s*)(.+)$/i);
     if (terminalMatch) {
       const command = terminalMatch[1].trim();
@@ -381,6 +381,23 @@ class QueryPreprocessor {
         command,
         thought: `Execute local terminal command: ${command}`
       };
+    }
+
+    // Computer Use Slash Commands: /pc, /computer, /workspace
+    const computerUseMatch = text.match(/^(?:\/pc\s+|\/computer\s+|\/workspace\s+)(.+)$/i);
+    if (computerUseMatch) {
+      const sub = computerUseMatch[1].trim();
+      // If direct CLI command invocation, fast-path execute in <0.5ms
+      const isDirectShellCmd = /^(?:dir|ls|git|npm|npx|node|python|py|pip|echo|cat|curl|cd|powershell|Get-|Set-|pnpm|yarn|docker|code|which|where|findstr|grep|hostname|whoami|tasklist|netstat|ipconfig|ifconfig|cls|clear)\b/i.test(sub);
+      if (isDirectShellCmd) {
+        return {
+          type: ActionType.TERMINAL_EXEC,
+          command: sub,
+          thought: `Computer Use (PC): Execute \`${sub}\``
+        };
+      }
+      // Higher-level natural language instructions flow to Cognitive Goal Planner
+      return null;
     }
 
     // F. Browser Tabs & History (including "shut down this", "close this tab")
