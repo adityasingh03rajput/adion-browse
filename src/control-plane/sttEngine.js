@@ -72,7 +72,7 @@ class STTEngine {
     if (!rawInput || typeof rawInput !== 'string') return '';
     let text = rawInput.trim();
 
-    // A. Reject Whisper hallucinations on ambient noise or background audio
+    // A. Reject Whisper hallucinations on ambient noise, silence, or prompt regurgitation
     const hallucinationPatterns = [
       /gracias\s+por\s+ver\s+el\s+video/i,
       /subt[íi]tulos\s+realizados\s+por/i,
@@ -83,7 +83,11 @@ class STTEngine {
       /like\s+and\s+subscribe/i,
       /amara\.org/i,
       /community\s+subtitles/i,
-      /watching!/i
+      /watching!/i,
+      /browser\s+voice\s+commands/i,
+      /web\s+search,\s+page\s+navigation/i,
+      /page\s+navigation,\s+and\s+tab\s+management/i,
+      /tab\s+management\./i
     ];
 
     for (const pat of hallucinationPatterns) {
@@ -129,7 +133,6 @@ class STTEngine {
     formData.append('response_format', 'json');
     formData.append('language', 'en');
     formData.append('temperature', '0.0');
-    formData.append('prompt', 'Browser voice commands, web search, page navigation, and tab management.');
 
     const res = await fetch(config.groqWhisperUrl, {
       method: 'POST',

@@ -71,6 +71,7 @@ class AgentRuntime extends EventEmitter {
       chunkCount: 0,
       peakEnergy: 0,
       speechDetected: false,
+      speechFramesCount: 0,
       consecutiveSilenceFrames: 0,
       isSegmenting: false
     };
@@ -93,6 +94,7 @@ class AgentRuntime extends EventEmitter {
       chunkCount: 0,
       peakEnergy: 0,
       speechDetected: false,
+      speechFramesCount: 0,
       consecutiveSilenceFrames: 0,
       isSegmenting: false
     };
@@ -155,12 +157,20 @@ class AgentRuntime extends EventEmitter {
         console.log(`[AgentRuntime VAD] Voice activity initiated (RMS: ${rms.toFixed(4)})`);
       }
       this.audioSession.speechDetected = true;
+      this.audioSession.speechFramesCount = (this.audioSession.speechFramesCount || 0) + 1;
       this.audioSession.consecutiveSilenceFrames = 0;
     } else if (this.audioSession.speechDetected && !this.audioSession.isSegmenting) {
       this.audioSession.consecutiveSilenceFrames++;
       // Natural speech pause: 9 silence frames (~1.15s of post-speech pause)
       if (this.audioSession.consecutiveSilenceFrames >= 9 && this.audioSession.chunks.length >= 5) {
-        console.log(`[AgentRuntime VAD] Utterance concluded after pause (${this.audioSession.totalBytes} bytes accumulated)`);
+        // Discard transient acoustic clicks or breath under 8 speech frames (<100ms of actual voice)
+        if ((this.audioSession.speechFramesCount || 0) < 8) {
+          this.audioSession.speechDetected = false;
+          this.audioSession.speechFramesCount = 0;
+          this.audioSession.consecutiveSilenceFrames = 0;
+          return;
+        }
+        console.log(`[AgentRuntime VAD] Utterance concluded after pause (${this.audioSession.totalBytes} bytes accumulated, ${this.audioSession.speechFramesCount} speech frames)`);
         this.audioSession.isSegmenting = true;
         this.triggerAutoEndpoint();
       }
