@@ -227,10 +227,34 @@ async function runTests() {
     // Clean up test file
     try { fsMod.unlinkSync('D:\\Jarvis\\aditya.html'); } catch (_) {}
 
+    // ----------------------------------------------------
+    // Test 10: Conditional Multi-Step Computer Use & Physical Verification
+    // ----------------------------------------------------
+    console.log('\nTest 10: Testing conditional check-and-create workflow with physical disk verification...');
+    // Step A: Check if any .html file exists in D:\Jarvis
+    const checkRes = await bridge.executeCommand("Get-ChildItem -Path 'D:\\Jarvis' -Filter '*.html' -ErrorAction SilentlyContinue");
+    assert.strictEqual(checkRes.success, true);
+    assert.strictEqual(checkRes.stdout.trim(), '', 'No HTML files should exist prior to creation');
+    console.log('  ✔ Step 1: Checked D:\\Jarvis, confirmed 0 .html files exist');
+
+    // Step B: Create aditya.html when none found
+    const createCmd = "if (!(Test-Path 'D:\\Jarvis')) { New-Item -ItemType Directory -Force -Path 'D:\\Jarvis' | Out-Null }; Set-Content -Path 'D:\\Jarvis\\aditya.html' -Value 'hello'";
+    const createRes = await bridge.executeCommand(createCmd);
+    assert.strictEqual(createRes.success, true);
+
+    // Step C: Verify physical existence on disk
+    assert.ok(fsMod.existsSync('D:\\Jarvis\\aditya.html'), 'aditya.html must physically exist in D:\\Jarvis on disk');
+    const readBack = fsMod.readFileSync('D:\\Jarvis\\aditya.html', 'utf8');
+    assert.ok(readBack.includes('hello'), 'Content must contain "hello"');
+    console.log('  ✔ Step 2: Physically verified D:\\Jarvis\\aditya.html on disk with content "hello"');
+
+    // Clean up test file
+    try { fsMod.unlinkSync('D:\\Jarvis\\aditya.html'); } catch (_) {}
+
     // Clean teardown
     await bridge.stop();
     console.log('\n========================================================');
-    console.log('🎉 ALL STANDALONE TERMINAL BRIDGE & COMPUTER USE TESTS PASSED (9/9)');
+    console.log('🎉 ALL STANDALONE TERMINAL BRIDGE & COMPUTER USE TESTS PASSED (10/10)');
     console.log('========================================================\n');
     process.exit(0);
 

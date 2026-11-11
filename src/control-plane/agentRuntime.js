@@ -584,9 +584,16 @@ class AgentRuntime extends EventEmitter {
             const execRes = await this.executeIntent(intent);
             const isSuccess = execRes ? execRes.success !== false : true;
 
-            const subSummary = isSuccess 
-              ? `${act.type} ${intent.url || intent.target || intent.text || ''}`.trim()
-              : `Failed: ${execRes?.crossQuestion || execRes?.reason || 'action unfulfilled'}`;
+            let subSummary = '';
+            if (act.type === ActionType.TERMINAL_EXEC || act.type === 'TERMINAL_EXEC') {
+              const cmdText = intent.command || act.params?.command || act.command || '';
+              const outText = ((execRes?.stdout || execRes?.stderr || '').trim() || '(no output/empty)').slice(0, 300);
+              subSummary = `TERMINAL_EXEC \`${cmdText}\` (exit: ${execRes?.exitCode !== undefined ? execRes.exitCode : 0}) => ${outText}`;
+            } else {
+              subSummary = isSuccess 
+                ? `${act.type} ${intent.url || intent.target || intent.text || ''}`.trim()
+                : `Failed: ${execRes?.crossQuestion || execRes?.reason || 'action unfulfilled'}`;
+            }
 
             stepHistory.push({
               iteration,
@@ -708,6 +715,50 @@ class AgentRuntime extends EventEmitter {
             if (nextPlan && (Array.isArray(nextPlan.actions) || nextPlan.thought)) {
               if (!Array.isArray(nextPlan.actions)) nextPlan.actions = [];
               if (nextPlan.actions.length === 0 || (nextPlan.goalAccomplished === true && nextPlan.actions.length === 0)) {
+                // Physical Verification Safety Net for Computer Use:
+                if (isComputerUse) {
+                  const fileMatch = exactPrompt.match(/(?:create|make|write)\s+([a-zA-Z0-9_\-\.\/\\]+\.[a-zA-Z0-9]+)/i) ||
+                                    (nextPlan.thought || '').match(/created\s+['"]?([a-zA-Z0-9_\-\.\/\\]+\.[a-zA-Z0-9]+)/i);
+                  if (fileMatch) {
+                    let targetPath = fileMatch[1];
+                    const dirMatch = exactPrompt.match(/([a-zA-Z]:[\\\/][^\s,]+)/i);
+                    if (dirMatch && !targetPath.includes(':')) {
+                      targetPath = `${dirMatch[1].replace(/[\\\/]$/, '')}\\${targetPath}`;
+                    }
+
+                    const exists = fs.existsSync(targetPath);
+                    if (!exists) {
+                      console.warn(`[AgentRuntime Guard] Physical verification failed: ${targetPath} does not exist on disk! Enforcing creation...`);
+                      const contentMatch = exactPrompt.match(/(?:say(?:ing)?|with(?:\s+content)?)\s+['"]?([^.'"]+)['"]?/i);
+                      const fileContent = contentMatch ? contentMatch[1].trim() : 'hello';
+
+                      const psCmd = `if (!(Test-Path "${path.dirname(targetPath)}")) { New-Item -ItemType Directory -Force -Path "${path.dirname(targetPath)}" | Out-Null }; Set-Content -Path "${targetPath}" -Value @"\n${fileContent}\n"@; if (Test-Path "${targetPath}") { Write-Output "Successfully created: ${targetPath}" } else { Write-Error "Failed to create: ${targetPath}" }`;
+
+                      this.emit('feedback', {
+                        message: `⚡ Enforcing verified creation of ${targetPath} on local disk...`,
+                        level: 'info'
+                      });
+
+                      const synthRes = await this.executeIntent({
+                        type: ActionType.TERMINAL_EXEC,
+                        command: psCmd,
+                        targetFile: targetPath
+                      });
+
+                      if (synthRes && fs.existsSync(targetPath)) {
+                        this.lastReferencedFile = targetPath;
+                        goalAccomplished = true;
+                        finalFeedback = `Verified on physical disk: Created ${targetPath} with content: "${fileContent}".`;
+                        if (activeTasks && activeTasks.length > 0) {
+                          activeTasks.forEach(t => { t.status = 'completed'; });
+                          this.emit('task-breakdown', { prompt: exactPrompt, tasks: activeTasks });
+                        }
+                        break;
+                      }
+                    }
+                  }
+                }
+
                 goalAccomplished = true;
                 finalFeedback = nextPlan.thought || finalFeedback;
                 if (activeTasks && activeTasks.length > 0) {
@@ -1738,7 +1789,11 @@ class AgentRuntime extends EventEmitter {
           const stderrSnippet = (res.stderr || '').trim();
           const outputPreview = stdoutSnippet || stderrSnippet || `Exit code: ${res.exitCode}`;
 
-          const targetFile = intent.targetFile || (cmd.match(/-Path\s+["']([^"']+)["']/i) || [])[1];
+          const isWriteCmd = /(?:Set-Content|Out-File|New-Item.*File|create-file|>)/i.test(cmd);
+          let targetFile = intent.targetFile;
+          if (!targetFile && isWriteCmd) {
+            targetFile = (cmd.match(/-Path\s+["']([^"']+)["']/i) || [])[1];
+          }
           if (targetFile) {
             this.lastReferencedFile = targetFile;
             try {

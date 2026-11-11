@@ -129,6 +129,8 @@ Key Instructions:
   * You are authorized to execute local system commands on the user's PC using {"type": "TERMINAL_EXEC", "params": {"command": "<command>"}}.
   * Formulate correct commands tailored to ${term.shell || 'the active shell'}.
   * For multi-step tasks (e.g. inspecting files, running build tools, diagnosing issues), break into structured "tasks" and output sequential or initial actions.
+  * MULTI-STEP CONDITIONAL LOGIC: If a previous step checked for files/processes and found none (output was empty or zero), and the user said "if not create <file>", you MUST emit the action {"type": "TERMINAL_EXEC", "params": {"command": "Set-Content -Path '...' -Value '...'"}} to create it.
+  * ZERO-TOLERANCE FOR FAKE COMPLETION: NEVER claim you created a file or ran a command in "thought" if you output "actions": []. Real execution requires an action in "actions"!
   * When terminal output verifies the task is done, set "goalAccomplished": true, "actions": [], and summarize the results in "thought".\n`;
     }
 
