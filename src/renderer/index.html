@@ -336,6 +336,13 @@
             Maintains structured logging and performance metrics across restarts without terminal buffering lockups.
           </div>
         </div>
+        <div class="settings-group">
+          <label class="settings-label">AI Model & Custom API Providers</label>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-top:6px;">
+            <span style="font-size: 12px; color: var(--text-muted);">Configure Custom endpoints (DeepSeek, Ollama, OpenRouter) and API keys</span>
+            <button type="button" class="btn-sm" id="btnSettingsOpenModelConfig" style="background: rgba(0,242,254,0.15); border: 1px solid rgba(0,242,254,0.35); color:#00f2fe; cursor:pointer; padding: 4px 10px; border-radius: 6px; font-weight: 500;">⚙️ Configure</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -387,6 +394,85 @@
         <div class="task-footer-hint">
           <span>Tip: Press <kbd>Enter</kbd> to run • <kbd>Esc</kbd> to dismiss • Shortcut: <kbd>Ctrl+K</kbd></span>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI CUSTOM MODEL & API KEY CONFIGURATION MODAL -->
+  <div class="modal-overlay" id="modelConfigModal">
+    <div class="modal-card model-config-card">
+      <div class="modal-header">
+        <div class="task-modal-brand">
+          <div class="task-modal-icon-badge" style="background: rgba(0, 242, 254, 0.15); border-color: rgba(0, 242, 254, 0.4);">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00f2fe" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+          </div>
+          <div>
+            <h3 style="margin: 0; font-size: 15px; color: var(--text-main); font-weight: 600;">AI MODEL & API KEY SETTINGS</h3>
+            <span style="font-size: 11.5px; color: var(--text-muted);">Configure Custom Models (DeepSeek, Ollama, OpenRouter) or API Keys</span>
+          </div>
+        </div>
+        <button class="btn-close-sm" id="btnCloseModelConfigModal">&times;</button>
+      </div>
+      <div class="modal-body model-config-body" style="padding-top: 14px;">
+        <div class="model-config-group">
+          <label class="config-label" for="configProviderSelect">Target Provider</label>
+          <select id="configProviderSelect" class="config-select">
+            <option value="custom">🛠️ Custom Model (OpenAI-Compatible: DeepSeek, Ollama, OpenRouter)</option>
+            <option value="gemini">🧠 Google Gemini (gemini-2.0-flash, gemini-1.5-pro)</option>
+            <option value="openai">🌐 OpenAI / ChatGPT (gpt-4o, gpt-4o-mini, o1, o3-mini)</option>
+            <option value="anthropic">🟣 Anthropic / Claude (claude-3-5-sonnet, claude-3-5-haiku)</option>
+            <option value="groq">🤖 Groq Cloud (Default Zero-Cost / High-Speed LPU)</option>
+          </select>
+        </div>
+
+        <div class="model-config-hint" id="configProviderHint">
+          💡 Connect any OpenAI-compatible endpoint like DeepSeek, OpenRouter, local Ollama (<code>http://localhost:11434/v1</code>), LM Studio, or vLLM.
+        </div>
+
+        <div class="model-config-group" id="configApiUrlGroup">
+          <div class="config-label-row">
+            <label class="config-label" for="configApiUrlInput">API Base URL / Endpoint</label>
+            <div class="config-quick-presets">
+              <span class="preset-label">Presets:</span>
+              <button type="button" class="preset-pill" data-preset="ollama">Ollama (11434)</button>
+              <button type="button" class="preset-pill" data-preset="deepseek">DeepSeek</button>
+              <button type="button" class="preset-pill" data-preset="openrouter">OpenRouter</button>
+            </div>
+          </div>
+          <input type="text" id="configApiUrlInput" class="config-input" placeholder="e.g. http://localhost:11434/v1 or https://api.deepseek.com/v1" autocomplete="off">
+        </div>
+
+        <div class="model-config-group" id="configModelGroup">
+          <label class="config-label" for="configModelInput">Model Identifier</label>
+          <input type="text" id="configModelInput" class="config-input" placeholder="e.g. deepseek-chat, gpt-4o, gemini-2.0-flash, llama3.2" autocomplete="off">
+          <div class="model-suggestions-row" id="modelSuggestionsRow"></div>
+        </div>
+
+        <div class="model-config-group" id="configApiKeyGroup">
+          <label class="config-label" for="configApiKeyInput">API Key</label>
+          <div class="config-key-wrapper">
+            <input type="password" id="configApiKeyInput" class="config-input" placeholder="Enter API Key (optional for local Ollama)" autocomplete="off">
+            <button type="button" class="btn-toggle-key" id="btnToggleApiKey" title="Show / Hide API Key">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+          </div>
+          <span class="config-subhint">Stored locally on your device. Never shared with third parties.</span>
+        </div>
+
+        <div class="model-config-feedback" id="modelConfigFeedback" style="display:none;"></div>
+      </div>
+      <div class="modal-footer model-config-footer">
+        <button class="btn-modal-secondary" id="btnCancelModelConfig">Cancel</button>
+        <button class="btn-modal-primary" id="btnSaveModelConfig">
+          <span>Save & Activate Model</span>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        </button>
       </div>
     </div>
   </div>
@@ -728,6 +814,26 @@
             </div>
             <span class="skill-tag">/devtools</span>
           </div>
+        </div>
+      </div>
+
+      <!-- Floating AI Models & Providers Menu (Triggered by clicking AI Model badge) -->
+      <div class="model-menu-popover" id="modelSelectorMenu">
+        <div class="model-menu-header">
+          <div class="model-header-title-box">
+            <span class="model-header-title">AI Models & Providers</span>
+            <span class="model-header-subtitle">Select active model or configure custom API</span>
+          </div>
+          <button class="btn-model-menu-close" id="btnCloseModelMenu" title="Close">&times;</button>
+        </div>
+        <div class="model-menu-list" id="modelMenuList">
+          <!-- Rendered dynamically -->
+        </div>
+        <div class="model-menu-footer">
+          <button class="btn-model-config-action" id="btnOpenModelConfigModal">
+            <span class="config-action-icon">⚙️</span>
+            <span>Add Custom Model & API Keys</span>
+          </button>
         </div>
       </div>
 

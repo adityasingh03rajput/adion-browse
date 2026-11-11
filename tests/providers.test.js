@@ -222,6 +222,60 @@ async function testThirdPartyProviders() {
   assert.strictEqual(liveResult.actions[0].type, 'RELOAD');
   console.log('  ✔ ModelClient directly operated Adion Browse actions via active 3rd-party provider.');
 
+  // Test 6: Custom Provider Endpoint Normalization & API Key Configuration
+  console.log('\nTest 6: Custom Model (OpenAI-Compatible) URL Normalization & API Key Configuration...');
+  const customRegistry = new ProviderRegistry();
+  
+  // Configure Ollama with base URL (no trailing /chat/completions)
+  customRegistry.configureProvider('custom', {
+    apiUrl: 'http://localhost:11434/v1',
+    model: 'llama3.2',
+    apiKey: 'sk-custom-secret-key-12345'
+  });
+  
+  const customProv = customRegistry.getProvider('custom');
+  assert.strictEqual(customProv.isConfigured(), true);
+  assert.strictEqual(customProv.model, 'llama3.2');
+  
+  let capturedCustomUrl = null;
+  customProv.fetchFn = async (url) => {
+    capturedCustomUrl = url;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [{ message: { content: JSON.stringify({ thought: 'Ollama local inference', actions: [] }) } }]
+      })
+    };
+  };
+
+  await customProv.plan('summarize page', 'system');
+  assert.strictEqual(capturedCustomUrl, 'http://localhost:11434/v1/chat/completions');
+  console.log('  ✔ Custom endpoint base URL automatically normalized to include /chat/completions.');
+
+  // Test 7: Provider List Metadata, Status Badges & Masked Key Security
+  console.log('\nTest 7: Provider List Metadata, Status Badges & Masked Key Security...');
+  const providersList = customRegistry.listProviders();
+  assert.ok(providersList.providers.length >= 5);
+  
+  const customListed = providersList.providers.find(p => p.name === 'custom');
+  assert.ok(customListed);
+  assert.strictEqual(customListed.isConfigured, true);
+  assert.strictEqual(customListed.hasApiKey, true);
+  assert.strictEqual(customListed.maskedApiKey, 'sk-c...2345');
+  assert.strictEqual(customListed.currentModel, 'llama3.2');
+  assert.strictEqual(customListed.apiUrl, 'http://localhost:11434/v1');
+  console.log('  ✔ listProviders() returned sanitized metadata with masked key security and configuration status.');
+
+  // Test 8: Auto Mode switching & fallback
+  console.log('\nTest 8: Switching between Auto Mode and Explicit Providers...');
+  customRegistry.setActiveProvider('custom');
+  assert.strictEqual(customRegistry.getActiveProvider().name, 'custom');
+  
+  customRegistry.setActiveProvider('auto');
+  assert.strictEqual(customRegistry.activeProviderName, 'auto');
+  console.log('  ✔ Seamless transition between Auto mode and explicit custom models verified.');
+
   console.log('\n✅ ALL 3RD-PARTY AI MODEL INTEGRATION TESTS PASSED!');
 }
 

@@ -43,9 +43,14 @@ class CustomProvider extends BaseProvider {
       headers['Authorization'] = `Bearer ${this.apiKey}`;
     }
 
-    console.log(`[CustomProvider] Querying ${modelToUse} at ${this.apiUrl}...`);
+    let targetUrl = (this.apiUrl || '').trim();
+    if (targetUrl && !targetUrl.endsWith('/chat/completions') && !targetUrl.endsWith('/completions')) {
+      targetUrl = targetUrl.replace(/\/+$/, '') + '/chat/completions';
+    }
 
-    const res = await this.fetchFn(this.apiUrl, {
+    console.log(`[CustomProvider] Querying ${modelToUse} at ${targetUrl}...`);
+
+    const res = await this.fetchFn(targetUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload)

@@ -87,6 +87,25 @@ class ControlPlane {
     } else {
       console.log('[ControlPlane] Local Terminal Bridge is in standby (single toggle to connect in Jarvis GUI / Copilot).');
     }
+
+    // Load saved AI Provider configurations and active provider
+    try {
+      const client = this.runtime.modelClient || this.runtime.model;
+      if (client) {
+        const savedConfigs = store.getSetting('aiProviderConfigs') || {};
+        for (const [name, cfg] of Object.entries(savedConfigs)) {
+          if (cfg && typeof cfg === 'object') {
+            client.configureProvider(name, cfg);
+          }
+        }
+        const activeProvider = store.getSetting('activeAIProvider');
+        if (activeProvider) {
+          client.setActiveProvider(activeProvider);
+        }
+      }
+    } catch (err) {
+      console.warn('[ControlPlane] AI provider initialization notice:', err.message);
+    }
   }
 
   /**
@@ -358,15 +377,42 @@ class ControlPlane {
 
     // 3rd-Party Model Integration & Provider Management
     ipcMain.handle('ai:get-providers', () => {
-      return this.runtime.modelClient ? this.runtime.modelClient.listProviders() : { providers: [] };
+      const client = this.runtime.modelClient || this.runtime.model;
+      return client ? client.listProviders() : { providers: [] };
     });
 
     ipcMain.handle('ai:set-provider', (event, providerName) => {
-      return this.runtime.modelClient ? this.runtime.modelClient.setActiveProvider(providerName) : null;
+      const client = this.runtime.modelClient || this.runtime.model;
+      if (client) {
+        store.setSetting('activeAIProvider', providerName);
+        client.setActiveProvider(providerName);
+        return {
+          success: true,
+          activeProvider: providerName,
+          ...client.listProviders()
+        };
+      }
+      return { success: false, providers: [] };
     });
 
     ipcMain.handle('ai:configure-provider', (event, { name, apiKey, apiUrl, model }) => {
-      return this.runtime.modelClient ? this.runtime.modelClient.configureProvider(name, { apiKey, apiUrl, model }) : null;
+      const client = this.runtime.modelClient || this.runtime.model;
+      if (client) {
+        const configured = client.configureProvider(name, { apiKey, apiUrl, model });
+        const savedConfigs = store.getSetting('aiProviderConfigs') || {};
+        savedConfigs[name] = {
+          apiKey: apiKey !== undefined ? apiKey : (savedConfigs[name]?.apiKey || ''),
+          apiUrl: apiUrl !== undefined ? apiUrl : (savedConfigs[name]?.apiUrl || ''),
+          model: model !== undefined ? model : (savedConfigs[name]?.model || '')
+        };
+        store.setSetting('aiProviderConfigs', savedConfigs);
+        return {
+          success: true,
+          configured,
+          ...client.listProviders()
+        };
+      }
+      return { success: false };
     });
 
     // Standalone Local PC Terminal Bridge IPC Handlers

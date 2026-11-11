@@ -107,18 +107,23 @@ class ProviderRegistry {
     const active = this.getActiveProvider();
     const result = [];
     for (const [name, p] of this.providers.entries()) {
+      const key = p.apiKey ? String(p.apiKey).trim() : '';
+      const masked = key.length > 8 ? `${key.slice(0, 4)}...${key.slice(-4)}` : (key ? '••••••••' : '');
       result.push({
         name: p.name,
         displayName: p.displayName,
         isConfigured: p.isConfigured(),
-        isActive: active?.name === p.name,
+        isActive: (this.activeProviderName === name) || (this.activeProviderName === 'auto' && active?.name === p.name),
         currentModel: p.model,
+        apiUrl: p.apiUrl || '',
+        hasApiKey: Boolean(key.length > 0),
+        maskedApiKey: masked,
         supportedModels: p.supportedModels || [p.model]
       });
     }
     return {
-      activeProvider: active?.name || 'none',
-      mode: this.activeProviderName,
+      activeProvider: active?.name || 'groq',
+      mode: this.activeProviderName || 'auto',
       providers: result
     };
   }
@@ -140,7 +145,8 @@ class ProviderRegistry {
       name: provider.name,
       displayName: provider.displayName,
       isConfigured: provider.isConfigured(),
-      model: provider.model
+      model: provider.model,
+      apiUrl: provider.apiUrl
     };
   }
 }

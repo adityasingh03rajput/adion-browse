@@ -125,5 +125,12 @@ contextBridge.exposeInMainWorld('adionAPI', {
   diagnostics: {
     getConfig: () => ipcRenderer.invoke('diagnostics:get-config'),
     updateConfig: (cfg) => ipcRenderer.invoke('diagnostics:update-config', cfg)
+  },
+
+  // 3rd-Party & Custom AI Model Provider Management
+  ai: {
+    getProviders: () => ipcRenderer.invoke('ai:get-providers'),
+    setProvider: (providerName) => ipcRenderer.invoke('ai:set-provider', providerName),
+    configureProvider: (data) => ipcRenderer.invoke('ai:configure-provider', data)
   }
 });

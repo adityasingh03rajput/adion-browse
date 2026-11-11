@@ -277,7 +277,8 @@ document.addEventListener('DOMContentLoaded', () => {
       (settingsModal && settingsModal.classList.contains('show')) ||
       (telemetryOverlay && telemetryOverlay.classList.contains('show')) ||
       (jarvisPanelOverlay && jarvisPanelOverlay.classList.contains('open')) ||
-      (taskModal && taskModal.classList.contains('show'))
+      (taskModal && taskModal.classList.contains('show')) ||
+      (modelConfigModal && modelConfigModal.classList.contains('show'))
     );
     if (window.adionAPI && typeof window.adionAPI.setOverlayActive === 'function') {
       window.adionAPI.setOverlayActive(isAnyOpen);
@@ -291,6 +292,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (except !== 'settings' && settingsModal) settingsModal.classList.remove('show');
     if (except !== 'telemetry' && telemetryOverlay) telemetryOverlay.classList.remove('show');
     if (except !== 'jarvis' && jarvisPanelOverlay) jarvisPanelOverlay.classList.remove('open');
+    if (except !== 'modelConfig' && modelConfigModal) modelConfigModal.classList.remove('show');
     if (except !== 'task' && taskModal) {
       taskModal.classList.remove('show');
       if (btnTextAgent) btnTextAgent.classList.remove('active');
@@ -299,6 +301,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function closeAllModals() {
     closeAllModalsExcept('');
+    const modelMenu = document.getElementById('modelSelectorMenu');
+    if (modelMenu) modelMenu.classList.remove('open');
     updateOverlayState();
   }
 
@@ -1109,23 +1113,416 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && skillsQuickMenu && skillsQuickMenu.classList.contains('open')) {
-      closeSkillsMenu();
+    if (e.key === 'Escape') {
+      if (skillsQuickMenu && skillsQuickMenu.classList.contains('open')) {
+        closeSkillsMenu();
+      }
+      if (modelSelectorMenu && modelSelectorMenu.classList.contains('open')) {
+        closeModelMenu();
+      }
+      if (modelConfigModal && modelConfigModal.classList.contains('show')) {
+        closeModelConfigModal();
+      }
     }
   });
 
-  // Model selector dropdown toggle / cycle in side panel footer
+  // =========================================================================
+  // AI MODEL SELECTOR DROPDOWN & CUSTOM PROVIDER CONFIGURATION
+  // =========================================================================
   const modelSelectorBadge = document.getElementById('modelSelectorBadge');
   const activeModelLabel = document.getElementById('activeModelLabel');
+  const modelSelectorMenu = document.getElementById('modelSelectorMenu');
+  const modelMenuList = document.getElementById('modelMenuList');
+  const btnCloseModelMenu = document.getElementById('btnCloseModelMenu');
+  const btnOpenModelConfigModal = document.getElementById('btnOpenModelConfigModal');
+
+  const modelConfigModal = document.getElementById('modelConfigModal');
+  const btnCloseModelConfigModal = document.getElementById('btnCloseModelConfigModal');
+  const btnCancelModelConfig = document.getElementById('btnCancelModelConfig');
+  const btnSaveModelConfig = document.getElementById('btnSaveModelConfig');
+  const configProviderSelect = document.getElementById('configProviderSelect');
+  const configProviderHint = document.getElementById('configProviderHint');
+  const configApiUrlInput = document.getElementById('configApiUrlInput');
+  const configModelInput = document.getElementById('configModelInput');
+  const configApiKeyInput = document.getElementById('configApiKeyInput');
+  const btnToggleApiKey = document.getElementById('btnToggleApiKey');
+  const modelSuggestionsRow = document.getElementById('modelSuggestionsRow');
+  const modelConfigFeedback = document.getElementById('modelConfigFeedback');
+
+  let cachedProvidersData = null;
+
+  const providerMeta = {
+    custom: {
+      displayName: 'Custom Model (OpenAI-Compatible)',
+      icon: '🛠️',
+      hint: '💡 Connect any OpenAI-compatible API endpoint like DeepSeek, OpenRouter, local Ollama (<code>http://localhost:11434/v1</code>), LM Studio, or vLLM.',
+      defaultUrl: 'http://localhost:11434/v1',
+      defaultModel: 'deepseek-chat',
+      suggestedModels: ['deepseek-chat', 'deepseek-reasoner', 'llama3.2', 'qwen2.5-coder', 'mistral-nemo']
+    },
+    gemini: {
+      displayName: 'Google Gemini',
+      icon: '🧠',
+      hint: '💡 Connect Google Gemini via Google AI Studio API key (aistudio.google.com). Supports high-speed reasoning and vision.',
+      defaultUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
+      defaultModel: 'gemini-2.0-flash',
+      suggestedModels: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash']
+    },
+    openai: {
+      displayName: 'OpenAI / ChatGPT',
+      icon: '🌐',
+      hint: '💡 Connect OpenAI / ChatGPT via your platform.openai.com API key. Supports gpt-4o and reasoning models.',
+      defaultUrl: 'https://api.openai.com/v1/chat/completions',
+      defaultModel: 'gpt-4o',
+      suggestedModels: ['gpt-4o', 'gpt-4o-mini', 'o1', 'o3-mini', 'gpt-4-turbo']
+    },
+    anthropic: {
+      displayName: 'Anthropic / Claude',
+      icon: '🟣',
+      hint: '💡 Connect Anthropic Claude via console.anthropic.com API key. Supports Claude 3.5 Sonnet and Haiku.',
+      defaultUrl: 'https://api.anthropic.com/v1/messages',
+      defaultModel: 'claude-3-5-sonnet-20241022',
+      suggestedModels: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229']
+    },
+    groq: {
+      displayName: 'Groq Cloud (Default Zero-Cost)',
+      icon: '🤖',
+      hint: '💡 Ultra-fast LPU inference. Free tier included by default with automatic model failover.',
+      defaultUrl: 'https://api.groq.com/openai/v1/chat/completions',
+      defaultModel: 'openai/gpt-oss-120b',
+      suggestedModels: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b', 'allam-2-7b']
+    }
+  };
+
+  async function fetchProviders() {
+    try {
+      if (window.adionAPI?.ai?.getProviders) {
+        cachedProvidersData = await window.adionAPI.ai.getProviders();
+        return cachedProvidersData;
+      }
+    } catch (e) {
+      console.warn('[AI Model] Failed to query providers:', e);
+    }
+    return null;
+  }
+
+  function updateActiveBadgeLabel(activeName, mode) {
+    if (!activeModelLabel) return;
+    if (mode === 'auto') {
+      activeModelLabel.textContent = 'Auto';
+      return;
+    }
+    const labelMap = {
+      gemini: 'Gemini',
+      openai: 'GPT-4o',
+      anthropic: 'Claude',
+      groq: 'Groq',
+      custom: 'Custom'
+    };
+    activeModelLabel.textContent = labelMap[activeName] || activeName || 'Auto';
+  }
+
+  async function refreshActiveModelBadge() {
+    const data = await fetchProviders();
+    if (data) {
+      const active = data.mode === 'auto' ? 'auto' : data.activeProvider;
+      updateActiveBadgeLabel(active, data.mode);
+    }
+  }
+
+  function renderModelMenuList(data) {
+    if (!modelMenuList) return;
+    modelMenuList.innerHTML = '';
+
+    const isAutoActive = data?.mode === 'auto';
+    const autoItem = document.createElement('div');
+    autoItem.className = `model-menu-item ${isAutoActive ? 'active' : ''}`;
+    autoItem.innerHTML = `
+      <div class="model-item-main">
+        <span class="model-item-icon">⚡</span>
+        <div class="model-item-details">
+          <span class="model-item-name">Auto (Smart Failover)</span>
+          <span class="model-item-id">Auto-prioritizes configured models / zero-cost fallback</span>
+        </div>
+      </div>
+      <div class="model-item-actions">
+        ${isAutoActive ? '<span class="model-status-badge active">ACTIVE</span>' : ''}
+      </div>
+    `;
+    autoItem.addEventListener('click', async () => {
+      try {
+        await window.adionAPI?.ai?.setProvider('auto');
+        showJarvisToast('AI Model switched to Auto (Smart Failover)', 'success');
+        updateActiveBadgeLabel('auto', 'auto');
+        closeModelMenu();
+      } catch (err) {
+        showJarvisToast(`Failed to switch provider: ${err.message}`, 'error');
+      }
+    });
+    modelMenuList.appendChild(autoItem);
+
+    const providers = data?.providers || [];
+    providers.forEach(p => {
+      const meta = providerMeta[p.name] || {
+        displayName: p.displayName || p.name,
+        icon: '🤖'
+      };
+      const isCurrent = !isAutoActive && p.isActive;
+      const item = document.createElement('div');
+      item.className = `model-menu-item ${isCurrent ? 'active' : ''}`;
+
+      let badgeHtml = '';
+      if (isCurrent) {
+        badgeHtml = '<span class="model-status-badge active">ACTIVE</span>';
+      } else if (p.isConfigured) {
+        badgeHtml = '<span class="model-status-badge configured">READY</span>';
+      } else {
+        badgeHtml = '<span class="model-status-badge setup">SETUP</span>';
+      }
+
+      item.innerHTML = `
+        <div class="model-item-main">
+          <span class="model-item-icon">${meta.icon}</span>
+          <div class="model-item-details">
+            <span class="model-item-name">${meta.displayName || p.displayName}</span>
+            <span class="model-item-id">${p.currentModel || 'default'}</span>
+          </div>
+        </div>
+        <div class="model-item-actions">
+          ${badgeHtml}
+          <button class="btn-item-config" title="Configure ${meta.displayName}">⚙️</button>
+        </div>
+      `;
+
+      // Item click: activate provider
+      item.addEventListener('click', async (e) => {
+        if (e.target.closest('.btn-item-config')) return;
+        if (!p.isConfigured && p.name !== 'groq') {
+          closeModelMenu();
+          openModelConfigModal(p.name);
+          return;
+        }
+        try {
+          await window.adionAPI?.ai?.setProvider(p.name);
+          showJarvisToast(`AI Model switched to ${meta.displayName || p.displayName}`, 'success');
+          updateActiveBadgeLabel(p.name, p.name);
+          closeModelMenu();
+        } catch (err) {
+          showJarvisToast(`Failed to switch provider: ${err.message}`, 'error');
+        }
+      });
+
+      // Config button click
+      const btnCfg = item.querySelector('.btn-item-config');
+      if (btnCfg) {
+        btnCfg.addEventListener('click', (e) => {
+          e.stopPropagation();
+          closeModelMenu();
+          openModelConfigModal(p.name);
+        });
+      }
+
+      modelMenuList.appendChild(item);
+    });
+  }
+
+  async function openModelMenu() {
+    if (skillsQuickMenu && skillsQuickMenu.classList.contains('open')) {
+      closeSkillsMenu();
+    }
+    const data = await fetchProviders();
+    renderModelMenuList(data);
+    if (modelSelectorMenu) {
+      modelSelectorMenu.classList.add('open');
+    }
+  }
+
+  function closeModelMenu() {
+    if (modelSelectorMenu) {
+      modelSelectorMenu.classList.remove('open');
+    }
+  }
+
+  function updateConfigFormForProvider(providerKey) {
+    const meta = providerMeta[providerKey] || providerMeta.custom;
+    const providerData = cachedProvidersData?.providers?.find(p => p.name === providerKey);
+
+    if (configProviderHint) {
+      configProviderHint.innerHTML = meta.hint;
+    }
+
+    if (configApiUrlInput) {
+      configApiUrlInput.value = providerData?.apiUrl || meta.defaultUrl || '';
+    }
+
+    if (configModelInput) {
+      configModelInput.value = providerData?.currentModel || meta.defaultModel || '';
+    }
+
+    if (configApiKeyInput) {
+      configApiKeyInput.value = '';
+      configApiKeyInput.placeholder = providerData?.hasApiKey
+        ? `Saved: ${providerData.maskedApiKey || '••••••••'} (Leave blank to keep)`
+        : (providerKey === 'custom' ? 'Optional for local Ollama' : 'Enter API Key');
+    }
+
+    if (modelSuggestionsRow) {
+      modelSuggestionsRow.innerHTML = '';
+      (meta.suggestedModels || []).forEach(m => {
+        const pill = document.createElement('button');
+        pill.type = 'button';
+        pill.className = 'suggestion-pill';
+        pill.textContent = m;
+        pill.addEventListener('click', () => {
+          if (configModelInput) configModelInput.value = m;
+        });
+        modelSuggestionsRow.appendChild(pill);
+      });
+    }
+
+    if (modelConfigFeedback) {
+      modelConfigFeedback.style.display = 'none';
+      modelConfigFeedback.textContent = '';
+      modelConfigFeedback.className = 'model-config-feedback';
+    }
+  }
+
+  function openModelConfigModal(targetProvider = 'custom') {
+    closeModelMenu();
+    if (configProviderSelect) {
+      configProviderSelect.value = targetProvider;
+    }
+    updateConfigFormForProvider(targetProvider);
+    if (modelConfigModal) {
+      modelConfigModal.classList.add('show');
+    }
+  }
+
+  function closeModelConfigModal() {
+    if (modelConfigModal) {
+      modelConfigModal.classList.remove('show');
+    }
+  }
+
   if (modelSelectorBadge) {
-    const models = ['Auto', 'Gemini', 'Claude', 'GPT-4o', 'Groq'];
-    let currentModelIndex = 0;
-    modelSelectorBadge.addEventListener('click', async (e) => {
+    modelSelectorBadge.addEventListener('click', (e) => {
       e.stopPropagation();
-      currentModelIndex = (currentModelIndex + 1) % models.length;
-      const chosen = models[currentModelIndex];
-      if (activeModelLabel) activeModelLabel.textContent = chosen;
-      showJarvisToast(`AI Model switched to ${chosen}`, 'info');
+      if (modelSelectorMenu && modelSelectorMenu.classList.contains('open')) {
+        closeModelMenu();
+      } else {
+        openModelMenu();
+      }
+    });
+  }
+
+  if (btnCloseModelMenu) {
+    btnCloseModelMenu.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeModelMenu();
+    });
+  }
+
+  if (btnOpenModelConfigModal) {
+    btnOpenModelConfigModal.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openModelConfigModal('custom');
+    });
+  }
+
+  if (btnCloseModelConfigModal) {
+    btnCloseModelConfigModal.addEventListener('click', closeModelConfigModal);
+  }
+
+  if (btnCancelModelConfig) {
+    btnCancelModelConfig.addEventListener('click', closeModelConfigModal);
+  }
+
+  if (configProviderSelect) {
+    configProviderSelect.addEventListener('change', (e) => {
+      updateConfigFormForProvider(e.target.value);
+    });
+  }
+
+  // Quick preset pills for custom endpoints
+  document.querySelectorAll('.preset-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const preset = pill.getAttribute('data-preset');
+      if (configProviderSelect) configProviderSelect.value = 'custom';
+      updateConfigFormForProvider('custom');
+
+      if (preset === 'ollama') {
+        if (configApiUrlInput) configApiUrlInput.value = 'http://localhost:11434/v1';
+        if (configModelInput) configModelInput.value = 'llama3.2';
+      } else if (preset === 'deepseek') {
+        if (configApiUrlInput) configApiUrlInput.value = 'https://api.deepseek.com/v1';
+        if (configModelInput) configModelInput.value = 'deepseek-chat';
+      } else if (preset === 'openrouter') {
+        if (configApiUrlInput) configApiUrlInput.value = 'https://openrouter.ai/api/v1';
+        if (configModelInput) configModelInput.value = 'deepseek/deepseek-r1';
+      }
+    });
+  });
+
+  // Toggle API Key visibility
+  if (btnToggleApiKey && configApiKeyInput) {
+    btnToggleApiKey.addEventListener('click', () => {
+      const isPwd = configApiKeyInput.type === 'password';
+      configApiKeyInput.type = isPwd ? 'text' : 'password';
+    });
+  }
+
+  // Save & Activate Provider Configuration
+  if (btnSaveModelConfig) {
+    btnSaveModelConfig.addEventListener('click', async () => {
+      const providerName = configProviderSelect ? configProviderSelect.value : 'custom';
+      const apiUrl = configApiUrlInput ? configApiUrlInput.value.trim() : '';
+      const model = configModelInput ? configModelInput.value.trim() : '';
+      const apiKey = configApiKeyInput ? configApiKeyInput.value.trim() : '';
+
+      if (providerName === 'custom' && !apiUrl) {
+        if (modelConfigFeedback) {
+          modelConfigFeedback.style.display = 'block';
+          modelConfigFeedback.className = 'model-config-feedback error';
+          modelConfigFeedback.textContent = 'Please enter an API Endpoint URL for the custom provider.';
+        }
+        return;
+      }
+
+      try {
+        const payload = { name: providerName, apiUrl, model };
+        if (apiKey) {
+          payload.apiKey = apiKey;
+        }
+
+        await window.adionAPI?.ai?.configureProvider(payload);
+        await window.adionAPI?.ai?.setProvider(providerName);
+
+        const meta = providerMeta[providerName] || { displayName: providerName };
+        showJarvisToast(`Saved & activated ${meta.displayName} (${model || 'default'})`, 'success');
+        updateActiveBadgeLabel(providerName, providerName);
+
+        // Refresh cache
+        await fetchProviders();
+        closeModelConfigModal();
+      } catch (err) {
+        if (modelConfigFeedback) {
+          modelConfigFeedback.style.display = 'block';
+          modelConfigFeedback.className = 'model-config-feedback error';
+          modelConfigFeedback.textContent = `Error: ${err.message}`;
+        }
+      }
+    });
+  }
+
+  // Initial load: resolve active model from backend
+  refreshActiveModelBadge();
+
+  const btnSettingsOpenModelConfig = document.getElementById('btnSettingsOpenModelConfig');
+  if (btnSettingsOpenModelConfig) {
+    btnSettingsOpenModelConfig.addEventListener('click', (e) => {
+      e.stopPropagation();
+      settingsModal.classList.remove('show');
+      openModelConfigModal('custom');
     });
   }
 
@@ -1166,6 +1563,13 @@ document.addEventListener('DOMContentLoaded', () => {
       taskModal.classList.remove('show');
       if (btnTextAgent) btnTextAgent.classList.remove('active');
       changed = true;
+    }
+    if (modelConfigModal && modelConfigModal.classList.contains('show') && (e.target === modelConfigModal || !modelConfigModal.querySelector('.modal-card').contains(e.target))) {
+      modelConfigModal.classList.remove('show');
+      changed = true;
+    }
+    if (modelSelectorMenu && modelSelectorMenu.classList.contains('open') && !modelSelectorMenu.contains(e.target) && !modelSelectorBadge.contains(e.target)) {
+      modelSelectorMenu.classList.remove('open');
     }
     if (changed) {
       updateOverlayState();

@@ -53,6 +53,10 @@ class AgentRuntime extends EventEmitter {
     };
   }
 
+  get modelClient() {
+    return this.model;
+  }
+
   setState(newState, metadata = {}) {
     this.state = newState;
     this.emit('state-change', {
