@@ -17,7 +17,6 @@ const AnthropicProvider = require('./anthropicProvider');
 const GeminiProvider = require('./geminiProvider');
 const CustomProvider = require('./customProvider');
 const GroqProvider = require('./groqProvider');
-const PerchanceProvider = require('./perchanceProvider');
 
 class ProviderRegistry {
   constructor(config = {}) {
@@ -54,13 +53,7 @@ class ProviderRegistry {
       apiUrl: config.groqApiUrl,
       model: config.groqModel
     }));
-    this.register(new PerchanceProvider({
-      relayCode: config.perchanceRelayCode,
-      broker: config.perchanceRelayBroker,
-      model: config.perchanceModel,
-      timeoutMs: config.perchanceTimeoutMs,
-      pageUrl: config.perchancePageUrl
-    }));
+
   }
 
   register(provider) {
@@ -96,7 +89,7 @@ class ProviderRegistry {
     }
 
     // 2. Auto-prioritize configured 3rd-party models over default
-    const priority = ['openai', 'anthropic', 'gemini', 'custom', 'groq', 'perchance'];
+    const priority = ['openai', 'anthropic', 'gemini', 'custom', 'groq'];
     for (const name of priority) {
       const p = this.providers.get(name);
       if (p && p.isConfigured()) {

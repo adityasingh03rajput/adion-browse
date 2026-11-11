@@ -187,3 +187,22 @@ Adion Browse goes beyond rigid regex matching: it grounds natural language instr
 
 ## 📄 License
 ISC © Adion Browse
+
+## Perchance (Web Agent Relay) provider
+
+Ask Jarvis can route tasks to Perchance AI through your own agent page.
+
+1. Open the agent page terminal and run `prelay on` (needs its AI import).
+2. In Adion Browse open the model menu (Ctrl+J panel header) > Perchance > gear,
+   paste the same bridge CODE as the key, broker stays `emqx`, save.
+3. Select Perchance in the model menu and ask. Each answer spends your
+   Perchance quota; the relay is public, so never send secrets.
+Env overrides: PERCHANCE_RELAY_CODE, PERCHANCE_RELAY_BROKER
+(emqx|mosquitto|hive), PERCHANCE_MODEL, PERCHANCE_TIMEOUT_MS.
+
+## Perchance offline-proof loop (redirect + welcome)
+
+Selecting the Perchance model opens your agent page automatically
+(`ai:perchance-presence` watches for its heartbeat). Tap Connect there;
+Ask Jarvis posts a welcome message the moment the page answers.
+Heartbeat: `{t:'perchanceHello'}` every 25s on the relay UP topic.

@@ -50,7 +50,8 @@ function loadEnv() {
     mercuryApiKey: process.env.MERCURY_API_KEY || '',
     mercuryApiUrl: process.env.MERCURY_API_URL || 'https://api.mercury.ai/v1/chat/completions',
     mercuryModel: process.env.MERCURY_MODEL || 'mercury-coder',
-    localModelEndpoint: process.env.LOCAL_MODEL_ENDPOINT || 'http://127.0.0.1:11434/api/generate'
+    localModelEndpoint: process.env.LOCAL_MODEL_ENDPOINT || 'http://127.0.0.1:11434/api/generate',
+
   };
 }
 

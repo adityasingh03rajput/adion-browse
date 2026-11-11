@@ -386,20 +386,6 @@ class ControlPlane {
       if (client) {
         store.setSetting('activeAIProvider', providerName);
         client.setActiveProvider(providerName);
-        if (providerName === 'perchance') {
-          try {
-            const prov = client.registry ? client.registry.getProvider('perchance') : null;
-            const pageUrl = (prov && prov.pageUrl) || 'https://perchance.org/lmuyx39m93';
-            let target = null;
-            if (this.tabManager && this.tabManager.tabs) {
-              for (const t of this.tabManager.tabs.values()) {
-                if (t && t.url && String(t.url).indexOf('perchance.org') !== -1) { target = t; break; }
-              }
-            }
-            if (target) { try { this.tabManager.switchTab(target.id); } catch (e) {} }
-            else { try { this.tabManager.createTab(pageUrl); } catch (e) {} }
-          } catch (e) { console.warn('[ControlPlane] Perchance redirect notice:', e.message); }
-        }
         return {
           success: true,
           activeProvider: providerName,
@@ -428,27 +414,6 @@ class ControlPlane {
         };
       }
       return { success: false };
-    });
-
-    // Perchance presence: is the agent page online with `prelay on`?
-    ipcMain.handle('ai:perchance-presence', () => {
-      const client = this.runtime.modelClient || this.runtime.model;
-      const prov = client && client.registry ? client.registry.getProvider('perchance') : null;
-      if (!prov || typeof prov.isConfigured !== 'function' || !prov.isConfigured()) {
-        if (this.perchancePresenceWatch) { try { this.perchancePresenceWatch.stop(); } catch (e) {} this.perchancePresenceWatch = null; this.perchancePresenceKey = ''; }
-        return { configured: false, online: false, lastHelloAgeMs: -1 };
-      }
-      const key = prov.relayCode + '|' + prov.broker;
-      if (!this.perchancePresenceWatch || this.perchancePresenceKey !== key) {
-        if (this.perchancePresenceWatch) { try { this.perchancePresenceWatch.stop(); } catch (e) {} }
-        const relay = require('./providers/perchanceRelay');
-        const self = this;
-        this.perchancePresenceKey = key;
-        this.perchancePresenceAt = 0;
-        this.perchancePresenceWatch = relay.startPresenceWatch({ code: prov.relayCode, broker: prov.broker, onHello: () => { self.perchancePresenceAt = Date.now(); } });
-      }
-      const age = this.perchancePresenceAt ? Date.now() - this.perchancePresenceAt : -1;
-      return { configured: true, online: age !== -1 && age < 40000, lastHelloAgeMs: age };
     });
 
     // Standalone Local PC Terminal Bridge IPC Handlers

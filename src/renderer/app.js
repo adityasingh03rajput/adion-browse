@@ -829,45 +829,11 @@ document.addEventListener('DOMContentLoaded', () => {
       window.adionAPI.setSidePanelOpen(true);
     }
     updatePageSharingContext();
-    startPerchanceWelcomeWatch();
     setTimeout(() => {
       if (sidePanelInput) sidePanelInput.focus();
     }, 50);
   }
 
-  let perchanceWatchTimer = null;
-  async function pollPerchanceOnce() {
-    let st = null;
-    try {
-      if (window.adionAPI && window.adionAPI.ai && typeof window.adionAPI.ai.perchancePresence === 'function') {
-        st = await window.adionAPI.ai.perchancePresence();
-      }
-    } catch (e) { return 'retry'; }
-    if (!st || !st.configured) return 'stop';
-    let d = null;
-    try { d = await fetchProviders(); } catch (e) { return 'retry'; }
-    if (!d || d.mode === 'auto' || (d.mode !== 'perchance' && d.activeProvider !== 'perchance')) return 'stop';
-    return st.online ? 'online' : 'offline';
-  }
-  function startPerchanceWelcomeWatch() {
-    if (perchanceWatchTimer) return;
-    let polls = 0;
-    let welcomed = false;
-    const stopWatch = () => { if (perchanceWatchTimer) { clearInterval(perchanceWatchTimer); perchanceWatchTimer = null; } };
-    const tick = async () => {
-      polls++;
-      const s = await pollPerchanceOnce();
-      if (s === 'stop' || polls > 40 || welcomed) { stopWatch(); return; }
-      if (s === 'online') {
-        welcomed = true;
-        appendCopilotMessage('agent', '\u2726 Perchance connected \u2014 welcome back, Sir. I am live from your agent page. Ask me anything.');
-        showJarvisToast('Perchance connected \u2014 welcome back', 'success');
-        stopWatch();
-      }
-    };
-    tick();
-    perchanceWatchTimer = setInterval(tick, 3000);
-  }
   function closeSidePanel() {
     if (!jarvisSidePanel) return;
     jarvisSidePanel.classList.remove('open');
@@ -1227,14 +1193,6 @@ document.addEventListener('DOMContentLoaded', () => {
       defaultUrl: 'https://api.groq.com/openai/v1/chat/completions',
       defaultModel: 'openai/gpt-oss-120b',
       suggestedModels: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b', 'allam-2-7b']
-    },
-    perchance: {
-      displayName: 'Perchance (Web Agent Relay)',
-      icon: '✦',
-      hint: 'Ask Perchance AI through your connected agent page. Steps: 1) open the agent page terminal, 2) run <code>prelay on</code>, 3) paste the same bridge CODE below as the key. Replies spend your Perchance quota.',
-      defaultUrl: 'emqx',
-      defaultModel: 'perchance-ai',
-      suggestedModels: ['perchance-ai']
     }
   };
 
@@ -1262,8 +1220,7 @@ document.addEventListener('DOMContentLoaded', () => {
       openai: 'GPT-4o',
       anthropic: 'Claude',
       groq: 'Groq',
-      custom: 'Custom',
-      perchance: 'Perchance'
+      custom: 'Custom'
     };
     activeModelLabel.textContent = labelMap[target] || target || 'Auto';
   }
@@ -1346,13 +1303,9 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
           await window.adionAPI?.ai?.setProvider(p.name);
           showJarvisToast(`AI Model switched to ${meta.displayName || p.displayName}`, 'success');
-          if (p.name === 'perchance') {
-            appendCopilotMessage('agent', 'Opening your agent page \u2014 tap Connect there and I will join this panel.', true);
-            startPerchanceWelcomeWatch();
-          }
           updateActiveBadgeLabel(p.name, p.name);
           closeModelMenu();
-          if (!p.isConfigured && p.name !== 'groq' && p.name !== 'perchance') {
+          if (!p.isConfigured && p.name !== 'groq') {
             setTimeout(() => openModelConfigModal(p.name), 250);
           }
         } catch (err) {
@@ -1399,12 +1352,6 @@ document.addEventListener('DOMContentLoaded', () => {
       configProviderHint.innerHTML = meta.hint;
     }
 
-    if (configPageUrlGroup) {
-      configPageUrlGroup.style.display = providerKey === 'perchance' ? '' : 'none';
-    }
-    if (configPageUrlInput) {
-      configPageUrlInput.value = (providerKey === 'perchance' && providerData && providerData.pageUrl) ? providerData.pageUrl : 'https://perchance.org/lmuyx39m93';
-    }
     if (configApiUrlInput) {
       configApiUrlInput.value = providerData?.apiUrl || meta.defaultUrl || '';
     }
@@ -1415,15 +1362,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (configApiKeyInput) {
       configApiKeyInput.value = '';
-      if (providerKey === 'perchance') {
-        configApiKeyInput.placeholder = providerData?.hasApiKey
-          ? `Saved Bridge CODE: ${providerData.maskedApiKey || '••••••••'} (Leave blank to keep)`
-          : 'Paste bridge CODE from `prelay on` in the agent page terminal';
-      } else {
-        configApiKeyInput.placeholder = providerData?.hasApiKey
-          ? `Saved: ${providerData.maskedApiKey || '••••••••'} (Leave blank to keep)`
-          : (providerKey === 'custom' ? 'Optional for local Ollama' : 'Enter API Key');
-      }
+      configApiKeyInput.placeholder = providerData?.hasApiKey
+        ? `Saved: ${providerData.maskedApiKey || '••••••••'} (Leave blank to keep)`
+        : (providerKey === 'custom' ? 'Optional for local Ollama' : 'Enter API Key');
     }
 
     if (modelSuggestionsRow) {
@@ -1552,10 +1493,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
       try {
         const payload = { name: providerName, apiUrl, model };
-        if (providerName === 'perchance' && typeof configPageUrlInput !== 'undefined' && configPageUrlInput) {
-          const pu = configPageUrlInput.value.trim();
-          if (pu) payload.pageUrl = pu;
-        }
         if (apiKey) {
           payload.apiKey = apiKey;
         }
