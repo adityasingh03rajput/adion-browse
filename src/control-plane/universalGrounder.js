@@ -460,6 +460,61 @@ function buildDOMGroundingScript(targetQuery, options = {}) {
         ['a', 'button', 'input', 'select', 'textarea'].includes(bestMatch.tagName.toLowerCase()) ? bestMatch.tagName.toLowerCase() : 'generic'
       );
 
+      // Render Clean Target Focus Reticle
+      try {
+        let radar = document.getElementById('__jarvis_radar_root__');
+        if (radar) radar.remove();
+        radar = document.createElement('div');
+        radar.id = '__jarvis_radar_root__';
+        radar.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483645;overflow:hidden;font-family:Segoe UI,monospace;';
+
+        const style = document.createElement('style');
+        style.id = '__jarvis_radar_styles__';
+        style.textContent = '@keyframes targetFocusPulse { 0% { box-shadow: 0 0 0 2px #38bdf8, 0 0 16px rgba(56,189,248,0.5); } 50% { box-shadow: 0 0 0 3px #0284c7, 0 0 24px rgba(2,132,199,0.7); } 100% { box-shadow: 0 0 0 2px #38bdf8, 0 0 16px rgba(56,189,248,0.5); } }';
+        document.head.appendChild(style);
+
+        const lockBox = document.createElement('div');
+        lockBox.id = '__adion_inspect_overlay__';
+        lockBox.style.cssText = 'position:absolute;left:' + targetRect.left + 'px;top:' + targetRect.top + 'px;width:' + targetRect.width + 'px;height:' + targetRect.height + 'px;border:2px solid #38bdf8;background:rgba(56,189,248,0.18);border-radius:4px;animation:targetFocusPulse 1.2s ease-in-out infinite;z-index:2147483646;';
+
+        const tagBadge = document.createElement('div');
+        tagBadge.id = '__adion_inspect_badge__';
+        tagBadge.style.cssText = 'position:absolute;top:-24px;left:0;background:#0284c7;color:#ffffff;font-size:11px;font-family:monospace;font-weight:600;padding:2px 8px;border-radius:3px;box-shadow:0 2px 6px rgba(0,0,0,0.3);white-space:nowrap;';
+        tagBadge.innerText = '<' + bestMatch.tagName.toLowerCase() + '> ' + label;
+        lockBox.appendChild(tagBadge);
+        radar.appendChild(lockBox);
+        document.body.appendChild(radar);
+
+        setTimeout(() => {
+          if (radar) {
+            radar.style.transition = 'opacity 0.5s ease';
+            radar.style.opacity = '0';
+            setTimeout(() => {
+              if (radar && typeof radar.remove === 'function') radar.remove();
+            }, 500);
+          }
+        }, 2200);
+      } catch (_) {}
+
+      // Dispatch in-page pointer & mouse event sequence across both leaf and container
+      try {
+        const evOpts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, screenX: x, screenY: y, button: 0, buttons: 1 };
+        bestMatch.dispatchEvent(new PointerEvent('pointerdown', { ...evOpts, pointerId: 1, pointerType: 'mouse' }));
+        bestMatch.dispatchEvent(new MouseEvent('mousedown', evOpts));
+        if (bestMatch.focus) bestMatch.focus();
+        bestMatch.dispatchEvent(new PointerEvent('pointerup', { ...evOpts, buttons: 0 }));
+        bestMatch.dispatchEvent(new MouseEvent('mouseup', { ...evOpts, buttons: 0 }));
+        bestMatch.dispatchEvent(new MouseEvent('click', { ...evOpts, buttons: 0 }));
+
+        if (clickableContainer && clickableContainer !== bestMatch) {
+          clickableContainer.dispatchEvent(new PointerEvent('pointerdown', { ...evOpts, pointerId: 1, pointerType: 'mouse' }));
+          clickableContainer.dispatchEvent(new MouseEvent('mousedown', evOpts));
+          clickableContainer.dispatchEvent(new PointerEvent('pointerup', { ...evOpts, buttons: 0 }));
+          clickableContainer.dispatchEvent(new MouseEvent('mouseup', { ...evOpts, buttons: 0 }));
+          try { clickableContainer.click(); } catch (_) {}
+        }
+      } catch (_) {}
+
       return {
         found: true,
         x,
@@ -485,3 +540,4 @@ module.exports = {
   detectSemanticCluster,
   buildDOMGroundingScript
 };
+

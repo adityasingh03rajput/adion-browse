@@ -849,10 +849,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function formatCopilotText(rawText) {
     if (!rawText) return '';
+    // Highlight quoted targets as emerald badges first (before injecting any HTML tags with attribute quotes)
+    let formatted = String(rawText)
+      .replace(/"([^"]+)"/g, '<span class="copilot-entity-chip">&ldquo;$1&rdquo;</span>');
     // Highlight URLs as interactive cyan pill chips
-    let formatted = rawText.replace(/(https?:\/\/[^\s<]+)/g, '<a class="copilot-url-chip" href="$1" target="_blank" onclick="event.preventDefault(); if (window.adionAPI && window.adionAPI.tabs) window.adionAPI.tabs.createTab(\'$1\');">$1 ↗</a>');
-    // Highlight quoted targets as emerald badges
-    formatted = formatted.replace(/"([^"]+)"/g, '<span class="copilot-entity-chip">"$1"</span>');
+    formatted = formatted.replace(/(https?:\/\/[^\s<]+)/g, '<a class="copilot-url-chip" href="$1" target="_blank" onclick="event.preventDefault(); if (window.adionAPI && window.adionAPI.tabs) window.adionAPI.tabs.createTab(\'$1\');">$1 ↗</a>');
     return formatted;
   }
 

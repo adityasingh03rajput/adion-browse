@@ -84,8 +84,76 @@ async function runUniversalGroundingTests() {
   assert.ok(scriptSearch.includes('magnifying'), 'Script must inspect magnifying glass icons');
   console.log('  ✔ Abstract shape & SVG icon detection rules confirmed.');
 
+  // Test 6: End-to-End DOM Evaluation Simulation (BooksByMohit "Sign Up" vs "Log In")
+  console.log('\nTest 6: End-to-End DOM Mock Grounding ("Sign Up" on navbar with "Log In")...');
+  const elLogin = {
+    tagName: 'BUTTON',
+    innerText: 'Log In',
+    value: '',
+    getAttribute: (a) => a === 'role' ? 'button' : null,
+    getBoundingClientRect: () => ({ left: 400, top: 20, width: 80, height: 36 }),
+    closest: function() { return this; },
+    querySelector: () => null,
+    classList: ['btn-login'],
+    scrollIntoView: () => {},
+    dispatchEvent: () => {}
+  };
+
+  const elSignUp = {
+    tagName: 'BUTTON',
+    innerText: 'Sign Up',
+    value: '',
+    getAttribute: (a) => a === 'role' ? 'button' : null,
+    getBoundingClientRect: () => ({ left: 500, top: 20, width: 90, height: 36 }),
+    closest: function() { return this; },
+    querySelector: () => null,
+    classList: ['btn-signup', 'bg-orange'],
+    scrollIntoView: () => {},
+    dispatchEvent: () => {}
+  };
+
+  let list = [elLogin, elSignUp];
+  let idx = 0;
+  global.document = {
+    body: { appendChild: () => {} },
+    querySelector: () => null,
+    getElementById: () => null,
+    createElement: () => ({ setAttribute: () => {}, appendChild: () => {}, remove: () => {}, style: {} }),
+    head: { appendChild: () => {} },
+    createTreeWalker: () => ({
+      currentNode: list[0],
+      nextNode: () => {
+        idx++;
+        return list[idx] || null;
+      }
+    })
+  };
+  global.NodeFilter = { SHOW_ELEMENT: 1 };
+  global.window = {
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1', cursor: 'pointer' })
+  };
+
+  // Case A: Both "Log In" and "Sign Up" are present (BooksByMohit navbar)
+  idx = 0;
+  const resBoth = eval(buildDOMGroundingScript('Sign Up'));
+  assert.strictEqual(resBoth.found, true, 'Must find Sign Up button');
+  assert.strictEqual(resBoth.name, 'Sign Up', 'Must target Sign Up, NOT Log In');
+  assert.strictEqual(resBoth.tag, 'button');
+  assert.strictEqual(resBoth.x, 545);
+  assert.strictEqual(resBoth.y, 38);
+  console.log('  ✔ Correctly targeted "Sign Up" button on navbar amidst "Log In" button.');
+
+  // Case B: Only "Log In" is present on page when user asked for "Sign Up" -> Triggers Cross-Questioning!
+  list = [elLogin];
+  idx = 0;
+  const resOpposite = eval(buildDOMGroundingScript('Sign Up'));
+  assert.strictEqual(resOpposite.found, false, 'Must not click Log In blindly');
+  assert.strictEqual(resOpposite.reason, 'OPPOSITE_INTENT_DETECTED');
+  assert.ok(resOpposite.crossQuestion.includes('I found "Log In" on this page, but you asked for Sign Up'));
+  console.log('  ✔ Triggered cross-questioning when only opposite intent ("Log In") was present.');
+
   console.log('\n========================================================');
-  console.log('🎉 ALL UNIVERSAL ELEMENT GROUNDING TESTS PASSED (5/5)');
+  console.log('🎉 ALL UNIVERSAL ELEMENT GROUNDING TESTS PASSED (6/6)');
   console.log('========================================================\n');
 }
 

@@ -7,6 +7,7 @@ const ModelClient = require('./modelClient');
 const ModelRouter = require('./modelRouter');
 const SessionManager = require('./sessionManager');
 const QueryPreprocessor = require('./queryPreprocessor');
+const { buildDOMGroundingScript, detectSemanticCluster } = require('./universalGrounder');
 
 /**
  * Asynchronous Agent Runtime
@@ -978,6 +979,18 @@ class AgentRuntime extends EventEmitter {
         const destination = intent.url || intent.query || '';
         this.tabManager.navigateActiveTab(destination);
         this.emit('feedback', { message: `Navigating to: ${destination}`, level: 'success' });
+        // Wait for target page navigation to settle so subsequent plan actions (e.g. click "Sign Up") ground against the live loaded DOM
+        try {
+          const contents = activeTab?.view?.webContents;
+          if (contents) {
+            await new Promise((resolve) => {
+              const timer = setTimeout(resolve, 3000);
+              contents.once('did-finish-load', () => { clearTimeout(timer); resolve(); });
+              contents.once('dom-ready', () => { clearTimeout(timer); resolve(); });
+            });
+            await new Promise(r => setTimeout(r, 450));
+          }
+        } catch (_) {}
         if (destination.includes('wa.me') || destination.includes('whatsapp.com')) {
           let phone = intent.phone || '';
           let message = intent.message || '';
@@ -1790,507 +1803,56 @@ class AgentRuntime extends EventEmitter {
     const query = (targetQuery || '').trim();
     if (!query) return { success: false, reason: 'No target query provided' };
 
+    // If the contents are currently navigating or loading, wait for DOM readiness
+    if (contents.isLoading && contents.isLoading()) {
+      await new Promise((resolve) => {
+        const timeout = setTimeout(resolve, 2500);
+        contents.once('did-finish-load', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+        contents.once('dom-ready', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+      await new Promise(r => setTimeout(r, 350));
+    }
+
     // Attach CDP if not already attached
     if (this.cdp && !this.cdp.isAttached) {
       try { await this.cdp.attach(contents); } catch (_) {}
     }
 
-    // Step 1: In-page Live DOM Inspection & Coordinate Discovery
-    const inspectResult = await contents.executeJavaScript(`
-      (() => {
-        const query = ${JSON.stringify(query)};
-        const queryLower = query.toLowerCase().trim();
+    // Step 1: In-page Live DOM Inspection & Coordinate Discovery via Universal Grounder
+    const groundingScript = buildDOMGroundingScript(query, options);
+    const maxAttempts = options.attempts || 5;
+    let inspectResult = null;
 
-        // Helper: Strip emojis, zero-width chars, and punctuation for pure phonetic/semantic comparison
-        function stripSymbols(s) {
-          if (!s) return '';
-          return s
-            .replace(/[\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]/g, ' ')
-            .replace(/[\u00AD\u200B\u200C\u200D]/g, '')
-            .replace(/[\\u{1F600}-\\u{1F64F}\\u{1F300}-\\u{1F5FF}\\u{1F680}-\\u{1F6FF}\\u{1F1E0}-\\u{1F1FF}\\u{2600}-\\u{26FF}\\u{2700}-\\u{27BF}\\u{FE00}-\\u{FE0F}]/gu, '')
-            .replace(/[^\\p{L}\\p{N}\\s]/gu, ' ')
-            .replace(/\\s+/g, ' ')
-            .trim()
-            .toLowerCase();
-        }
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        inspectResult = await contents.executeJavaScript(groundingScript);
+      } catch (err) {
+        console.warn(`[AgentRuntime InspectClick] Attempt ${attempt} execution error:`, err.message);
+        inspectResult = { found: false, error: err.message };
+      }
 
-        // Helper: Strip all spaces, hyphens and punctuation to create a canonical compact token
-        // Resolves formatting quirks: "sign   up" -> "signup", "s i g n u p" -> "signup", "sign-up" -> "signup"
-        function compactNormalize(s) {
-          if (!s) return '';
-          return stripSymbols(s).replace(/[\\s\\-_\\.\\/\\\\:;,'"\`!?()\\[\\]{}]+/g, '');
-        }
+      if (inspectResult && inspectResult.found) {
+        break;
+      }
 
-        const cleanQuery = stripSymbols(query);
-        const compactQuery = compactNormalize(query);
+      // If an opposite intent was detected (e.g. Sign Up requested, but page only has Log In), don't keep polling
+      if (inspectResult && inspectResult.reason === 'OPPOSITE_INTENT_DETECTED') {
+        break;
+      }
 
-        // Semantic Intent Engine: Clusters & Disambiguation
-        const CLUSTERS = {
-          SIGN_UP: {
-            synonyms: ['signup', 'sign up', 'register', 'registration', 'create account', 'create an account', 'create new account', 'join', 'join now', 'join free', 'get started', 'start free', 'subscribe', 'new user'],
-            antonym: 'SIGN_IN',
-            iconHints: ['user-plus', 'person-add', 'user-add', 'signup'],
-            hrefPatterns: ['signup', 'register', 'join', 'create-account', 'get-started']
-          },
-          SIGN_IN: {
-            synonyms: ['signin', 'sign in', 'login', 'log in', 'enter', 'log into', 'my account', 'welcome back', 'portal', 'existing user'],
-            antonym: 'SIGN_UP',
-            iconHints: ['login', 'sign-in', 'lock', 'key', 'enter'],
-            hrefPatterns: ['login', 'signin', 'auth/login', 'portal']
-          },
-          SEARCH: {
-            synonyms: ['search', 'find', 'lookup', 'query', 'explore'],
-            iconHints: ['search', 'magnifying', 'glass', 'find', 'loupe'],
-            hrefPatterns: ['search', 'find', 'explore']
-          },
-          CART: {
-            synonyms: ['cart', 'basket', 'bag', 'checkout', 'my cart', 'shopping bag'],
-            iconHints: ['cart', 'shopping-cart', 'bag', 'basket'],
-            hrefPatterns: ['cart', 'basket', 'bag', 'checkout']
-          },
-          MENU: {
-            synonyms: ['menu', 'navigation', 'nav', 'hamburger', 'sidebar', 'drawer'],
-            iconHints: ['menu', 'bars', 'hamburger', 'nav-icon'],
-            hrefPatterns: []
-          }
-        };
-
-        function detectIntent(q) {
-          const comp = compactNormalize(q);
-          const clean = stripSymbols(q);
-          for (const [key, cl] of Object.entries(CLUSTERS)) {
-            for (const s of cl.synonyms) {
-              if (comp === compactNormalize(s) || clean === s) return key;
-            }
-          }
-          for (const [key, cl] of Object.entries(CLUSTERS)) {
-            for (const s of cl.synonyms) {
-              if (comp.includes(compactNormalize(s)) || clean.includes(s)) return key;
-            }
-          }
-          return null;
-        }
-
-        const activeIntent = detectIntent(query);
-        let oppositeCandidate = null;
-
-        const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'for', 'in', 'on', 'at', 'to', 'from', 'by', 'with', 'link', 'website', 'page', 'site', 'button', 'click', 'open', 'tap', 'please', 'can', 'you']);
-        const queryTokens = cleanQuery.split(/\\s+/).filter(t => !stopWords.has(t) && t.length > 1);
-
-        // Helper: Traverse all elements including open shadowRoots
-        function getAllVisibleElements(root = document.body) {
-          let elements = [];
-          if (!root) return elements;
-          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null, false);
-          let node = walker.currentNode;
-          while (node) {
-            const style = window.getComputedStyle(node);
-            if (style && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
-              const rect = node.getBoundingClientRect();
-              if (rect.width > 2 && rect.height > 2) {
-                elements.push(node);
-              }
-            }
-            if (node.shadowRoot) {
-              elements = elements.concat(getAllVisibleElements(node.shadowRoot));
-            }
-            node = walker.nextNode();
-          }
-          return elements;
-        }
-
-        let bestMatch = null;
-        let highestScore = 0;
-
-        // Direct CSS selector attempt
-        if (/^[#\\.]?[a-zA-Z0-9_\\-\\[\\]="':*^~$]+$/.test(query)) {
-          try {
-            const el = document.querySelector(query);
-            if (el) {
-              const r = el.getBoundingClientRect();
-              if (r.width > 2 && r.height > 2) {
-                bestMatch = el;
-                highestScore = 1500;
-              }
-            }
-          } catch (_) {}
-        }
-
-        if (!bestMatch) {
-          const all = getAllVisibleElements();
-          for (const el of all) {
-            let score = 0;
-            const text = (el.innerText || el.textContent || '').trim();
-            const textLower = text.toLowerCase();
-            const cleanText = stripSymbols(text);
-            const compactText = compactNormalize(text);
-
-            const valueAttr = (el.value || el.getAttribute('value') || '').trim();
-            const cleanValue = stripSymbols(valueAttr);
-            const compactValue = compactNormalize(valueAttr);
-
-            const title = (el.getAttribute('title') || '').trim();
-            const cleanTitle = stripSymbols(title);
-            const compactTitle = compactNormalize(title);
-
-            const ariaLabel = (el.getAttribute('aria-label') || '').trim();
-            const cleanAria = stripSymbols(ariaLabel);
-            const compactAria = compactNormalize(ariaLabel);
-
-            const placeholder = (el.getAttribute('placeholder') || '').trim();
-            const cleanPlaceholder = stripSymbols(placeholder);
-            const compactPlaceholder = compactNormalize(placeholder);
-
-            const alt = (el.getAttribute('alt') || '').trim();
-            const cleanAlt = stripSymbols(alt);
-            const compactAlt = compactNormalize(alt);
-
-            const role = (el.getAttribute('role') || '').toLowerCase();
-            const href = (el.getAttribute('href') || el.src || '').toLowerCase();
-            const id = (el.id || '').toLowerCase();
-            const testid = (el.getAttribute('data-testid') || '').toLowerCase();
-            const classStr = (typeof el.className === 'string' ? el.className : '').toLowerCase();
-
-            // Abstract Shape & SVG Icon Discovery
-            let svgIconHint = '';
-            const svgChild = el.tagName === 'SVG' ? el : el.querySelector('svg, i, span[class*="icon"], [class*="icon"]');
-            if (svgChild) {
-              const svgClass = (typeof svgChild.className === 'string' ? svgChild.className : (svgChild.className?.baseVal || '')).toLowerCase();
-              const svgName = (svgChild.getAttribute('data-icon') || svgChild.getAttribute('data-name') || '').toLowerCase();
-              const svgUse = svgChild.querySelector('use');
-              const useHref = (svgUse ? (svgUse.getAttribute('href') || svgUse.getAttribute('xlink:href') || '') : '').toLowerCase();
-              const svgTitle = (svgChild.querySelector('title') ? svgChild.querySelector('title').textContent : '').toLowerCase();
-              svgIconHint = [svgClass, svgName, useHref, svgTitle].join(' ');
-            }
-
-            // 1. Compact Canonical Matches (Handles Accidental Spaces like "sign   up" vs "signup" vs "sign-up")
-            if (compactQuery && (compactText === compactQuery || compactValue === compactQuery || compactAria === compactQuery || compactTitle === compactQuery || compactAlt === compactQuery)) {
-              score += 1200;
-            } else if (cleanText === cleanQuery || cleanTitle === cleanQuery || cleanAria === cleanQuery || cleanValue === cleanQuery) {
-              score += 1000;
-            } else if (textLower === queryLower || title.toLowerCase() === queryLower || ariaLabel.toLowerCase() === queryLower) {
-              score += 900;
-            }
-
-            // 2. Substring & Compact Substring matches
-            if (compactQuery && compactQuery.length >= 3) {
-              if (compactTitle.includes(compactQuery) || compactAria.includes(compactQuery)) {
-                score += 650;
-              } else if (compactText.includes(compactQuery) || compactValue.includes(compactQuery)) {
-                score += 550;
-              }
-            } else {
-              if (cleanTitle && (cleanTitle.includes(cleanQuery) || cleanQuery.includes(cleanTitle))) {
-                score += 600;
-              } else if (cleanAria && (cleanAria.includes(cleanQuery) || cleanQuery.includes(cleanAria))) {
-                score += 550;
-              } else if (cleanText && cleanText.includes(cleanQuery)) {
-                score += 450;
-              } else if (cleanPlaceholder && cleanPlaceholder.includes(cleanQuery)) {
-                score += 400;
-              }
-            }
-
-            // 3. Semantic Intent Engine & Antonym Disambiguation (e.g. Sign Up vs Sign In)
-            if (activeIntent && CLUSTERS[activeIntent]) {
-              const currentCluster = CLUSTERS[activeIntent];
-              const antonymKey = currentCluster.antonym;
-              const antonymCluster = antonymKey ? CLUSTERS[antonymKey] : null;
-
-              // Check if element fulfills active intent synonyms
-              for (const syn of currentCluster.synonyms) {
-                const compSyn = compactNormalize(syn);
-                if (compactText === compSyn || compactValue === compSyn || compactAria === compSyn || cleanText === syn) {
-                  score += 900; // Strong semantic intent match!
-                  break;
-                } else if (compactText.includes(compSyn) || cleanText.includes(syn)) {
-                  score += 600;
-                  break;
-                }
-              }
-
-              // Abstract shape / icon hints
-              for (const hint of currentCluster.iconHints) {
-                if (svgIconHint.includes(hint) || classStr.includes(hint)) {
-                  score += 450;
-                  break;
-                }
-              }
-
-              // Semantic href patterns (e.g. href="/signup")
-              for (const pattern of currentCluster.hrefPatterns) {
-                if (href.includes(pattern)) {
-                  score += 400;
-                  break;
-                }
-              }
-
-              // ANTONYM PROTECTION: Prevent "Sign Up" from mistakenly clicking "Sign In"!
-              if (antonymCluster) {
-                let isAntonym = false;
-                for (const ant of antonymCluster.synonyms) {
-                  const compAnt = compactNormalize(ant);
-                  if (compactText === compAnt || compactValue === compAnt || compactAria === compAnt || cleanText === ant) {
-                    isAntonym = true;
-                    break;
-                  }
-                }
-
-                if (isAntonym) {
-                  score -= 2500; // Strictly penalize opposite action!
-                  if (!oppositeCandidate || (cleanText && cleanText.length < 25)) {
-                    oppositeCandidate = {
-                      label: text || ariaLabel || title || 'Sign In',
-                      intent: antonymKey,
-                      requestedIntent: activeIntent
-                    };
-                  }
-                }
-              }
-            }
-
-            // 4. Multi-token semantic coverage & Search Highlight Awareness
-            const isHighlight = testid.includes('highlight') || el.tagName === 'MARK' || (el.className && typeof el.className === 'string' && el.className.includes('highlight'));
-            if (isHighlight && (cleanText === cleanQuery || cleanQuery.includes(cleanText) || cleanText.includes(cleanQuery))) {
-              score += 700; // Search engine highlight hit bonus across modern SPAs
-            }
-
-            if (queryTokens.length > 0) {
-              let matchedCount = 0;
-              const combinedClean = [cleanText, cleanValue, cleanTitle, cleanAria, cleanPlaceholder, href, id, testid, svgIconHint].join(' ');
-              for (const tok of queryTokens) {
-                if (combinedClean.includes(tok)) matchedCount++;
-              }
-              const coverage = matchedCount / queryTokens.length;
-              if (coverage >= 0.99) {
-                score += 350 + (queryTokens.length * 20);
-              } else if (coverage >= 0.5) {
-                score += 150 + (matchedCount * 25);
-              }
-            }
-
-            // Penalize indirect references / group membership notes e.g. "X is also in this group"
-            if (cleanTitle.includes('is also in this') || cleanText.includes('is also in this')) {
-              score -= 1000;
-            }
-
-            if (score <= 0) continue;
-
-            // 5. Specificity & Leaf-level Bonus vs Giant Container Penalty
-            const targetLen = cleanQuery.length;
-            const textLen = cleanText.length;
-            if (textLen > 0) {
-              const diff = Math.abs(textLen - targetLen);
-              if (diff <= 5) {
-                score += 500; // Major leaf specificity bonus!
-              } else if (diff <= 15) {
-                score += 250;
-              } else if (textLen > 150) {
-                score -= 300; // Penalize ancestor wrappers
-              }
-            }
-
-            // 6. Interactive context bonus
-            const isClickable = el.tagName === 'BUTTON' || el.tagName === 'A' || el.tagName === 'INPUT' || role === 'button' || role === 'link' ||
-              role === 'listitem' || role === 'row' || el.hasAttribute('tabindex') ||
-              window.getComputedStyle(el).cursor === 'pointer' || el.onclick != null;
-            if (isClickable) {
-              score += 100;
-            }
-
-            if (score > highestScore) {
-              highestScore = score;
-              bestMatch = el;
-            }
-          }
-        }
-
-        if (!bestMatch || highestScore < 100) {
-          if (oppositeCandidate && activeIntent) {
-            const reqName = activeIntent === 'SIGN_UP' ? 'Sign Up' : (activeIntent === 'SIGN_IN' ? 'Sign In' : activeIntent);
-            return {
-              found: false,
-              highestScore,
-              crossQuestion: 'I found "' + oppositeCandidate.label + '" on this page, but you asked for ' + reqName + '. Would you like me to click "' + oppositeCandidate.label + '", or look for another option?',
-              candidate: oppositeCandidate.label,
-              reason: 'OPPOSITE_INTENT_DETECTED'
-            };
-          }
-          return { found: false, highestScore, reason: 'ELEMENT_NOT_FOUND' };
-        }
-        }
-
-        // Scroll into view & compute exact live viewport coordinates
-        try {
-          bestMatch.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
-        } catch (_) {}
-
-        // Find closest clickable container (for dual-dispatch)
-        const clickableContainer = bestMatch.closest('div[role="button"], button, a, [role="link"], div[role="row"], div[role="listitem"], [role="gridcell"][tabindex], [tabindex="0"], [data-testid^="list-item"]') || bestMatch;
-        // Prefer actionable inner button or gridcell if container is an outer row
-        const innerActionable = clickableContainer.querySelector('[role="button"], [role="gridcell"][tabindex="0"], button, a') || clickableContainer;
-        const targetRect = (innerActionable && innerActionable.getBoundingClientRect().width > 0)
-          ? innerActionable.getBoundingClientRect()
-          : ((clickableContainer && clickableContainer.getBoundingClientRect().width > 0)
-            ? clickableContainer.getBoundingClientRect()
-            : bestMatch.getBoundingClientRect());
-        const rect = targetRect;
-        const x = Math.round(targetRect.left + targetRect.width / 2);
-        const y = Math.round(targetRect.top + targetRect.height / 2);
-
-        // Render Clean Chrome DevTools-Style Element Highlight HUD
-        let radar = document.getElementById('__jarvis_radar_root__');
-        if (radar) radar.remove();
-
-        radar = document.createElement('div');
-        radar.id = '__jarvis_radar_root__';
-        radar.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483645;overflow:hidden;font-family:Segoe UI,monospace;';
-
-        const style = document.createElement('style');
-        style.id = '__jarvis_radar_styles__';
-        style.textContent = '@keyframes targetFocusPulse { 0% { box-shadow: 0 0 0 2px #38bdf8, 0 0 16px rgba(56,189,248,0.5); } 50% { box-shadow: 0 0 0 3px #0284c7, 0 0 24px rgba(2,132,199,0.7); } 100% { box-shadow: 0 0 0 2px #38bdf8, 0 0 16px rgba(56,189,248,0.5); } }';
-        document.head.appendChild(style);
-
-        const labelText = (bestMatch.getAttribute('title') || bestMatch.innerText || bestMatch.getAttribute('aria-label') || bestMatch.tagName).slice(0, 35).replace(/\\n/g, ' ');
-
-        // Clean Target Lock Reticle (Chrome DevTools Box Model Overlay)
-        const lockBox = document.createElement('div');
-        lockBox.id = '__adion_inspect_overlay__';
-        lockBox.style.cssText = 'position:absolute;left:' + rect.left + 'px;top:' + rect.top + 'px;width:' + rect.width + 'px;height:' + rect.height + 'px;border:2px solid #38bdf8;background:rgba(56,189,248,0.18);border-radius:4px;animation:targetFocusPulse 1.2s ease-in-out infinite;z-index:2147483646;';
-
-        const tagBadge = document.createElement('div');
-        tagBadge.id = '__adion_inspect_badge__';
-        tagBadge.style.cssText = 'position:absolute;top:-24px;left:0;background:#0284c7;color:#ffffff;font-size:11px;font-family:monospace;font-weight:600;padding:2px 8px;border-radius:3px;box-shadow:0 2px 6px rgba(0,0,0,0.3);white-space:nowrap;';
-        tagBadge.innerText = '<' + bestMatch.tagName.toLowerCase() + '> ' + labelText;
-        lockBox.appendChild(tagBadge);
-        radar.appendChild(lockBox);
-
-        // 4. Chrome DevTools Inspect Tooltip Card (Active Dual Tracking HUD)
-        const cs = window.getComputedStyle(bestMatch);
-        const rawClasses = Array.from(bestMatch.classList || []).filter(c => !c.startsWith('__')).slice(0, 3).map(c => '.' + c).join('');
-        const dims = Math.round(rect.width) + ' × ' + Math.round(rect.height);
-        const color = cs.color || '#202124';
-        const font = (cs.fontSize || '14px') + ' ' + (cs.fontFamily || 'Roboto').split(',')[0].replace(/['"]/g, '');
-        const role = bestMatch.getAttribute('role') || (
-          ['a', 'button', 'input', 'select', 'textarea', 'header', 'nav', 'main', 'footer'].includes(bestMatch.tagName.toLowerCase()) ? bestMatch.tagName.toLowerCase() : 'generic'
-        );
-        const focusable = bestMatch.tabIndex >= 0 || ['input', 'button', 'select', 'textarea', 'a'].includes(bestMatch.tagName.toLowerCase()) || bestMatch.isContentEditable;
-
-        function rgbToHex(str) {
-          const m = (str || '').match(/\d+/g);
-          if (!m || m.length < 3) return '#21C063';
-          return '#' + [m[0], m[1], m[2]].map(val => parseInt(val, 10).toString(16).padStart(2, '0')).join('').toUpperCase();
-        }
-        const colorHex = rgbToHex(color);
-
-        const cardWidth = 260;
-        const cardHeight = 175;
-        let cardLeft = Math.max(12, Math.min(rect.left, window.innerWidth - cardWidth - 16));
-        let cardTop = (rect.top - cardHeight - 8 >= 8) 
-          ? (rect.top - cardHeight - 8) 
-          : (rect.bottom + 8 < window.innerHeight - cardHeight ? rect.bottom + 8 : 12);
-
-        const devtoolsCard = document.createElement('div');
-        devtoolsCard.style.cssText = 'position:fixed;left:' + Math.round(cardLeft) + 'px;top:' + Math.round(cardTop) + 'px;width:' + cardWidth + 'px;background:#ffffff;color:#202124;border:1px solid rgba(60,64,67,0.28);border-radius:6px;box-shadow:0 4px 18px rgba(0,0,0,0.28),0 1px 4px rgba(0,0,0,0.12);padding:8px 12px;font-size:11px;line-height:1.4;box-sizing:border-box;z-index:2147483647;pointer-events:none;';
-        devtoolsCard.innerHTML = 
-          '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e8eaed;padding-bottom:4px;margin-bottom:5px;">' +
-            '<div style="font-family:monospace;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;">' +
-              '<span style="color:#881280;font-weight:700;">' + bestMatch.tagName.toLowerCase() + '</span>' +
-              '<span style="color:#5f6368;">' + rawClasses + '</span>' +
-            '</div>' +
-            '<div style="font-family:monospace;color:#5f6368;font-size:10.5px;">' + dims + '</div>' +
-          '</div>' +
-          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">' +
-            '<span style="color:#5f6368;width:55px;">Color</span>' +
-            '<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' + colorHex + ';border:1px solid rgba(0,0,0,0.15);"></span>' +
-            '<span style="font-family:monospace;font-size:10.5px;color:#202124;">' + colorHex + '</span>' +
-          '</div>' +
-          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">' +
-            '<span style="color:#5f6368;width:55px;">Font</span>' +
-            '<span style="font-family:monospace;font-size:10.5px;color:#202124;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:175px;">' + font + '</span>' +
-          '</div>' +
-          '<div style="border-top:1px solid #e8eaed;padding-top:4px;margin-top:2px;">' +
-            '<div style="font-size:10px;font-weight:700;color:#5f6368;letter-spacing:0.8px;margin-bottom:3px;">ACCESSIBILITY</div>' +
-            '<div style="display:flex;justify-content:space-between;margin-bottom:2px;">' +
-              '<span style="color:#5f6368;">Contrast</span>' +
-              '<span><span style="background:#137333;color:#ffffff;border-radius:2px;padding:0 3px;font-size:9px;font-weight:700;margin-right:4px;">Aa</span><span style="font-weight:600;color:#137333;">7.51</span> <span style="color:#137333;">✓</span></span>' +
-            '</div>' +
-            '<div style="display:flex;justify-content:space-between;margin-bottom:2px;">' +
-              '<span style="color:#5f6368;">Name</span>' +
-              '<span style="font-weight:600;color:#202124;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (labelText ? '"' + labelText + '"' : '—') + '</span>' +
-            '</div>' +
-            '<div style="display:flex;justify-content:space-between;margin-bottom:2px;">' +
-              '<span style="color:#5f6368;">Role</span>' +
-              '<span style="font-family:monospace;color:#5f6368;">' + role + '</span>' +
-            '</div>' +
-            '<div style="display:flex;justify-content:space-between;margin-bottom:2px;">' +
-              '<span style="color:#5f6368;">Keyboard-focusable</span>' +
-              '<span>' + (focusable ? '<span style="color:#137333;font-weight:700;">✓ true</span>' : '<span style="color:#5f6368;">⊘ false</span>') + '</span>' +
-            '</div>' +
-          '</div>' +
-          '<div style="border-top:1px dashed #d1d5db;margin-top:5px;padding-top:4px;font-size:10px;font-weight:700;letter-spacing:1px;color:#0284c7;display:flex;align-items:center;gap:6px;">' +
-            '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#0284c7;box-shadow:0 0 6px #0284c7;"></span>' +
-            '<span>⚡ JARVIS ACTIVE: LOCK & CLICK</span>' +
-          '</div>';
-        radar.appendChild(devtoolsCard);
-
-        document.body.appendChild(radar);
-
-        setTimeout(() => {
-          if (radar) {
-            radar.style.transition = 'opacity 0.6s ease';
-            radar.style.opacity = '0';
-            setTimeout(() => radar.remove(), 600);
-          }
-        }, 2600);
-
-        // Dispatch in-page pointer & mouse event sequence across both leaf and container
-        const eventOpts = {
-          bubbles: true,
-          cancelable: true,
-          view: window,
-          clientX: x,
-          clientY: y,
-          screenX: x,
-          screenY: y,
-          button: 0,
-          buttons: 1
-        };
-
-        try {
-          bestMatch.dispatchEvent(new PointerEvent('pointerdown', { ...eventOpts, pointerId: 1, pointerType: 'mouse' }));
-          bestMatch.dispatchEvent(new MouseEvent('mousedown', eventOpts));
-          if (bestMatch.focus) bestMatch.focus();
-          bestMatch.dispatchEvent(new PointerEvent('pointerup', { ...eventOpts, buttons: 0 }));
-          bestMatch.dispatchEvent(new MouseEvent('mouseup', { ...eventOpts, buttons: 0 }));
-          bestMatch.dispatchEvent(new MouseEvent('click', { ...eventOpts, buttons: 0 }));
-
-          if (clickableContainer && clickableContainer !== bestMatch) {
-            clickableContainer.dispatchEvent(new PointerEvent('pointerdown', { ...eventOpts, pointerId: 1, pointerType: 'mouse' }));
-            clickableContainer.dispatchEvent(new MouseEvent('mousedown', eventOpts));
-            clickableContainer.dispatchEvent(new PointerEvent('pointerup', { ...eventOpts, buttons: 0 }));
-            clickableContainer.dispatchEvent(new MouseEvent('mouseup', { ...eventOpts, buttons: 0 }));
-            try { clickableContainer.click(); } catch(_) {}
-          }
-        } catch (_) {}
-
-        return {
-          found: true,
-          score: highestScore,
-          x,
-          y,
-          width: Math.round(rect.width),
-          height: Math.round(rect.height),
-          tag: bestMatch.tagName,
-          classes: rawClasses,
-          role,
-          label: labelText
-        };
-      })()
-    `).catch(err => ({ found: false, error: err.message }));
+      if (attempt < maxAttempts) {
+        await new Promise(r => setTimeout(r, 350));
+      }
+    }
 
     if (!inspectResult || !inspectResult.found) {
-      console.warn(`[AgentRuntime InspectClick] No element found for: "${query}"`);
+      console.warn(`[AgentRuntime InspectClick] No element found for: "${query}" (reason: ${inspectResult?.reason || 'NOT_FOUND'})`);
       return {
         success: false,
         reason: inspectResult?.reason || `Could not locate element matching "${query}" on page`,
@@ -2299,7 +1861,8 @@ class AgentRuntime extends EventEmitter {
       };
     }
 
-    const { x, y, width, height, tag, label } = inspectResult;
+    const { x, y, width, height, tag } = inspectResult;
+    const label = inspectResult.name || inspectResult.label || query;
 
     // Active Dual Tracking: Layer 2 - Emit real-time telemetry to browser shell & Jarvis Copilot side panel
     this.emit('inspector-telemetry', {
