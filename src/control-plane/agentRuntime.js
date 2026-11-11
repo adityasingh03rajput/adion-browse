@@ -1950,46 +1950,25 @@ class AgentRuntime extends EventEmitter {
         const x = Math.round(targetRect.left + targetRect.width / 2);
         const y = Math.round(targetRect.top + targetRect.height / 2);
 
-        // Render Full JARVIS Quantum Radar Scanning Effect & Target Lock-On HUD
-        let radar = document.getElementById('__jarvis_radar_root__');
-        if (radar) radar.remove();
+        // Render Authentic Chrome DevTools Element Inspect HUD
+        let inspectRoot = document.getElementById('__chrome_inspect_root__');
+        if (inspectRoot) inspectRoot.remove();
+        let oldRadar = document.getElementById('__jarvis_radar_root__');
+        if (oldRadar) oldRadar.remove();
 
-        radar = document.createElement('div');
-        radar.id = '__jarvis_radar_root__';
-        radar.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483645;overflow:hidden;font-family:Segoe UI,monospace;';
+        inspectRoot = document.createElement('div');
+        inspectRoot.id = '__chrome_inspect_root__';
+        inspectRoot.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,monospace,sans-serif;';
 
-        const style = document.createElement('style');
-        style.id = '__jarvis_radar_styles__';
-        style.textContent = '@keyframes jarvisLaserSweep { 0% { top: -5%; opacity: 0.1; } 20% { opacity: 0.9; } 80% { opacity: 0.9; } 100% { top: 105%; opacity: 0.1; } } @keyframes jarvisPulseGlow { 0%, 100% { box-shadow: 0 0 15px rgba(0,242,254,0.4), inset 0 0 15px rgba(0,242,254,0.2); } 50% { box-shadow: 0 0 35px rgba(0,242,254,0.9), inset 0 0 25px rgba(0,242,254,0.5); } } @keyframes jarvisTargetLock { 0% { transform: scale(1.08); border-color: #00f2fe; box-shadow: 0 0 12px #00f2fe; } 50% { transform: scale(1.0); border-color: #10b981; box-shadow: 0 0 28px #10b981; } 100% { transform: scale(1.0); border-color: #00f2fe; box-shadow: 0 0 16px #00f2fe; } }';
-        document.head.appendChild(style);
-
-        const cleanQDisplay = (cleanQuery || query || 'TARGET').toUpperCase();
         const labelText = (bestMatch.getAttribute('title') || bestMatch.innerText || bestMatch.getAttribute('aria-label') || bestMatch.tagName).slice(0, 35).replace(/\\n/g, ' ');
 
-        // 1. Futuristic JARVIS Telemetry Radar Banner
-        const banner = document.createElement('div');
-        banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);background:rgba(10,15,29,0.92);backdrop-filter:blur(14px);border:1px solid #00f2fe;border-radius:8px;padding:8px 24px;color:#00f2fe;font-size:12px;font-weight:700;letter-spacing:1.5px;box-shadow:0 0 25px rgba(0,242,254,0.45);display:flex;align-items:center;gap:12px;z-index:2147483647;';
-        banner.innerHTML = '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#00f2fe;box-shadow:0 0 10px #00f2fe;animation:jarvisPulseGlow 1s infinite;"></span><span>JARVIS COGNITIVE RADAR // TARGET LOCKED: ' + cleanQDisplay + '</span><span style="font-size:11px;opacity:0.8;color:#a5f3fc;border-left:1px solid rgba(0,242,254,0.4);padding-left:10px;">SCORE ' + highestScore + '</span>';
-        radar.appendChild(banner);
-
-        // 2. Cyan Laser Scanning Beam
-        const beam = document.createElement('div');
-        beam.style.cssText = 'position:absolute;left:0;right:0;height:4px;background:linear-gradient(90deg,transparent 0%,rgba(0,242,254,0.3) 20%,#00f2fe 50%,#ffffff 51%,#00f2fe 52%,rgba(0,242,254,0.3) 80%,transparent 100%);box-shadow:0 0 25px #00f2fe, 0 0 50px rgba(0,242,254,0.7);animation:jarvisLaserSweep 1.8s cubic-bezier(0.4,0,0.2,1) infinite;';
-        radar.appendChild(beam);
-
-        // 3. Holographic Target Lock-On Reticle & Chrome Box Model Highlight
+        // 1. Chrome DevTools Content Highlight Box
         const lockBox = document.createElement('div');
         lockBox.id = '__adion_inspect_overlay__';
-        lockBox.style.cssText = 'position:absolute;left:' + rect.left + 'px;top:' + rect.top + 'px;width:' + rect.width + 'px;height:' + rect.height + 'px;border:2px solid #00f2fe;background:rgba(111,168,220,0.42);border-radius:4px;animation:jarvisTargetLock 0.4s ease-out forwards;box-shadow:0 0 22px rgba(0,242,254,0.65);z-index:2147483646;';
+        lockBox.style.cssText = 'position:absolute;left:' + rect.left + 'px;top:' + rect.top + 'px;width:' + rect.width + 'px;height:' + rect.height + 'px;border:1.5px solid #00f2fe;background:rgba(111,168,220,0.42);box-shadow:0 0 16px rgba(0,242,254,0.55);border-radius:3px;z-index:2147483646;pointer-events:none;transition:all 0.15s ease-out;';
+        inspectRoot.appendChild(lockBox);
 
-        const tagBadge = document.createElement('div');
-        tagBadge.id = '__adion_inspect_badge__';
-        tagBadge.style.cssText = 'position:absolute;top:-26px;left:0;background:linear-gradient(135deg,#00f2fe 0%,#4facfe 100%);color:#0b0f19;font-size:11px;font-family:monospace;font-weight:700;padding:2px 8px;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.4);white-space:nowrap;';
-        tagBadge.innerText = '⌖ LOCKED: <' + bestMatch.tagName.toLowerCase() + '> ' + labelText + ' (' + Math.round(rect.width) + '×' + Math.round(rect.height) + ' at ' + x + ',' + y + ')';
-        lockBox.appendChild(tagBadge);
-        radar.appendChild(lockBox);
-
-        // 4. Chrome DevTools Inspect Tooltip Card (Active Dual Tracking HUD)
+        // 2. Chrome DevTools Inspect Tooltip Card (Active Dual Tracking HUD)
         const cs = window.getComputedStyle(bestMatch);
         const rawClasses = Array.from(bestMatch.classList || []).filter(c => !c.startsWith('__')).slice(0, 3).map(c => '.' + c).join('');
         const dims = Math.round(rect.width) + ' × ' + Math.round(rect.height);
@@ -2001,7 +1980,7 @@ class AgentRuntime extends EventEmitter {
         const focusable = bestMatch.tabIndex >= 0 || ['input', 'button', 'select', 'textarea', 'a'].includes(bestMatch.tagName.toLowerCase()) || bestMatch.isContentEditable;
 
         function rgbToHex(str) {
-          const m = (str || '').match(/\d+/g);
+          const m = (str || '').match(/\\d+/g);
           if (!m || m.length < 3) return '#21C063';
           return '#' + [m[0], m[1], m[2]].map(val => parseInt(val, 10).toString(16).padStart(2, '0')).join('').toUpperCase();
         }
@@ -2015,6 +1994,7 @@ class AgentRuntime extends EventEmitter {
           : (rect.bottom + 8 < window.innerHeight - cardHeight ? rect.bottom + 8 : 12);
 
         const devtoolsCard = document.createElement('div');
+        devtoolsCard.id = '__adion_inspect_badge__';
         devtoolsCard.style.cssText = 'position:fixed;left:' + Math.round(cardLeft) + 'px;top:' + Math.round(cardTop) + 'px;width:' + cardWidth + 'px;background:#ffffff;color:#202124;border:1px solid rgba(60,64,67,0.28);border-radius:6px;box-shadow:0 4px 18px rgba(0,0,0,0.28),0 1px 4px rgba(0,0,0,0.12);padding:8px 12px;font-size:11px;line-height:1.4;box-sizing:border-box;z-index:2147483647;pointer-events:none;';
         devtoolsCard.innerHTML = 
           '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e8eaed;padding-bottom:4px;margin-bottom:5px;">' +
@@ -2056,15 +2036,15 @@ class AgentRuntime extends EventEmitter {
             '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#0284c7;box-shadow:0 0 6px #0284c7;"></span>' +
             '<span>⚡ JARVIS ACTIVE: LOCK & CLICK</span>' +
           '</div>';
-        radar.appendChild(devtoolsCard);
+        inspectRoot.appendChild(devtoolsCard);
 
-        document.body.appendChild(radar);
+        document.body.appendChild(inspectRoot);
 
         setTimeout(() => {
-          if (radar) {
-            radar.style.transition = 'opacity 0.6s ease';
-            radar.style.opacity = '0';
-            setTimeout(() => radar.remove(), 600);
+          if (inspectRoot) {
+            inspectRoot.style.transition = 'opacity 0.4s ease';
+            inspectRoot.style.opacity = '0';
+            setTimeout(() => inspectRoot.remove(), 400);
           }
         }, 2600);
 
@@ -2583,8 +2563,8 @@ class AgentRuntime extends EventEmitter {
             // Helper: Clean emojis and symbols for rigorous recipient matching
             const cleanStr = s => (s || '')
               .toLowerCase()
-              .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}]/gu, '')
-              .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+              .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '')
+              .replace(/[^a-zA-Z0-9\s]/g, ' ')
               .replace(/\s+/g, ' ')
               .trim();
 
