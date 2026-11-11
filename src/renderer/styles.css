@@ -2154,7 +2154,7 @@ input:checked+.slider:before {
 .side-panel-header {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   padding: 10px 14px 4px 14px;
   background: transparent;
   border-bottom: none;
@@ -2541,6 +2541,96 @@ input:checked+.slider:before {
   color: #e2e8f0;
 }
 
+/* Category 9: Structured Task Breakdown & Goal Checklist */
+.copilot-card-tasks {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.16) 0%, rgba(30, 27, 75, 0.7) 100%);
+  border: 1px solid rgba(129, 140, 248, 0.4);
+  border-left: 3.5px solid #818cf8;
+  color: #e0e7ff;
+}
+
+.badge-indigo {
+  background: rgba(99, 102, 241, 0.22);
+  color: #a5b4fc;
+  border: 1px solid rgba(99, 102, 241, 0.4);
+}
+
+.copilot-task-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 6px;
+}
+
+.copilot-task-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  transition: all 0.2s ease;
+}
+
+.copilot-task-item.status-completed {
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.35);
+  color: #bbf7d0;
+}
+
+.copilot-task-item.status-in_progress {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(96, 165, 250, 0.45);
+  color: #dbeafe;
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.2);
+}
+
+.copilot-task-item.status-pending {
+  color: #94a3b8;
+  opacity: 0.85;
+}
+
+.copilot-task-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.copilot-task-item.status-completed .copilot-task-icon {
+  background: #22c55e;
+  color: #064e3b;
+}
+
+.copilot-task-item.status-in_progress .copilot-task-icon {
+  background: #3b82f6;
+  color: #ffffff;
+  animation: taskPulse 1.2s infinite ease-in-out;
+}
+
+.copilot-task-item.status-pending .copilot-task-icon {
+  background: rgba(255, 255, 255, 0.15);
+  color: #cbd5e1;
+}
+
+@keyframes taskPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.15); opacity: 0.8; }
+}
+
+.copilot-task-text {
+  flex: 1;
+  word-break: break-word;
+}
+
 /* Unified Badge Pill */
 .copilot-badge {
   display: inline-flex;
@@ -2625,6 +2715,169 @@ input:checked+.slider:before {
   padding: 2px 6px;
   border-radius: 4px;
   margin-bottom: 6px;
+}
+
+/* Local PC Terminal Bridge Pill & Toggle Switch */
+.copilot-terminal-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  color: #c9d1d9;
+  user-select: none;
+  transition: all 0.2s ease;
+}
+
+.copilot-terminal-pill:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.terminal-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.terminal-status-dot.dot-on {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+}
+
+.terminal-status-dot.dot-off {
+  background: #6e7681;
+}
+
+.terminal-status-label {
+  font-weight: 500;
+  letter-spacing: 0.2px;
+}
+
+.copilot-toggle-switch {
+  width: 28px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  position: relative;
+  cursor: pointer;
+  border: none;
+  outline: none;
+  padding: 2px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.copilot-toggle-switch .toggle-knob {
+  width: 12px;
+  height: 12px;
+  background: #ffffff;
+  border-radius: 50%;
+  display: block;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.copilot-toggle-switch.active {
+  background: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+}
+
+.copilot-toggle-switch.active .toggle-knob {
+  transform: translateX(12px);
+  background: #0b101b;
+}
+
+/* Local PC Terminal Execution Output Card in Copilot Timeline */
+.copilot-card-terminal {
+  align-self: flex-start;
+  width: 100%;
+  max-width: 100%;
+  background: #0d1117;
+  border: 1px solid rgba(48, 54, 61, 0.8);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  margin-top: 6px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.terminal-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: rgba(22, 27, 34, 0.8);
+  border-bottom: 1px solid rgba(48, 54, 61, 0.6);
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+.terminal-tag {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.terminal-tag.success {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+}
+
+.terminal-tag.error {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+
+.terminal-cmd {
+  color: #58a6ff;
+  font-weight: 500;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-meta {
+  color: #8b949e;
+  font-size: 10px;
+}
+
+.terminal-copy-btn {
+  background: transparent;
+  border: none;
+  color: #8b949e;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.terminal-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #c9d1d9;
+}
+
+.terminal-output-body {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #e6edf3;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: #090d13;
 }
 
 /* Chrome DevTools Element Inspector Telemetry Card in Copilot Side Panel */

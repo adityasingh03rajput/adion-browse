@@ -877,7 +877,29 @@ document.addEventListener('DOMContentLoaded', () => {
       const lower = (text || '').toLowerCase();
 
       // Intelligently categorize messages to break monochromacy with distinct color palettes
-      if (lower.includes('would you like me to') || lower.includes('did you mean') || lower.includes('clarification') || lower.includes('i found "') || lower.includes('opposite_intent')) {
+      if (lower.startsWith('📋 goal breakdown:') || lower.includes('goal breakdown:')) {
+        msgEl.className = 'copilot-msg-agent copilot-card-tasks';
+        const lines = text.replace(/^📋\s*goal breakdown:\s*/i, '').trim().split('\n').filter(Boolean);
+        let checklistHtml = '<div class="copilot-task-checklist">';
+        lines.forEach((line, idx) => {
+          const cleanLine = line.replace(/^\d+[\.\)]\s*/, '').trim();
+          checklistHtml += `
+            <div class="copilot-task-item status-${idx === 0 ? 'in_progress' : 'pending'}">
+              <span class="copilot-task-icon">${idx === 0 ? '⚡' : '⏳'}</span>
+              <span class="copilot-task-text">${formatCopilotText(cleanLine)}</span>
+            </div>
+          `;
+        });
+        checklistHtml += '</div>';
+
+        msgEl.innerHTML = `
+          <div class="copilot-card-header">
+            <span class="copilot-badge badge-indigo">📋 Task Breakdown</span>
+            ${copyBtnHtml}
+          </div>
+          <div class="copilot-card-body">${checklistHtml}</div>
+        `;
+      } else if (lower.includes('would you like me to') || lower.includes('did you mean') || lower.includes('clarification') || lower.includes('i found "') || lower.includes('opposite_intent')) {
         msgEl.className = 'copilot-msg-agent copilot-card-question';
         msgEl.innerHTML = `
           <div class="copilot-card-header">
@@ -1690,6 +1712,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnToggleDiagnostics = document.getElementById('btnToggleDiagnostics');
   const jarvisDiagStatus = document.getElementById('jarvisDiagStatus');
 
+  // Standalone Local PC Terminal Bridge UI Elements
+  const btnToggleTerminal = document.getElementById('btnToggleTerminal');
+  const jarvisTerminalStatus = document.getElementById('jarvisTerminalStatus');
+  const btnToggleTerminalBridge = document.getElementById('btnToggleTerminalBridge');
+  const copilotTerminalPill = document.getElementById('copilotTerminalPill');
+  const copilotTerminalDot = document.getElementById('copilotTerminalDot');
+  const copilotTerminalLabel = document.getElementById('copilotTerminalLabel');
+  const settingTerminalBridge = document.getElementById('settingTerminalBridge');
+
   let jarvisState = 'IDLE'; // IDLE | LISTENING | THINKING | EXECUTING | SUCCESS | ALERT
   let jarvisAudioLevel = 0;
   let jarvisToastTimer = null;
@@ -2049,6 +2080,63 @@ document.addEventListener('DOMContentLoaded', () => {
         if (sidePanelBody) sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
       });
     }
+
+    if (typeof window.adionAPI.agent.onTerminalOutput === 'function') {
+      window.adionAPI.agent.onTerminalOutput((data) => {
+        if (!data) return;
+        appendTerminalResult(data);
+      });
+    }
+  }
+
+  function escapeHTML(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function appendTerminalResult(res) {
+    if (!sidePanelTimeline) return;
+    if (sidePanelEmptyState) sidePanelEmptyState.style.display = 'none';
+
+    const card = document.createElement('div');
+    card.className = 'copilot-card-terminal';
+    const isSuccess = res.success !== false && (res.exitCode === 0 || res.exitCode === undefined);
+    const duration = res.durationMs ? `${res.durationMs}ms` : '';
+    const outputText = (res.stdout || res.stderr || '(No output)').trim();
+
+    card.innerHTML = `
+      <div class="terminal-card-header">
+        <span class="terminal-tag ${isSuccess ? 'success' : 'error'}">
+          ${isSuccess ? '● 0' : '● ' + (res.exitCode || 1)}
+        </span>
+        <span class="terminal-cmd">${escapeHTML(res.command || 'terminal')}</span>
+        <span class="terminal-meta">${duration}</span>
+        <button class="terminal-copy-btn" title="Copy Output">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+        </button>
+      </div>
+      <pre class="terminal-output-body">${escapeHTML(outputText)}</pre>
+    `;
+
+    const copyBtn = card.querySelector('.terminal-copy-btn');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(outputText);
+        showJarvisToast('Terminal output copied to clipboard', 'success');
+      });
+    }
+
+    sidePanelTimeline.appendChild(card);
+    if (sidePanelBody) sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
   }
 
   // --- Optional Component Toggles (MCP Server & Continuous Diagnostics) ---
@@ -2130,6 +2218,80 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // --- Local PC Terminal Bridge Single-Toggle & Status Handling ---
+  function updateTerminalUI(connected, shell = 'powershell.exe', port = 9225) {
+    const isConn = Boolean(connected);
+    if (btnToggleTerminal) {
+      if (isConn) btnToggleTerminal.classList.add('active');
+      else btnToggleTerminal.classList.remove('active');
+    }
+    if (jarvisTerminalStatus) {
+      if (isConn) {
+        jarvisTerminalStatus.innerHTML = `<span class="status-dot dot-on"></span> Online (:${port})`;
+        jarvisTerminalStatus.style.color = '#10b981';
+      } else {
+        jarvisTerminalStatus.innerHTML = `<span class="status-dot dot-off"></span> Standby`;
+        jarvisTerminalStatus.style.color = 'var(--text-muted)';
+      }
+    }
+
+    if (btnToggleTerminalBridge) {
+      if (isConn) btnToggleTerminalBridge.classList.add('active');
+      else btnToggleTerminalBridge.classList.remove('active');
+    }
+    if (copilotTerminalDot) {
+      copilotTerminalDot.className = `terminal-status-dot ${isConn ? 'dot-on' : 'dot-off'}`;
+    }
+    if (copilotTerminalLabel) {
+      if (isConn) {
+        const shellName = (shell || 'terminal').split(/[\\\/]/).pop();
+        copilotTerminalLabel.innerText = `Terminal: ${shellName} (:${port})`;
+        copilotTerminalLabel.style.color = '#10b981';
+      } else {
+        copilotTerminalLabel.innerText = 'Terminal Standby';
+        copilotTerminalLabel.style.color = 'var(--text-muted)';
+      }
+    }
+
+    if (settingTerminalBridge) {
+      settingTerminalBridge.checked = isConn;
+    }
+  }
+
+  async function handleTerminalToggle(e) {
+    if (e) e.stopPropagation();
+    if (!window.adionAPI || !window.adionAPI.terminal) return;
+    try {
+      const res = await window.adionAPI.terminal.toggle();
+      updateTerminalUI(res.connected, res.shell, res.port);
+      if (res.connected) {
+        showJarvisToast(`Local PC Terminal Bridge connected on port ${res.port} (${res.shell})`, 'success');
+      } else {
+        showJarvisToast('Terminal Bridge disconnected. Agent running in browser sandbox.', 'alert');
+      }
+    } catch (err) {
+      showJarvisToast('Terminal toggle error: ' + err.message, 'alert');
+    }
+  }
+
+  if (btnToggleTerminal) {
+    btnToggleTerminal.addEventListener('click', handleTerminalToggle);
+  }
+  if (btnToggleTerminalBridge) {
+    btnToggleTerminalBridge.addEventListener('click', handleTerminalToggle);
+  }
+  if (settingTerminalBridge) {
+    settingTerminalBridge.addEventListener('change', async () => {
+      if (!window.adionAPI || !window.adionAPI.terminal) return;
+      try {
+        const res = await window.adionAPI.terminal.toggle(settingTerminalBridge.checked);
+        updateTerminalUI(res.connected, res.shell, res.port);
+      } catch (err) {
+        showJarvisToast('Terminal toggle error: ' + err.message, 'alert');
+      }
+    });
+  }
+
   async function initComponentToggles() {
     if (window.adionAPI && window.adionAPI.mcp) {
       try {
@@ -2144,6 +2306,15 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const diagCfg = await window.adionAPI.diagnostics.getConfig();
         updateDiagUI(diagCfg.diagnosticLogging);
+      } catch (_) {}
+    }
+    if (window.adionAPI && window.adionAPI.terminal) {
+      try {
+        const termStatus = await window.adionAPI.terminal.getStatus();
+        updateTerminalUI(termStatus.connected, termStatus.shell, termStatus.port);
+        window.adionAPI.terminal.onStatusChange((status) => {
+          updateTerminalUI(status.connected, status.shell, status.port);
+        });
       } catch (_) {}
     }
   }

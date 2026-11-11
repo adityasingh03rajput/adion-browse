@@ -9,7 +9,7 @@
     "mcp": "node scripts/mcp-server.js",
     "mcp:forward": "node scripts/port-forward.js",
     "mcp:tunnel": "node scripts/port-forward.js --tunnel",
-    "test": "node tests/resilience.test.js && node tests/jarvis_session.test.js && node tests/preprocessor.test.js && node tests/mcp.test.js && node tests/mcp_optional_toggle.test.js && node tests/providers.test.js && node tests/toolbar_interaction.test.js && node tests/ui_ux_layout.test.js && node tests/whatsapp_strict_recipient.test.js && node tests/universal_grounding.test.js",
+    "test": "node tests/resilience.test.js && node tests/jarvis_session.test.js && node tests/preprocessor.test.js && node tests/mcp.test.js && node tests/mcp_optional_toggle.test.js && node tests/providers.test.js && node tests/toolbar_interaction.test.js && node tests/ui_ux_layout.test.js && node tests/whatsapp_strict_recipient.test.js && node tests/universal_grounding.test.js && node tests/terminal_bridge.test.js",
     "electron:direct": "cmd /c \"set ELECTRON_RUN_AS_NODE=&& set ELECTRON_CACHE=D:\\Adion Browse\\.cache\\electron&& electron .\""
   },
   "keywords": [

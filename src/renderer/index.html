@@ -317,6 +317,16 @@
           </div>
         </div>
         <div class="settings-group">
+          <label class="settings-label">Local PC Terminal Bridge (Standalone Executable)</label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="settingTerminalBridge">
+            <span>Connect local PC terminal bridge on startup (Port 9225)</span>
+          </label>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+            Enables the integrated AI to seamlessly execute local system commands directly from the browser without preinstalled Python.
+          </div>
+        </div>
+        <div class="settings-group">
           <label class="settings-label">System Diagnostics & Monitoring</label>
           <label class="checkbox-row">
             <input type="checkbox" id="settingDiagnosticLogging" checked>
@@ -501,6 +511,21 @@
         <div class="jarvis-strip-item">
           <div class="strip-icon-badge">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="4 17 10 11 4 5"></polyline>
+              <line x1="12" y1="19" x2="20" y2="19"></line>
+            </svg>
+          </div>
+          <div class="strip-item-info">
+            <span class="strip-label">Terminal Bridge</span>
+            <span class="strip-status" id="jarvisTerminalStatus"><span class="status-dot dot-off"></span> Standby</span>
+          </div>
+          <button class="btn-toggle-switch" id="btnToggleTerminal" title="Toggle Local PC Terminal Bridge (Standalone Executable)">
+            <span class="toggle-knob"></span>
+          </button>
+        </div>
+        <div class="jarvis-strip-item">
+          <div class="strip-icon-badge">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
               <line x1="8" y1="21" x2="16" y2="21"></line>
               <line x1="12" y1="17" x2="12" y2="21"></line>
@@ -567,6 +592,13 @@
   <!-- JARVIS COPILOT SIDE PANEL (CHROME GEMINI ARCHITECTURE) -->
   <aside class="jarvis-side-panel" id="jarvisSidePanel">
     <div class="side-panel-header">
+      <div class="copilot-terminal-pill" id="copilotTerminalPill" title="Local PC Terminal Bridge: Single toggle to link browser AI with PC terminal">
+        <span class="terminal-status-dot dot-off" id="copilotTerminalDot"></span>
+        <span class="terminal-status-label" id="copilotTerminalLabel">Terminal Standby</span>
+        <button class="copilot-toggle-switch" id="btnToggleTerminalBridge" title="Toggle Local PC Terminal Bridge">
+          <span class="toggle-knob"></span>
+        </button>
+      </div>
       <div class="side-panel-header-actions">
         <button class="btn-side-panel-options" id="btnSidePanelOptions" title="Options">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
@@ -632,6 +664,14 @@
           <span class="skills-header-hint">Type / to filter</span>
         </div>
         <div class="skills-menu-list">
+          <div class="skill-menu-item" data-action="/terminal " title="Execute local PC terminal command">
+            <span class="skill-icon">💻</span>
+            <div class="skill-info">
+              <span class="skill-name">Terminal Command</span>
+              <span class="skill-desc">Run local system command directly on PC</span>
+            </div>
+            <span class="skill-tag">/terminal</span>
+          </div>
           <div class="skill-menu-item" data-action="/summarize" title="Summarize the active webpage">
             <span class="skill-icon">⚡</span>
             <div class="skill-info">

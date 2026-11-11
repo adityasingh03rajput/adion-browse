@@ -15,7 +15,7 @@ const { buildDOMGroundingScript, detectSemanticCluster } = require('./universalG
  * grounds them against the DOM/CDP pipeline, and dispatches actions to Chromium.
  */
 class AgentRuntime extends EventEmitter {
-  constructor(tabManager, cdpBridge, contextEngine, visionGrounder, securityVault, sessionManager = null) {
+  constructor(tabManager, cdpBridge, contextEngine, visionGrounder, securityVault, sessionManager = null, terminalBridge = null) {
     super();
     this.tabManager = tabManager;
     this.cdp = cdpBridge;
@@ -23,6 +23,7 @@ class AgentRuntime extends EventEmitter {
     this.vision = visionGrounder;
     this.vault = securityVault;
     this.sessionManager = sessionManager || new SessionManager();
+    this.terminalBridge = terminalBridge;
     this.preprocessor = new QueryPreprocessor();
     this.stt = new STTEngine();
     this.model = new ModelClient();
@@ -273,6 +274,56 @@ class AgentRuntime extends EventEmitter {
   }
 
   /**
+   * Decompose compound or multi-clause user prompt into structured subtasks
+   */
+  synthesizeTasksFromPrompt(prompt, actions = []) {
+    const raw = (prompt || '').trim();
+    const tasks = [];
+    let id = 1;
+
+    // Split compound prompts by conjunctions: "and", "then", "after that", commas
+    const parts = raw.split(/\s*(?:,\s*then\s*|,\s*and\s*|,\s*|\band\s+then\b|\bthen\b|\band\b)\s*/i)
+      .map(p => p.trim())
+      .filter(p => p.length > 2);
+
+    if (parts.length > 1) {
+      for (let i = 0; i < parts.length; i++) {
+        tasks.push({
+          id: id++,
+          title: parts[i].charAt(0).toUpperCase() + parts[i].slice(1),
+          status: i === 0 ? 'in_progress' : 'pending'
+        });
+      }
+    } else if (actions && actions.length > 0) {
+      for (let i = 0; i < actions.length; i++) {
+        const act = actions[i];
+        let title = '';
+        if (act.type === ActionType.NAVIGATE) title = `Navigate to ${act.params?.url || act.params?.query || 'destination'}`;
+        else if (act.type === ActionType.CLICK_SELECTOR) title = `Click "${act.params?.target || 'target element'}"`;
+        else if (act.type === ActionType.CLOSE_TAB) title = 'Close active tab';
+        else if (act.type === ActionType.INPUT_TEXT) title = `Input text into ${act.params?.selector || 'form field'}`;
+        else if (act.type === 'WHATSAPP_CHAT_SEND') title = `Send WhatsApp message to "${act.params?.contact || 'recipient'}"`;
+        else if (act.type === ActionType.TERMINAL_EXEC || act.type === 'TERMINAL_EXEC') title = `Execute terminal: \`${act.params?.command || act.command || 'command'}\``;
+        else title = `Execute ${act.type}`;
+
+        tasks.push({
+          id: id++,
+          title,
+          status: i === 0 ? 'in_progress' : 'pending'
+        });
+      }
+    } else {
+      tasks.push({
+        id: 1,
+        title: raw.charAt(0).toUpperCase() + raw.slice(1),
+        status: 'in_progress'
+      });
+    }
+
+    return tasks;
+  }
+
+  /**
    * Process incoming voice or natural language text command
    * Uses QueryPreprocessor for <0.5ms fast-path intent routing, eliminating query latency.
    */
@@ -330,8 +381,9 @@ class AgentRuntime extends EventEmitter {
 
       // 3. TIER 1: AI-FIRST AUTONOMOUS GOAL EXECUTION & RE-PLANNING LOOP
       // Sense -> Plan -> Act -> Verify. The agent senses live page state after each action,
-      // reports execution results back to the model, and iteratively replans until the goal is accomplished.
-      const maxGoalIterations = this.maxGoalIterations || 15;
+      // reports execution results back to the model, tracks subtask breakdown, and iteratively replans until the goal is accomplished.
+      let maxGoalIterations = this.maxGoalIterations || 15;
+      const absoluteSafetyCap = 30;
       let iteration = 0;
       let goalAccomplished = false;
       const stepHistory = [];
@@ -348,6 +400,22 @@ class AgentRuntime extends EventEmitter {
 
       if (initialPlan && (Array.isArray(initialPlan.actions) || initialPlan.thought)) {
         if (!Array.isArray(initialPlan.actions)) initialPlan.actions = [];
+
+        // Synthesize or extract structured subtasks for user visibility
+        let activeTasks = (Array.isArray(initialPlan.tasks) && initialPlan.tasks.length > 0)
+          ? initialPlan.tasks
+          : this.synthesizeTasksFromPrompt(exactPrompt, initialPlan.actions);
+
+        // Emit initial task breakdown to Jarvis Copilot
+        if (activeTasks && activeTasks.length > 0) {
+          this.emit('task-breakdown', { prompt: exactPrompt, tasks: activeTasks });
+          const taskSummary = activeTasks.map((t, idx) => `${idx + 1}. ${t.title}`).join('\n');
+          this.emit('feedback', {
+            message: `📋 Goal Breakdown:\n${taskSummary}`,
+            level: 'info',
+            tasks: activeTasks
+          });
+        }
 
         // If conversational / courtesy / greeting with no actions needed
         if (initialPlan.actions.length === 0) {
@@ -372,6 +440,20 @@ class AgentRuntime extends EventEmitter {
         while (iteration < maxGoalIterations && !goalAccomplished) {
           iteration++;
           executedPlan = currentPlan;
+
+          // Dynamic Iteration Cap Extension requested by AI
+          if (typeof currentPlan.extendCapBy === 'number' && currentPlan.extendCapBy > 0) {
+            const ext = Math.min(Math.round(currentPlan.extendCapBy), 8);
+            const prevCap = maxGoalIterations;
+            maxGoalIterations = Math.min(maxGoalIterations + ext, absoluteSafetyCap);
+            if (maxGoalIterations > prevCap) {
+              console.log(`[AgentRuntime GoalLoop] ⚡ Dynamic cap extended by +${maxGoalIterations - prevCap} turns (new cap: ${maxGoalIterations}, safety max: ${absoluteSafetyCap})`);
+              this.emit('feedback', {
+                message: `⚡ Autonomous runway extended to ${maxGoalIterations} iterations to ensure goal verification.`,
+                level: 'info'
+              });
+            }
+          }
 
           const planThought = currentPlan.thought || `Executing autonomous step ${iteration}`;
           console.log(`[AgentRuntime GoalLoop Iteration #${iteration}]`, planThought);
@@ -403,6 +485,11 @@ class AgentRuntime extends EventEmitter {
                   status: 'SUCCESS',
                   summary: `NAVIGATE ${intent.url} (Already on site)`
                 });
+                // Update corresponding task status if pending
+                if (activeTasks && activeTasks.length > 0) {
+                  const navTask = activeTasks.find(t => t.status !== 'completed' && /navigat|go to|open/i.test(t.title));
+                  if (navTask) navTask.status = 'completed';
+                }
                 continue;
               }
             }
@@ -421,6 +508,21 @@ class AgentRuntime extends EventEmitter {
               summary: subSummary
             });
 
+            // Update subtask progress
+            if (activeTasks && activeTasks.length > 0) {
+              const currentTask = activeTasks.find(t => t.status === 'in_progress') || activeTasks.find(t => t.status === 'pending');
+              if (currentTask) {
+                if (isSuccess) {
+                  currentTask.status = 'completed';
+                  const nextTask = activeTasks.find(t => t.status === 'pending');
+                  if (nextTask) nextTask.status = 'in_progress';
+                } else {
+                  currentTask.status = 'pending';
+                }
+                this.emit('task-breakdown', { prompt: exactPrompt, tasks: activeTasks });
+              }
+            }
+
             if (!isSuccess) {
               allSubActionsSucceeded = false;
               turnOutcomeMsg = execRes?.crossQuestion || execRes?.reason || 'Action could not be executed';
@@ -433,19 +535,31 @@ class AgentRuntime extends EventEmitter {
             } else if (act.type === ActionType.CLICK_SELECTOR) {
               // Post-Click Goal Completion Detection:
               // If the user's goal was to click an element (e.g. "signup", "sign in", "login", "register", "submit")
-              // and that element was just clicked successfully:
+              // and that element was just clicked successfully, BUT ONLY IF there are no pending required inputs
+              // or if login credentials were required and verified:
               const rawLower = exactPrompt.toLowerCase();
               const targetLower = (intent.target || '').toLowerCase();
-              const isGoalTarget = (targetLower && rawLower.includes(targetLower)) ||
+              const hasPendingInputs = actionsInTurn.slice(i + 1).some(a => a.type === ActionType.INPUT_TEXT);
+              const mentionsCredentials = rawLower.includes('password') || rawLower.includes('pass') || rawLower.includes('with ');
+
+              // If credentials were mentioned in user prompt, only mark goal accomplished if credentials were typed or if target wasn't just a generic click
+              const isGoalTarget = !hasPendingInputs && !mentionsCredentials && (
+                (targetLower && rawLower.includes(targetLower)) ||
                 (rawLower.includes('sign') && (targetLower.includes('sign') || targetLower.includes('log'))) ||
                 (rawLower.includes('log') && targetLower.includes('log')) ||
                 (rawLower.includes('register') && targetLower.includes('register')) ||
-                rawLower.includes('click');
+                rawLower.includes('click')
+              );
 
               if (isGoalTarget) {
                 console.log(`[AgentRuntime GoalLoop] Primary target "${intent.target}" clicked successfully; goal accomplished!`);
                 goalAccomplished = true;
                 finalFeedback = `Successfully clicked "${intent.target}". Page transitioned to destination portal.`;
+                // Mark all remaining tasks as completed
+                if (activeTasks && activeTasks.length > 0) {
+                  activeTasks.forEach(t => { t.status = 'completed'; });
+                  this.emit('task-breakdown', { prompt: exactPrompt, tasks: activeTasks });
+                }
                 break;
               }
             }
@@ -460,6 +574,10 @@ class AgentRuntime extends EventEmitter {
           // Check if the model explicitly marked the overall goal as accomplished
           if (currentPlan.goalAccomplished === true && allSubActionsSucceeded) {
             goalAccomplished = true;
+            if (activeTasks && activeTasks.length > 0) {
+              activeTasks.forEach(t => { t.status = 'completed'; });
+              this.emit('task-breakdown', { prompt: exactPrompt, tasks: activeTasks });
+            }
             break;
           }
 
@@ -481,7 +599,7 @@ class AgentRuntime extends EventEmitter {
             user: `Goal: "${exactPrompt}"`,
             agent: `Progress so far:\n` + stepHistory.map(s => `- [Step ${s.iteration}] ${s.summary} (${s.status})`).join('\n') +
                    `\nCurrent Active Page: "${livePageContext.title || livePageContext.url}" (URL: ${livePageContext.url}) with buttons: [${(livePageContext.buttons || []).slice(0, 10).join(', ')}]\n` +
-                   `CRITICAL INSTRUCTION: If you already reached the site or clicked the requested button, DO NOT navigate back or repeat actions. If goal is satisfied, return "goalAccomplished": true, "actions": [].`
+                   `CRITICAL INSTRUCTION: If you already reached the site or clicked the requested button, DO NOT navigate back or repeat actions. If more turns are needed, specify "extendCapBy". If goal is satisfied, return "goalAccomplished": true, "actions": [].`
           });
 
           // Re-plan: Query model with observed state and step history
@@ -497,6 +615,10 @@ class AgentRuntime extends EventEmitter {
               if (nextPlan.actions.length === 0 || (nextPlan.goalAccomplished === true && nextPlan.actions.length === 0)) {
                 goalAccomplished = true;
                 finalFeedback = nextPlan.thought || finalFeedback;
+                if (activeTasks && activeTasks.length > 0) {
+                  activeTasks.forEach(t => { t.status = 'completed'; });
+                  this.emit('task-breakdown', { prompt: exactPrompt, tasks: activeTasks });
+                }
                 break;
               }
               currentPlan = nextPlan;
@@ -963,8 +1085,9 @@ class AgentRuntime extends EventEmitter {
 
     let executionResult = { success: true, intent };
 
+    const isTerminalAction = intent.type === ActionType.TERMINAL_EXEC || intent.type === 'TERMINAL_EXEC';
     const activeTab = this.tabManager ? this.tabManager.getActiveTab() : null;
-    if (!activeTab && intent.type !== ActionType.NEW_TAB) {
+    if (!activeTab && intent.type !== ActionType.NEW_TAB && !isTerminalAction) {
       throw new Error('No active browser tab found');
     }
 
@@ -1487,6 +1610,64 @@ class AgentRuntime extends EventEmitter {
         break;
       }
 
+      case ActionType.TERMINAL_EXEC:
+      case 'TERMINAL_EXEC': {
+        const cmd = intent.command || intent.cmd || intent.params?.command || intent.params?.cmd || '';
+        if (!cmd) {
+          executionResult = { success: false, reason: 'No command provided for TERMINAL_EXEC' };
+          this.emit('feedback', { message: 'Terminal execution failed: No command provided', level: 'warning' });
+          break;
+        }
+
+        if (!this.terminalBridge) {
+          executionResult = { success: false, reason: 'Terminal bridge is not initialized on runtime' };
+          this.emit('feedback', { message: 'Terminal Bridge is not initialized', level: 'warning' });
+          break;
+        }
+
+        this.setState(AgentState.EXECUTING_ACTION, { action: intent });
+        this.emit('feedback', { message: `💻 Executing PC Terminal: \`${cmd}\`...`, level: 'info' });
+
+        try {
+          // If bridge isn't running yet, auto-start it
+          if (!this.terminalBridge.isConnected) {
+            await this.terminalBridge.start();
+          }
+
+          const res = await this.terminalBridge.executeCommand(cmd, {
+            cwd: intent.cwd,
+            timeoutMs: intent.timeoutMs || 45000
+          });
+
+          const stdoutSnippet = (res.stdout || '').trim();
+          const stderrSnippet = (res.stderr || '').trim();
+          const outputPreview = stdoutSnippet || stderrSnippet || `Exit code: ${res.exitCode}`;
+
+          executionResult = {
+            success: res.success,
+            command: cmd,
+            stdout: res.stdout,
+            stderr: res.stderr,
+            exitCode: res.exitCode,
+            cwd: res.cwd,
+            durationMs: res.durationMs
+          };
+
+          this.emit('terminal-output', executionResult);
+          this.emit('feedback', {
+            message: res.success
+              ? `Terminal completed (\`${cmd}\`):\n${outputPreview.slice(0, 300)}`
+              : `Terminal error (\`${cmd}\`):\n${(stderrSnippet || stdoutSnippet).slice(0, 300)}`,
+            level: res.success ? 'success' : 'warning',
+            terminalResult: executionResult
+          });
+        } catch (termErr) {
+          executionResult = { success: false, error: termErr.message };
+          this.emit('feedback', { message: `Terminal execution failed: ${termErr.message}`, level: 'warning' });
+        }
+        break;
+      }
+
       default:
         console.warn('[AgentRuntime] Unhandled intent type:', intent.type);
         executionResult = { success: false, reason: `Unhandled intent type: ${intent.type}` };
@@ -1639,18 +1820,31 @@ class AgentRuntime extends EventEmitter {
           try { targetEl = document.querySelector(sel); } catch(_) {}
         }
 
-        if (!targetEl) {
-          // Find currently active element if editable
-          const active = document.activeElement;
-          if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable || active.getAttribute('role') === 'textbox')) {
-            targetEl = active;
-          }
+        // 2. If selector not found directly, or if selector was a description/fuzzy name
+        if (!targetEl && sel) {
+          const sLower = sel.toLowerCase();
+          const allInputs = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"], [role="textbox"]'));
+          
+          // Match by name or type or id
+          targetEl = allInputs.find(el => {
+            const n = (el.name || el.getAttribute('name') || '').toLowerCase();
+            const tp = (el.type || '').toLowerCase();
+            const id = (el.id || '').toLowerCase();
+            const p = (el.placeholder || el.getAttribute('placeholder') || '').toLowerCase();
+            const a = (el.getAttribute('aria-label') || '').toLowerCase();
+
+            if (sLower.includes('pass')) return tp === 'password' || n.includes('pass') || id.includes('pass');
+            if (sLower.includes('user') || sLower.includes('email') || sLower.includes('login') || sLower.includes('account')) {
+              return (tp === 'text' || tp === 'email') || n.includes('user') || n.includes('email') || id.includes('user') || id.includes('email');
+            }
+            return n.includes(sLower) || id.includes(sLower) || p.includes(sLower) || a.includes(sLower);
+          });
         }
 
         if (!targetEl) {
           // Search across standard DOM and Shadow DOM for editable elements
           const editables = Array.from(document.querySelectorAll(
-            'input[type="text"], input[type="search"], input:not([type]), textarea, [contenteditable="true"], [role="textbox"], [data-lexical-editor="true"], [data-slate-editor="true"]'
+            'input[type="text"], input[type="password"], input[type="email"], input[type="search"], input:not([type]), textarea, [contenteditable="true"], [role="textbox"], [data-lexical-editor="true"], [data-slate-editor="true"]'
           )).filter(el => {
             const rect = el.getBoundingClientRect();
             return rect.width > 20 && rect.height > 10 && window.getComputedStyle(el).display !== 'none' && window.getComputedStyle(el).visibility !== 'hidden';
@@ -1662,7 +1856,10 @@ class AgentRuntime extends EventEmitter {
               const p = (el.placeholder || el.getAttribute('placeholder') || '').toLowerCase();
               const a = (el.getAttribute('aria-label') || '').toLowerCase();
               const t = (el.getAttribute('title') || '').toLowerCase();
-              return p.includes(sLower) || a.includes(sLower) || t.includes(sLower);
+              const n = (el.name || el.getAttribute('name') || '').toLowerCase();
+              const id = (el.id || '').toLowerCase();
+              const tp = (el.type || '').toLowerCase();
+              return p.includes(sLower) || a.includes(sLower) || t.includes(sLower) || n.includes(sLower) || id.includes(sLower) || (sLower.includes('pass') && tp === 'password');
             });
           }
 
@@ -1689,8 +1886,13 @@ class AgentRuntime extends EventEmitter {
           targetEl.dispatchEvent(new Event('input', { bubbles: true }));
           targetEl.dispatchEvent(new Event('change', { bubbles: true }));
         } else {
+          // React 18+ controlled component native value setter support
           const proto = targetEl instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          const valueSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          const protoParent = Object.getPrototypeOf(proto);
+          const parentSetter = protoParent ? Object.getOwnPropertyDescriptor(protoParent, 'value')?.set : null;
+          const setter = valueSetter || parentSetter;
+
           if (setter) {
             setter.call(targetEl, txt);
           } else {

@@ -74,9 +74,15 @@ class GroqProvider extends BaseProvider {
           const data = await res.json();
           const rawContent = data.choices?.[0]?.message?.content || '';
           const parsed = this.parseJSONResponse(rawContent);
-          if (parsed && (Array.isArray(parsed.actions) || parsed.thought)) {
+          // If model returned a refusal (e.g. "I'm sorry, but I can't help with that") with 0 actions, failover to next candidate model
+          const thoughtLower = (parsed?.thought || '').toLowerCase();
+          const isRefusal = thoughtLower.includes("can't help") || thoughtLower.includes("cannot help") || thoughtLower.includes("i'm sorry");
+          if (parsed && !isRefusal && (Array.isArray(parsed.actions) || parsed.thought)) {
             if (!Array.isArray(parsed.actions)) parsed.actions = [];
             return parsed;
+          }
+          if (isRefusal) {
+            console.warn(`[GroqProvider Backoff] Model ${candidateModel} emitted safety refusal. Failing over to next candidate...`);
           }
         }
 
@@ -84,8 +90,8 @@ class GroqProvider extends BaseProvider {
         const errText = res ? await res.text().catch(() => '') : (lastError?.message || 'Network failure');
         lastError = new Error(`Groq API error ${status} on model ${candidateModel}: ${errText.slice(0, 120)}`);
 
-        // If retryable condition
-        if ([503, 502, 504, 429, 404].includes(status) || !res) {
+        // If retryable condition or refusal
+        if ([503, 502, 504, 429, 404, 400, 200].includes(status) || !res) {
           const nextModel = candidates[(attempt + 1) % candidates.length];
           const delay = Math.round(baseDelayMs * Math.pow(1.5, attempt) + Math.random() * 200);
           console.warn(`[GroqProvider Backoff] Retryable condition on ${candidateModel}. Failover to candidate: ${nextModel} in ${delay}ms...`);

@@ -372,7 +372,18 @@ class QueryPreprocessor {
       }
     }
 
-    // E. Browser Tabs & History (including "shut down this", "close this tab")
+    // E. Standalone Local PC Terminal Bridge Commands
+    const terminalMatch = text.match(/^(?:\/terminal\s+|terminal:\s*|run\s+(?:local\s+|pc\s+)?(?:terminal\s+|system\s+)?command:\s*|exec:\s*)(.+)$/i);
+    if (terminalMatch) {
+      const command = terminalMatch[1].trim();
+      return {
+        type: ActionType.TERMINAL_EXEC,
+        command,
+        thought: `Execute local terminal command: ${command}`
+      };
+    }
+
+    // F. Browser Tabs & History (including "shut down this", "close this tab")
     if (/(?:close\s+(?:this\s+)?tab|shut\s+(?:down\s+)?(?:this\s+)?(?:tab|page|window)?|close\s+this|shut\s+this\s+down)/i.test(lower)) {
       return { type: ActionType.CLOSE_TAB, thought: 'Close current tab' };
     }

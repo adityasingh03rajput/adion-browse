@@ -8,6 +8,7 @@ const MultiAgentPool = require('./multiAgentPool');
 const DataSynthesizer = require('./dataSynthesizer');
 const ZKPMesh = require('./zkpMesh');
 const MCPServer = require('../mcp/mcpServer');
+const TerminalBridge = require('../terminal/terminalBridge');
 const store = require('../main/store');
 const { IPCChannels, AgentState } = require('./protocol');
 
@@ -28,13 +29,21 @@ class ControlPlane {
     this.synthesizer = new DataSynthesizer();
     this.zkpMesh = new ZKPMesh();
 
+    // Initialize Standalone Local Terminal Bridge
+    this.terminalBridge = new TerminalBridge({
+      cwd: process.cwd()
+    });
+
     this.runtime = new AgentRuntime(
       this.tabManager,
       this.cdp,
       this.context,
       this.vision,
-      this.vault
+      this.vault,
+      null, // sessionManager
+      this.terminalBridge
     );
+    this.runtime.terminalBridge = this.terminalBridge;
 
     // Initialize Chromium Model Context Protocol (MCP) Server
     this.mcpServer = new MCPServer({
@@ -66,6 +75,17 @@ class ControlPlane {
       });
     } else {
       console.log('[ControlPlane] MCP server is in standby (optional component, toggle on in Jarvis GUI or Settings).');
+    }
+
+    // Terminal Bridge: Standalone PC Terminal connector (single toggle in browser)
+    const shouldStartTerminal = Boolean(store.getSetting('terminalBridgeEnabled'));
+    if (shouldStartTerminal) {
+      console.log('[ControlPlane] Launching Local Terminal Bridge per saved user configuration...');
+      this.terminalBridge.start().catch((err) => {
+        console.warn('[ControlPlane] Terminal bridge startup notice:', err.message);
+      });
+    } else {
+      console.log('[ControlPlane] Local Terminal Bridge is in standby (single toggle to connect in Jarvis GUI / Copilot).');
     }
   }
 
@@ -108,6 +128,19 @@ class ControlPlane {
     this.runtime.on('jarvis-notification', (data) => {
       this.sendToUI('jarvis:notification', data);
     });
+
+    this.runtime.on('terminal-output', (data) => {
+      this.sendToUI('agent:terminal-output', data);
+    });
+
+    if (this.terminalBridge) {
+      this.terminalBridge.on('status-change', (data) => {
+        this.sendToUI('terminal:status-change', data);
+      });
+      this.terminalBridge.on('command-completed', (data) => {
+        this.sendToUI('agent:terminal-output', data);
+      });
+    }
 
     // Session Memory updates
     if (this.runtime.sessionManager) {
@@ -335,6 +368,31 @@ class ControlPlane {
     ipcMain.handle('ai:configure-provider', (event, { name, apiKey, apiUrl, model }) => {
       return this.runtime.modelClient ? this.runtime.modelClient.configureProvider(name, { apiKey, apiUrl, model }) : null;
     });
+
+    // Standalone Local PC Terminal Bridge IPC Handlers
+    ipcMain.handle('terminal:get-status', () => {
+      return this.terminalBridge ? this.terminalBridge.getStatus() : { connected: false };
+    });
+
+    ipcMain.handle('terminal:toggle', async (event, enable) => {
+      if (!this.terminalBridge) return { connected: false };
+      const status = await this.terminalBridge.toggle(enable);
+      const isConnected = this.terminalBridge.isConnected;
+      store.setSetting('terminalBridgeEnabled', isConnected);
+      this.sendToUI('terminal:status-change', this.terminalBridge.getStatus());
+      return this.terminalBridge.getStatus();
+    });
+
+    ipcMain.handle('terminal:exec', async (event, { command, cwd, timeoutMs }) => {
+      if (!this.terminalBridge) {
+        return { success: false, stderr: 'Terminal bridge is not initialized' };
+      }
+      return await this.terminalBridge.executeCommand(command, { cwd, timeoutMs });
+    });
+
+    ipcMain.handle('terminal:get-history', () => {
+      return this.terminalBridge ? this.terminalBridge.history : [];
+    });
   }
 
   /**
@@ -352,6 +410,11 @@ class ControlPlane {
   }
 
   destroy() {
+    if (this.terminalBridge) {
+      try {
+        this.terminalBridge.stop();
+      } catch (_) {}
+    }
     if (this.mcpServer) {
       try {
         this.mcpServer.stop();

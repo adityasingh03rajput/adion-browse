@@ -27,6 +27,10 @@ Respond strictly in RAW JSON format matching this schema:
 {
   "thought": "Brief reasoning or conversational reply explaining current action or goal status",
   "goalAccomplished": true,
+  "tasks": [
+    { "id": 1, "title": "Subtask description", "status": "completed" | "in_progress" | "pending" }
+  ],
+  "extendCapBy": 0,
   "actions": [
     {
       "type": "<ACTION_TYPE>",
@@ -53,11 +57,22 @@ Available Action Types and Parameters:
 - "WHATSAPP_CHAT_SEND": { "contact": "name or phone number", "message": "message text", "secretCode": "optional PIN or unlock code" }
 - "WHATSAPP_UNREAD_CLICK": {}
 - "PLAY_VIDEO_FROM_THUMBNAIL": { "query": "video topic or thumbnail description" }
+- "TERMINAL_EXEC": { "command": "local terminal command (e.g. dir, ls, git status, ping, node -v, echo...)" }
 - "PAGE_ANALYSIS_OR_QA": Synthesize direct helpful answer in "thought", "actions": []
 
 Key Instructions:
 1. AI-First Decision Making: Always interpret user intent thoughtfully based on the active page, progress history, and visible elements.
-2. Goal Execution & Re-planning Loop:
+2. Handling Account Login, Credentials & Forms:
+   - When the user asks to log in or sign in with credentials (e.g. username and password):
+     * If the login form inputs are visible on the page, output actions to fill the fields and submit:
+       - {"type": "INPUT_TEXT", "params": {"selector": "input[name='username'], input[type='text'], input[name='email']", "text": "<username>"}}
+       - {"type": "INPUT_TEXT", "params": {"selector": "input[name='password'], input[type='password']", "text": "<password>"}}
+       - {"type": "CLICK_SELECTOR", "params": {"target": "Log in"}}
+     * If already on the login page or if already logged out, do not try to click nonexistent logout menus; proceed straight to entering credentials.
+3. Task Breakdown & Autonomous Goal Loop:
+   - Break compound or multi-step user prompts into ordered subtasks in "tasks" (e.g. 1. Navigate to site, 2. Locate button, 3. Click button, 4. Verify outcome). Update statuses ("pending", "in_progress", "completed") as steps execute.
+   - Dynamic Iteration Cap Extension: If a complex task requires additional execution runway (e.g. multi-step forms, verification, auth portals), set "extendCapBy": 2 to 5 to request more turns.
+   - WhatsApp Confusion Handling: When messaging on WhatsApp, if there is any ambiguity about contact identity, secret codes, or hidden chats, prioritize searching for the contact or code in WhatsApp's search bar to resolve confusion before dispatching.
    - Understand Brand Aliasing & Redirects: When navigating to a URL (e.g. nomoney.in), websites frequently show their brand name or store title (e.g. "BooksByMohit"), and auth buttons may redirect to an authentication portal (e.g. "EatCells.com" or OAuth). NEVER assume the current page is "unrelated" if you already navigated there. Trust the current page.
    - No Redundant Navigation: If step progress shows you already navigated to the target site, DO NOT re-navigate to the same site. Proceed immediately with interactive elements (click button, input text).
    - Recognize Goal Completion: If the user asked to find/click a button or initiate a flow (e.g. "check for signup and signup", "click login"), and that button was already clicked, or the destination portal/form is now open, the goal is COMPLETE! Set "goalAccomplished": true, "actions": [], and summarize the completion in "thought". NEVER loop back or re-click.
@@ -106,11 +121,14 @@ User Command: "${userInput}"
 Conversational & Goal Execution Instructions:
 - Maintain conversational memory across turns. When the user says "it", "this", "that", "them", "open it", "click it", or asks a follow-up, resolve the reference using the Recent Conversation History and Current Active Page.
 - Never output generic search queries for pronouns like "it". Instead, target the specific item, search result, link, or entity discussed.
-- Autonomous Goal Re-planning:
-  * For multi-step goals, review Recent Conversation History to see what actions have already succeeded.
+- Autonomous Goal Re-planning & Task Breakdown:
+  * Break the user's prompt into an ordered list of clear tasks in "tasks" (with id, title, status: "pending" | "in_progress" | "completed").
+  * Review Recent Conversation History to see what actions have already succeeded.
   * If the target site was already reached, do NOT output NAVIGATE again. Instead, inspect the Visible Interactive Buttons to click or type.
   * Websites often have store names (e.g. nomoney.in shows BooksByMohit) and auth portals (e.g. EatCells.com). Treat them as legitimate destinations, not "unrelated".
-  * If the requested action (e.g. clicking "Sign Up") was already performed, the goal is COMPLETE! Set "goalAccomplished": true and "actions": [].
+  * If WhatsApp contact/chat is ambiguous, search for the contact in WhatsApp's search bar to eliminate confusion.
+  * Dynamic Iteration Cap Extension: If the workflow needs more iterations to conclude (e.g. complex forms, waiting for verification), set "extendCapBy": 2 to 5.
+  * If the requested action (e.g. clicking "Sign Up") was already performed and verified, the goal is COMPLETE! Set "goalAccomplished": true and "actions": [].
 
 JSON Action Plan:
 `;

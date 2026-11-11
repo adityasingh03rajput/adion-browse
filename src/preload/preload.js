@@ -65,6 +65,7 @@ contextBridge.exposeInMainWorld('adionAPI', {
     onInspectorTelemetry: (callback) => ipcRenderer.on('agent:inspector-telemetry', (e, data) => callback(data)),
     onAudioLevel: (callback) => ipcRenderer.on('agent:audio-level', (e, data) => callback(data)),
     onShellAction: (callback) => ipcRenderer.on('shell:action', (e, data) => callback(data)),
+    onTerminalOutput: (callback) => ipcRenderer.on('agent:terminal-output', (e, data) => callback(data)),
     getContextStats: () => ipcRenderer.invoke('agent:get-context-stats'),
     getTabClusters: () => ipcRenderer.invoke('agent:get-tab-clusters'),
     verifyBiometric: (vector) => ipcRenderer.invoke('agent:verify-biometric', vector),
@@ -109,6 +110,15 @@ contextBridge.exposeInMainWorld('adionAPI', {
     getStatus: () => ipcRenderer.invoke('mcp:get-status'),
     toggle: (enable) => ipcRenderer.invoke('mcp:toggle', enable),
     onStatusChange: (callback) => ipcRenderer.on('mcp:status-change', (e, data) => callback(data))
+  },
+
+  // Standalone Local PC Terminal Bridge Control
+  terminal: {
+    getStatus: () => ipcRenderer.invoke('terminal:get-status'),
+    toggle: (enable) => ipcRenderer.invoke('terminal:toggle', enable),
+    exec: (command, options) => ipcRenderer.invoke('terminal:exec', { command, ...(options || {}) }),
+    getHistory: () => ipcRenderer.invoke('terminal:get-history'),
+    onStatusChange: (callback) => ipcRenderer.on('terminal:status-change', (e, data) => callback(data))
   },
 
   // Continuous Diagnostic Logging & Telemetry Configuration
