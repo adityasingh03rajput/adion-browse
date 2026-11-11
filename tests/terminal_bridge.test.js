@@ -193,10 +193,44 @@ async function runTests() {
     assert.strictEqual(intentNl, null, 'Natural language PC command should route to cognitive goal planner');
     console.log('  ✔ Natural language computer use command gracefully routes to cognitive goal planner');
 
+    // ----------------------------------------------------
+    // Test 9: Natural Language File Creation & Coreference "open it" Resolution
+    // ----------------------------------------------------
+    console.log('\nTest 9: Testing file creation synthesis and "open it" coreference...');
+    const pCreate = preprocessor.preprocess('/pc D:\\Jarvis create aditya.html saying hello');
+    const intentCreate = preprocessor.extractFastIntent(pCreate);
+    assert.ok(intentCreate, 'File creation intent must be recognized');
+    assert.strictEqual(intentCreate.type, ActionType.TERMINAL_EXEC);
+    assert.ok(intentCreate.command.includes('aditya.html'));
+    assert.ok(intentCreate.command.includes('hello'));
+    assert.strictEqual(intentCreate.targetFile, 'D:\\Jarvis\\aditya.html');
+    console.log('  ✔ "/pc D:\\Jarvis create aditya.html saying hello" synthesized into verified PowerShell file creation');
+
+    // Restart bridge to test command execution
+    await bridge.start();
+    const execFileRes = await bridge.executeCommand(intentCreate.command);
+    assert.strictEqual(execFileRes.success, true, 'PowerShell file creation must succeed');
+    const fsMod = require('fs');
+    assert.ok(fsMod.existsSync('D:\\Jarvis\\aditya.html'), 'aditya.html must physically exist on disk');
+    const fileText = fsMod.readFileSync('D:\\Jarvis\\aditya.html', 'utf8');
+    assert.ok(fileText.includes('hello'), 'Content must include "hello"');
+    console.log('  ✔ Verified on physical disk: D:\\Jarvis\\aditya.html exists with content "hello"');
+
+    // Test Coreference "open it"
+    const pOpen = preprocessor.preprocess('open it');
+    const intentOpen = preprocessor.extractFastIntent(pOpen, { lastReferencedFile: intentCreate.targetFile });
+    assert.ok(intentOpen, '"open it" must resolve against lastReferencedFile');
+    assert.strictEqual(intentOpen.type, ActionType.NAVIGATE);
+    assert.strictEqual(intentOpen.url, 'file:///D:/Jarvis/aditya.html');
+    console.log('  ✔ "open it" correctly resolved to file:///D:/Jarvis/aditya.html without hallucinations');
+
+    // Clean up test file
+    try { fsMod.unlinkSync('D:\\Jarvis\\aditya.html'); } catch (_) {}
+
     // Clean teardown
     await bridge.stop();
     console.log('\n========================================================');
-    console.log('🎉 ALL STANDALONE TERMINAL BRIDGE & COMPUTER USE TESTS PASSED (8/8)');
+    console.log('🎉 ALL STANDALONE TERMINAL BRIDGE & COMPUTER USE TESTS PASSED (9/9)');
     console.log('========================================================\n');
     process.exit(0);
 

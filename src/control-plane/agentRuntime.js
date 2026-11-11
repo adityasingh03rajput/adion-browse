@@ -34,6 +34,7 @@ class AgentRuntime extends EventEmitter {
     this.continuousVoice = false;
     this.lastDOMSelector = null;
     this.lastDOMAction = null;
+    this.lastReferencedFile = null;
     this.isPageShared = true; // Chrome Gemini-style active page context sharing
     this.verboseAudioLogging = false; // Filtered to suppress repetitive audio frame status spam
     this.maxGoalIterations = 15; // Autonomous Sense-Plan-Act-Verify re-planning goal loop depth
@@ -406,6 +407,45 @@ class AgentRuntime extends EventEmitter {
         status: item.response?.status || item.status || 'success'
       })).filter(h => h.user && h.user.trim().length > 0);
 
+      // Pass lastReferencedFile in pageContext for zero-latency coreference resolution
+      if (this.lastReferencedFile) {
+        pageContext.lastReferencedFile = this.lastReferencedFile;
+      }
+
+      // Fast-Path Intent Execution (<0.5ms): Deterministic commands, slash commands, file operations
+      const fastIntent = this.preprocessor.extractFastIntent(prep, pageContext);
+      if (fastIntent) {
+        console.log(`[AgentRuntime FastPath] Executed deterministic intent in ${prep.durationMs}ms:`, fastIntent.thought || fastIntent.type);
+        const actionsToRun = Array.isArray(fastIntent.actions) && fastIntent.actions.length > 0
+          ? fastIntent.actions
+          : [fastIntent];
+
+        for (let i = 0; i < actionsToRun.length; i++) {
+          const act = actionsToRun[i];
+          const intent = { type: act.type, ...(act.params || {}), ...act, raw: exactPrompt };
+          await this.executeIntent(intent);
+          if (act.targetFile) {
+            this.lastReferencedFile = act.targetFile;
+          }
+          if (i < actionsToRun.length - 1) {
+            await new Promise(r => setTimeout(r, 250));
+          }
+        }
+
+        const completionThought = fastIntent.thought || 'Command executed successfully';
+        this.sessionManager.recordInteraction({
+          source: source,
+          rawPrompt: exactPrompt,
+          transcription: text,
+          pageContext: pageContext,
+          modelResponse: { thought: completionThought, actions: actionsToRun },
+          status: 'success',
+          feedback: completionThought
+        });
+        this.emit('jarvis-notification', { type: 'success', message: completionThought });
+        return;
+      }
+
       // 3. TIER 1: AI-FIRST AUTONOMOUS GOAL EXECUTION & RE-PLANNING LOOP
       // Sense -> Plan -> Act -> Verify. The agent senses live state after each action,
       // reports execution results back to the model, tracks subtask breakdown, and iteratively replans until the goal is accomplished.
@@ -444,8 +484,28 @@ class AgentRuntime extends EventEmitter {
           });
         }
 
-        // If conversational / courtesy / greeting with no actions needed
+        // If model returned 0 actions:
         if (initialPlan.actions.length === 0) {
+          // Anti-Hallucination Guard: Never accept 0 actions if user prompt explicitly demanded an action!
+          const hasActionVerb = /\b(create|make|write|generate|add|delete|remove|run|execute|build|start|stop|install|clone|open)\b/i.test(exactPrompt);
+          if (hasActionVerb) {
+            console.warn('[AgentRuntime Guard] Model hallucinated completion with 0 actions for action prompt:', exactPrompt);
+            this.emit('feedback', {
+              message: `⚠️ Action notice: No execution command was dispatched by the planner. No system changes were made.`,
+              level: 'warning'
+            });
+            this.sessionManager.recordInteraction({
+              source: source,
+              rawPrompt: exactPrompt,
+              transcription: text,
+              pageContext: pageContext,
+              modelResponse: initialPlan,
+              status: 'failed',
+              feedback: 'No actions were dispatched.'
+            });
+            return;
+          }
+
           this.setState(AgentState.IDLE);
           const feedbackMsg = initialPlan.thought || 'Standing by for browser commands.';
           this.emit('feedback', { message: feedbackMsg, level: 'info' });
@@ -690,12 +750,12 @@ class AgentRuntime extends EventEmitter {
       // TIER 2: OFFLINE / EDGE FALLBACK ONLY
       // If AI model is completely offline or unavailable, fallback to local heuristics
       console.warn(`[AgentRuntime Fallback] AI model produced no plan; evaluating offline edge fallback for: "${text}"`);
-      const fastIntent = this.preprocessor.extractFastIntent(prep, pageContext);
-      if (fastIntent) {
-        console.log(`[AgentRuntime FastPath Fallback] Executed in ${prep.durationMs}ms:`, fastIntent.thought || fastIntent.type);
+      const fallbackFastIntent = this.preprocessor.extractFastIntent(prep, pageContext);
+      if (fallbackFastIntent) {
+        console.log(`[AgentRuntime FastPath Fallback] Executed in ${prep.durationMs}ms:`, fallbackFastIntent.thought || fallbackFastIntent.type);
 
-        if (fastIntent.type === 'CONVERSATIONAL_ACKNOWLEDGE') {
-          const feedbackMsg = fastIntent.thought || 'Standing by: ready for your browser commands.';
+        if (fallbackFastIntent.type === 'CONVERSATIONAL_ACKNOWLEDGE') {
+          const feedbackMsg = fallbackFastIntent.thought || 'Standing by: ready for your browser commands.';
           if (!this.continuousVoice) {
             this.setState(AgentState.IDLE);
           }
@@ -713,9 +773,9 @@ class AgentRuntime extends EventEmitter {
           return;
         }
 
-        const actionsToRun = Array.isArray(fastIntent.actions) && fastIntent.actions.length > 0
-          ? fastIntent.actions
-          : [fastIntent];
+        const actionsToRun = Array.isArray(fallbackFastIntent.actions) && fallbackFastIntent.actions.length > 0
+          ? fallbackFastIntent.actions
+          : [fallbackFastIntent];
 
         for (let i = 0; i < actionsToRun.length; i++) {
           const act = actionsToRun[i];
@@ -727,7 +787,7 @@ class AgentRuntime extends EventEmitter {
         }
 
         // Cache resolved plan
-        this.preprocessor.cachePlan(activeTab?.url, prep.normalized, { thought: fastIntent.thought, actions: actionsToRun });
+        this.preprocessor.cachePlan(activeTab?.url, prep.normalized, { thought: fallbackFastIntent.thought, actions: actionsToRun });
 
         // Record interaction in session memory log
         this.sessionManager.recordInteraction({
@@ -1678,6 +1738,20 @@ class AgentRuntime extends EventEmitter {
           const stderrSnippet = (res.stderr || '').trim();
           const outputPreview = stdoutSnippet || stderrSnippet || `Exit code: ${res.exitCode}`;
 
+          const targetFile = intent.targetFile || (cmd.match(/-Path\s+["']([^"']+)["']/i) || [])[1];
+          if (targetFile) {
+            this.lastReferencedFile = targetFile;
+            try {
+              const fileExists = fs.existsSync(targetFile);
+              if (fileExists) {
+                console.log(`[AgentRuntime Verify] Verified file on disk: ${targetFile}`);
+              } else if (res.success) {
+                console.warn(`[AgentRuntime Verify] File was not created on disk: ${targetFile}`);
+                res.success = false;
+              }
+            } catch (_) {}
+          }
+
           executionResult = {
             success: res.success,
             command: cmd,
@@ -1685,7 +1759,8 @@ class AgentRuntime extends EventEmitter {
             stderr: res.stderr,
             exitCode: res.exitCode,
             cwd: res.cwd,
-            durationMs: res.durationMs
+            durationMs: res.durationMs,
+            targetFile
           };
 
           this.emit('terminal-output', executionResult);

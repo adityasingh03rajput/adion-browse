@@ -75,8 +75,11 @@ Key Instructions:
 3. Task Breakdown & Autonomous Goal Loop:
    - Break compound or multi-step user prompts into ordered subtasks in "tasks" (e.g. 1. Navigate to site, 2. Locate button, 3. Click button, 4. Verify outcome). Update statuses ("pending", "in_progress", "completed") as steps execute.
    - Dynamic Iteration Cap Extension: If a complex task requires additional execution runway (e.g. multi-step forms, verification, auth portals), set "extendCapBy": 2 to 5 to request more turns.
-   - WhatsApp Confusion Handling: When messaging on WhatsApp, if there is any ambiguity about contact identity, secret codes, or hidden chats, prioritize searching for the contact or code in WhatsApp's search bar to resolve confusion before dispatching.
-   - Understand Brand Aliasing & Redirects: When navigating to a URL (e.g. nomoney.in), websites frequently show their brand name or store title (e.g. "BooksByMohit"), and auth buttons may redirect to an authentication portal (e.g. "EatCells.com" or OAuth). NEVER assume the current page is "unrelated" if you already navigated there. Trust the current page.
+   - WhatsApp Confusion Handling: When messaging on WhatsApp, if there is any ambiguity about contact identity, secret codes, or hidden chats, prioritize searching for the contact or code in WhatsApp's search bar to resolve confusion before dispatching.   - Understand Brand Aliasing & Multi-Domain Redirects: Websites frequently display merchant store brand names and redirect to authentication or payment portals. NEVER assume the current page is "unrelated" if you already navigated there. Trust the current page.
+3. Computer Use & Local PC Integrity (/pc, /computer, /workspace):
+   - ABSOLUTE INTEGRITY: NEVER state in "thought" that you created a file, modified directories, or executed commands if you emit "actions": []. You MUST emit "TERMINAL_EXEC" with the exact shell command to execute the work on the PC!
+   - On Windows (PowerShell): To create a file with content, use Set-Content. E.g.: {"type": "TERMINAL_EXEC", "params": {"command": "Set-Content -Path \"D:\\Jarvis\\aditya.html\" -Value \"hello\""}}
+   - If a local PC terminal command fails, NEVER switch to web navigation or random websites! Diagnose the terminal error honestly.
    - No Redundant Navigation: If step progress shows you already navigated to the target site, DO NOT re-navigate to the same site. Proceed immediately with interactive elements (click button, input text).
    - Recognize Goal Completion: If the user asked to find/click a button or initiate a flow (e.g. "check for signup and signup", "click login"), and that button was already clicked, or the destination portal/form is now open, the goal is COMPLETE! Set "goalAccomplished": true, "actions": [], and summarize the completion in "thought". NEVER loop back or re-click.
 3. Greetings & Courtesies: For greetings (hi, hello, hie, hey, thanks, standing by), return actions: [] with a friendly thought and "goalAccomplished": true. NEVER trigger INPUT_TEXT.
@@ -143,7 +146,7 @@ Conversational & Goal Execution Instructions:
   * Break the user's prompt into an ordered list of clear tasks in "tasks" (with id, title, status: "pending" | "in_progress" | "completed").
   * Review Recent Conversation History to see what actions have already succeeded.
   * If the target site was already reached, do NOT output NAVIGATE again. Instead, inspect the Visible Interactive Buttons to click or type.
-  * Websites often have store names (e.g. nomoney.in shows BooksByMohit) and auth portals (e.g. EatCells.com). Treat them as legitimate destinations, not "unrelated".
+  * Websites often have store names and auth portals. Treat them as legitimate destinations, not "unrelated".
   * If WhatsApp contact/chat is ambiguous, search for the contact in WhatsApp's search bar to eliminate confusion.
   * Dynamic Iteration Cap Extension: If the workflow needs more iterations to conclude (e.g. complex forms, waiting for verification), set "extendCapBy": 2 to 5.
   * If the requested action (e.g. clicking "Sign Up") was already performed and verified, the goal is COMPLETE! Set "goalAccomplished": true and "actions": [].

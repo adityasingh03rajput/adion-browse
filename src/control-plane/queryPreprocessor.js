@@ -232,6 +232,32 @@ class QueryPreprocessor {
       };
     }
 
+    // 3.5. Local File Coreference ("open it", "view it", "show it")
+    if (/^(?:open\s+(?:it|this|that|file)|show\s+(?:it|this)|view\s+(?:it|this))$/i.test(lower)) {
+      if (pageContext && pageContext.lastReferencedFile) {
+        const filePath = pageContext.lastReferencedFile;
+        const fileUrl = filePath.startsWith('file://') ? filePath : `file:///${filePath.replace(/\\/g, '/')}`;
+        return {
+          type: ActionType.NAVIGATE,
+          url: fileUrl,
+          thought: `Open local file in browser: ${filePath}`
+        };
+      }
+    }
+
+    // 3.5. Local File Coreference ("open it", "view it", "show it")
+    if (/^(?:open\s+(?:it|this|that|file)|show\s+(?:it|this)|view\s+(?:it|this))$/i.test(lower)) {
+      if (pageContext && pageContext.lastReferencedFile) {
+        const filePath = pageContext.lastReferencedFile;
+        const fileUrl = filePath.startsWith('file://') ? filePath : `file:///${filePath.replace(/\\/g, '/')}`;
+        return {
+          type: ActionType.NAVIGATE,
+          url: fileUrl,
+          thought: `Open local file in browser: ${filePath}`
+        };
+      }
+    }
+
     // 4. Standard URL / Domain Navigation: "navigate to example.com", "open github.com"
     const navMatch = lower.match(/(?:navigate\s+to|go\s+to|open)\s+(?:the\s+)?([a-z0-9\.\-_:\/]+)(?:\s+(?:website|page|site|homepage))?$/i);
     if (navMatch && !/(console|network|tab|history|bookmark)/i.test(navMatch[1])) {
@@ -396,6 +422,56 @@ class QueryPreprocessor {
           thought: `Computer Use (PC): Execute \`${sub}\``
         };
       }
+
+      // Check for file creation commands (e.g. "D:\\Jarvis create aditya.html saying hello", "create aditya.html saying hello")
+      let targetDir = null;
+      let targetFile = null;
+      let targetContent = '';
+
+      // Pattern 1: Directory + create file + content (e.g. "D:\\Jarvis create aditya.html saying hello")
+      const m1 = sub.match(/^(?:in\s+)?([a-zA-Z]:[\\\/][^\s]*)\s+(?:create|make|write)\s+(?:file\s+)?([^\s]+)(?:\s+(?:saying|with\s+(?:content|text)?)\s+(.+))?$/i);
+      if (m1) {
+        targetDir = m1[1];
+        targetFile = m1[2];
+        targetContent = (m1[3] || '').trim();
+      } else {
+        // Pattern 2: Absolute file path in create (e.g. "create D:\\Jarvis\\aditya.html saying hello")
+        const m2 = sub.match(/^(?:create|make|write)\s+(?:file\s+)?([a-zA-Z]:[\\\/][^\s]+)(?:\s+(?:saying|with\s+(?:content|text)?)\s+(.+))?$/i);
+        if (m2) {
+          const full = m2[1];
+          const lastSlash = Math.max(full.lastIndexOf('\\'), full.lastIndexOf('/'));
+          targetDir = full.slice(0, lastSlash);
+          targetFile = full.slice(lastSlash + 1);
+          targetContent = (m2[2] || '').trim();
+        } else {
+          // Pattern 3: Relative file path in create (e.g. "create aditya.html saying hello")
+          const m3 = sub.match(/^(?:create|make|write)\s+(?:file\s+)?([a-zA-Z0-9_\-\.\/]+)(?:\s+(?:saying|with\s+(?:content|text)?)\s+(.+))?$/i);
+          if (m3 && !/^(?:folder|directory|dir|branch|tab|window)$/i.test(m3[1])) {
+            targetFile = m3[1];
+            targetContent = (m3[2] || '').trim();
+          }
+        }
+      }
+
+      if (targetFile) {
+        const fullTarget = targetDir ? `${targetDir.replace(/[\\\/]$/, '')}\\${targetFile}` : targetFile;
+        let cleanContent = targetContent.replace(/^["']|["']$/g, '');
+        if (fullTarget.endsWith('.html') && !cleanContent.includes('<') && cleanContent) {
+          cleanContent = `<!DOCTYPE html>\n<html>\n<head><title>${targetFile}</title></head>\n<body>\n<h1>${cleanContent}</h1>\n</body>\n</html>`;
+        }
+
+        const psCmd = targetDir
+          ? `if (!(Test-Path "${targetDir}")) { New-Item -ItemType Directory -Force -Path "${targetDir}" | Out-Null }; Set-Content -Path "${fullTarget}" -Value @"\n${cleanContent}\n"@; if (Test-Path "${fullTarget}") { Write-Output "Successfully created: ${fullTarget}" } else { Write-Error "Failed to create: ${fullTarget}" }`
+          : `Set-Content -Path "${fullTarget}" -Value @"\n${cleanContent}\n"@; if (Test-Path "${fullTarget}") { Write-Output "Successfully created: ${fullTarget}" } else { Write-Error "Failed to create: ${fullTarget}" }`;
+
+        return {
+          type: ActionType.TERMINAL_EXEC,
+          command: psCmd,
+          targetFile: fullTarget,
+          thought: `Created ${fullTarget} on local PC`
+        };
+      }
+
       // Higher-level natural language instructions flow to Cognitive Goal Planner
       return null;
     }
