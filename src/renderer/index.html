@@ -23,6 +23,14 @@
           <line x1="5" y1="12" x2="19" y2="12"></line>
         </svg>
       </button>
+
+      <!-- Chrome Gemini-Style Ask Jarvis Pill Button in Tab Strip -->
+      <button class="btn-ask-jarvis" id="btnAskJarvis" title="Ask Jarvis Copilot (Ctrl+J)">
+        <svg class="sparkle-gemini-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <path d="M12 0C12 6.627 6.627 12 0 12C6.627 12 12 17.373 12 24C12 17.373 17.373 12 24 12C17.373 12 12 6.627 12 0Z" fill="currentColor"/>
+        </svg>
+        <span class="btn-ask-jarvis-text">Ask Jarvis</span>
+      </button>
     </div>
 
     <!-- Navigation & Omnibox Bar -->
@@ -116,26 +124,11 @@
         </div>
       </div>
 
-      <!-- Single Cohesive Ask Jarvis Control Bar -->
-      <div class="jarvis-control-bar" id="jarvisControlBar" title="Ask Jarvis Copilot • Type command or click mic">
-        <div class="jarvis-bar-input-wrapper">
-          <input type="text" id="taskInputText" class="jarvis-control-input" placeholder="Ask Jarvis anything..." autocomplete="off">
-        </div>
-        <!-- Dedicated Microphone Button -->
-        <button class="btn-icon btn-voice-agent jarvis-control-mic" id="btnVoiceAgent" title="Ask Jarvis Voice (Ctrl+Space)">
-          <svg id="micIcon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-            <line x1="12" y1="19" x2="12" y2="23"></line>
-            <line x1="8" y1="23" x2="16" y2="23"></line>
-          </svg>
-        </button>
-      </div>
+      <!-- Hidden compatibility anchor for task input -->
+      <input type="text" id="taskInputText" style="display:none;" autocomplete="off">
 
       <!-- Browser Menu / Tool Buttons -->
       <div class="menu-controls">
-        <!-- Hidden compatibility anchor for test suite -->
-        <button class="btn-ask-jarvis" id="btnAskJarvis" style="display:none;" title="Ask Jarvis Copilot (Side Panel • Ctrl+J)"></button>
         <button class="btn-icon" id="btnBookmarksMenu" title="Bookmarks">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
@@ -165,12 +158,8 @@
             <polyline points="8 6 2 12 8 18"></polyline>
           </svg>
         </button>
-        <button class="btn-icon" id="btnTelemetryOverlay" title="Live Telemetry & Diagnostics Dashboard (adion://dashboard)">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#00f2fe" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
-          </svg>
-        </button>
+        <!-- Telemetry button completely hidden as requested -->
+        <button class="btn-icon" id="btnTelemetryOverlay" style="display:none !important;" title="Telemetry"></button>
       </div>
     </div>
   </header>
@@ -578,13 +567,6 @@
   <!-- JARVIS COPILOT SIDE PANEL (CHROME GEMINI ARCHITECTURE) -->
   <aside class="jarvis-side-panel" id="jarvisSidePanel">
     <div class="side-panel-header">
-      <div class="side-panel-brand">
-        <div class="gemini-sparkle-mini"></div>
-        <div>
-          <h3 class="side-panel-title">Ask Jarvis</h3>
-          <span class="side-panel-subtitle">Autonomous Browser Intelligence</span>
-        </div>
-      </div>
       <div class="side-panel-header-actions">
         <button class="btn-side-panel-options" id="btnSidePanelOptions" title="Options">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
@@ -600,13 +582,25 @@
     <!-- Copilot Conversation & Live Autonomous Steps Timeline -->
     <div class="side-panel-body" id="sidePanelBody">
       <div class="side-panel-empty-state" id="sidePanelEmptyState">
-        <div class="gemini-sparkle-hero"></div>
-        <h2 class="side-panel-greeting" id="sidePanelGreeting">Hi Aditya Singh, what's on your mind?</h2>
+        <div class="gemini-sparkle-hero">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none">
+            <path d="M12 0C12 6.627 6.627 12 0 12C6.627 12 12 17.373 12 24C12 17.373 17.373 12 24 12C17.373 12 12 6.627 12 0Z" fill="url(#geminiGradHero)"/>
+            <defs>
+              <linearGradient id="geminiGradHero" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#4285F4"/>
+                <stop offset="0.33" stop-color="#EA4335"/>
+                <stop offset="0.66" stop-color="#FBBC05"/>
+                <stop offset="1" stop-color="#34A853"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <h2 class="side-panel-greeting" id="sidePanelGreeting">Your move, Aditya Singh!</h2>
         
         <div class="contextual-chips-container" id="contextualChipsContainer">
-          <button class="gemini-chip" data-task="Explain Adion's MCP server functionality">Explain Adion's MCP server functionality</button>
-          <button class="gemini-chip" data-task="Describe Adion's core technical components">Describe Adion's core technical components</button>
-          <button class="gemini-chip" data-task="Compare Adion's token usage to standard browsers">Compare Adion's token usage to standard browsers</button>
+          <button class="gemini-chip" data-task="Compare Inspect.exe and Accessibility Insights">Compare Inspect.exe and Accessibility Insights</button>
+          <button class="gemini-chip" data-task="Explain Windows UI Automation via PowerShell">Explain Windows UI Automation via PowerShell</button>
+          <button class="gemini-chip" data-task="Explore UIA libraries for JSON output">Explore UIA libraries for JSON output</button>
         </div>
       </div>
       <div class="side-panel-timeline" id="sidePanelTimeline">
@@ -697,12 +691,13 @@
             <span id="activeModelLabel">Auto</span>
             <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
           </div>
-          <button class="btn-side-panel-mic" id="btnSidePanelMic" title="Voice Commander">
+          <button class="btn-side-panel-mic" id="btnVoiceAgent" title="Ask Jarvis Voice (Ctrl+Space)">
             <span class="mic-wave"></span>
             <span class="mic-wave"></span>
             <span class="mic-wave"></span>
             <span class="mic-wave"></span>
           </button>
+          <button id="btnSidePanelMic" style="display:none;"></button>
           <button class="btn-side-panel-send" id="btnSidePanelSend" title="Run Task (Enter)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <line x1="5" y1="12" x2="19" y2="12"></line>
