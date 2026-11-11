@@ -203,6 +203,17 @@ class QueryPreprocessor {
     const generalSearchMatch = lower.match(/^(?:search\s+for|search)\s+(.+)$/i);
     if (generalSearchMatch) {
       const target = generalSearchMatch[1].trim();
+
+      // Cognitive Query Guard: If the query involves reasoning, questions ("how to", "why", "what is"),
+      // or domain-specific scoping ("in nomoney.in", "on reddit.com"), do NOT hijack with rigid regex.
+      // Allow Tier 3 (Groq LLM) to apply true cognitive planning and domain understanding!
+      const isCognitiveQuery = /^(?:how|why|what|when|where|who|explain|tell|is|can|should|which)\b/i.test(target) ||
+        /\b(?:in|on|at|from)\s+[a-zA-Z0-9-]+\.[a-zA-Z]{2,}/i.test(target) ||
+        /\bsite:/i.test(target);
+      if (isCognitiveQuery) {
+        return null;
+      }
+
       if (target === 'youtube' || target === 'youtube.com') {
         return { type: ActionType.NAVIGATE, url: 'https://www.youtube.com', thought: 'Navigate to https://www.youtube.com' };
       }
