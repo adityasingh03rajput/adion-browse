@@ -17,6 +17,7 @@ const AnthropicProvider = require('./anthropicProvider');
 const GeminiProvider = require('./geminiProvider');
 const CustomProvider = require('./customProvider');
 const GroqProvider = require('./groqProvider');
+const PerchanceProvider = require('./perchanceProvider');
 
 class ProviderRegistry {
   constructor(config = {}) {
@@ -53,6 +54,13 @@ class ProviderRegistry {
       apiUrl: config.groqApiUrl,
       model: config.groqModel
     }));
+    this.register(new PerchanceProvider({
+      relayCode: config.perchanceRelayCode,
+      broker: config.perchanceRelayBroker,
+      model: config.perchanceModel,
+      timeoutMs: config.perchanceTimeoutMs,
+      pageUrl: config.perchancePageUrl
+    }));
   }
 
   register(provider) {
@@ -79,16 +87,16 @@ class ProviderRegistry {
    * Resolve active provider based on configuration or auto-prioritization
    */
   getActiveProvider() {
-    // 1. Explicit provider configured by user
+    // 1. Explicit provider chosen by user (always honor explicit selection)
     if (this.activeProviderName && this.activeProviderName !== 'auto') {
       const explicit = this.providers.get(this.activeProviderName);
-      if (explicit && explicit.isConfigured()) {
+      if (explicit) {
         return explicit;
       }
     }
 
     // 2. Auto-prioritize configured 3rd-party models over default
-    const priority = ['openai', 'anthropic', 'gemini', 'custom', 'groq'];
+    const priority = ['openai', 'anthropic', 'gemini', 'custom', 'groq', 'perchance'];
     for (const name of priority) {
       const p = this.providers.get(name);
       if (p && p.isConfigured()) {
@@ -116,13 +124,14 @@ class ProviderRegistry {
         isActive: (this.activeProviderName === name) || (this.activeProviderName === 'auto' && active?.name === p.name),
         currentModel: p.model,
         apiUrl: p.apiUrl || '',
+        pageUrl: p.pageUrl || '',
         hasApiKey: Boolean(key.length > 0),
         maskedApiKey: masked,
         supportedModels: p.supportedModels || [p.model]
       });
     }
     return {
-      activeProvider: active?.name || 'groq',
+      activeProvider: active?.name || (this.activeProviderName !== 'auto' ? this.activeProviderName : 'groq'),
       mode: this.activeProviderName || 'auto',
       providers: result
     };
@@ -131,7 +140,7 @@ class ProviderRegistry {
   /**
    * Configure a provider's credentials and model dynamically
    */
-  configureProvider(name, { apiKey, apiUrl, model } = {}) {
+  configureProvider(name, { apiKey, apiUrl, model, pageUrl } = {}) {
     const provider = this.providers.get(name);
     if (!provider) {
       throw new Error(`Provider not found: ${name}`);
@@ -140,13 +149,15 @@ class ProviderRegistry {
     if (apiKey !== undefined) provider.setApiKey(apiKey);
     if (apiUrl !== undefined) provider.setApiUrl(apiUrl);
     if (model !== undefined) provider.setModel(model);
+    if (pageUrl !== undefined && typeof provider.setPageUrl === 'function') provider.setPageUrl(pageUrl);
 
     return {
       name: provider.name,
       displayName: provider.displayName,
       isConfigured: provider.isConfigured(),
       model: provider.model,
-      apiUrl: provider.apiUrl
+      apiUrl: provider.apiUrl,
+      pageUrl: provider.pageUrl || ''
     };
   }
 }
