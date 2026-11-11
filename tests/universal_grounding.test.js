@@ -87,6 +87,7 @@ async function runUniversalGroundingTests() {
   // Test 6: End-to-End DOM Evaluation Simulation (BooksByMohit "Sign Up" vs "Log In")
   console.log('\nTest 6: End-to-End DOM Mock Grounding ("Sign Up" on navbar with "Log In")...');
   const elLogin = {
+    nodeType: 1,
     tagName: 'BUTTON',
     innerText: 'Log In',
     value: '',
@@ -100,6 +101,7 @@ async function runUniversalGroundingTests() {
   };
 
   const elSignUp = {
+    nodeType: 1,
     tagName: 'BUTTON',
     innerText: 'Sign Up',
     value: '',
@@ -113,20 +115,16 @@ async function runUniversalGroundingTests() {
   };
 
   let list = [elLogin, elSignUp];
-  let idx = 0;
   global.document = {
-    body: { appendChild: () => {} },
+    body: {
+      querySelectorAll: () => list,
+      appendChild: () => {}
+    },
+    querySelectorAll: () => list,
     querySelector: () => null,
     getElementById: () => null,
     createElement: () => ({ setAttribute: () => {}, appendChild: () => {}, remove: () => {}, style: {} }),
-    head: { appendChild: () => {} },
-    createTreeWalker: () => ({
-      currentNode: list[0],
-      nextNode: () => {
-        idx++;
-        return list[idx] || null;
-      }
-    })
+    head: { appendChild: () => {} }
   };
   global.NodeFilter = { SHOW_ELEMENT: 1 };
   global.window = {

@@ -129,8 +129,9 @@ function buildDOMGroundingScript(targetQuery, options = {}) {
 
   return `
     (() => {
-      const rawQuery = ${queryStr};
-      const opts = ${optionsStr};
+      try {
+        const rawQuery = ${queryStr};
+        const opts = ${optionsStr};
 
       // In-page Canonical & Compact Normalizers
       function canonicalNormalize(str) {
@@ -158,6 +159,43 @@ function buildDOMGroundingScript(targetQuery, options = {}) {
       const cleanQuery = stripSymbols(rawQuery);
       const compactQuery = compactNormalize(rawQuery);
 
+      // Safe DOM introspection helpers immune to DOM clobbering & non-Element objects
+      function safeGetAttr(el, attr) {
+        try {
+          if (!el || typeof el !== 'object') return '';
+          if (typeof Element !== 'undefined' && Element.prototype && Element.prototype.getAttribute) {
+            return (Element.prototype.getAttribute.call(el, attr) || '').trim();
+          }
+          return (typeof el.getAttribute === 'function' ? (el.getAttribute(attr) || '') : '').trim();
+        } catch (_) {
+          return '';
+        }
+      }
+
+      function safeGetRect(el) {
+        try {
+          if (!el || typeof el !== 'object') return null;
+          if (typeof Element !== 'undefined' && Element.prototype && Element.prototype.getBoundingClientRect) {
+            return Element.prototype.getBoundingClientRect.call(el);
+          }
+          return typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : null;
+        } catch (_) {
+          return null;
+        }
+      }
+
+      function safeClosest(el, selector) {
+        try {
+          if (!el || typeof el !== 'object') return null;
+          if (typeof Element !== 'undefined' && Element.prototype && Element.prototype.closest) {
+            return Element.prototype.closest.call(el, selector);
+          }
+          return typeof el.closest === 'function' ? el.closest(selector) : null;
+        } catch (_) {
+          return null;
+        }
+      }
+
       // Semantic Intent Engine inside Page Context
       const CLUSTERS = ${JSON.stringify(SEMANTIC_CLUSTERS)};
 
@@ -183,25 +221,43 @@ function buildDOMGroundingScript(targetQuery, options = {}) {
       const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'for', 'in', 'on', 'at', 'to', 'from', 'by', 'with', 'link', 'website', 'page', 'site', 'button', 'click', 'open', 'tap', 'please', 'can', 'you']);
       const queryTokens = cleanQuery.split(/\\s+/).filter(t => !stopWords.has(t) && t.length > 1);
 
-      // Recursive tree walker traversing standard DOM & Shadow DOM
-      function getAllElements(root = document.body) {
+      // Robust Element Crawler traversing standard DOM & Shadow DOM without throwing
+      function getAllElements(root = (document.body || document.documentElement || document)) {
         let elements = [];
         if (!root) return elements;
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null, false);
-        let node = walker.currentNode;
-        while (node) {
-          const style = window.getComputedStyle(node);
-          if (style && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
-            const rect = node.getBoundingClientRect();
-            if (rect.width > 2 && rect.height > 2) {
-              elements.push(node);
+
+        try {
+          const list = (root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : []);
+          for (let i = 0; i < list.length; i++) {
+            const el = list[i];
+            if (!el || el.nodeType !== 1) continue;
+
+            let visible = true;
+            try {
+              const style = window.getComputedStyle(el);
+              if (style && (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0')) {
+                visible = false;
+              }
+            } catch (_) {}
+
+            if (visible) {
+              try {
+                const rect = el.getBoundingClientRect();
+                if (rect && (rect.width > 1 || rect.height > 1)) {
+                  elements.push(el);
+                }
+              } catch (_) {}
             }
+
+            // Safely traverse open shadowRoot without passing ShadowRoot to getComputedStyle
+            try {
+              if (el.shadowRoot) {
+                elements = elements.concat(getAllElements(el.shadowRoot));
+              }
+            } catch (_) {}
           }
-          if (node.shadowRoot) {
-            elements = elements.concat(getAllElements(node.shadowRoot));
-          }
-          node = walker.nextNode();
-        }
+        } catch (_) {}
+
         return elements;
       }
 
@@ -231,52 +287,63 @@ function buildDOMGroundingScript(targetQuery, options = {}) {
           let score = 0;
 
           // 1. Text representations
-          const rawText = (el.innerText || el.textContent || '').trim();
+          let rawText = '';
+          try {
+            rawText = (el.innerText || el.textContent || '').trim();
+          } catch (_) {}
           const cleanText = stripSymbols(rawText);
           const compactText = compactNormalize(rawText);
 
           // Form input values (e.g. <input type="submit" value="Sign Up">)
-          const valueAttr = (el.value || el.getAttribute('value') || '').trim();
+          let valueAttr = '';
+          try {
+            valueAttr = typeof el.value === 'string' ? el.value.trim() : safeGetAttr(el, 'value');
+          } catch (_) {
+            valueAttr = safeGetAttr(el, 'value');
+          }
           const cleanValue = stripSymbols(valueAttr);
           const compactValue = compactNormalize(valueAttr);
 
           // 2. Accessibility & Meta attributes
-          const title = (el.getAttribute('title') || '').trim();
+          const title = safeGetAttr(el, 'title');
           const cleanTitle = stripSymbols(title);
           const compactTitle = compactNormalize(title);
 
-          const ariaLabel = (el.getAttribute('aria-label') || '').trim();
+          const ariaLabel = safeGetAttr(el, 'aria-label');
           const cleanAria = stripSymbols(ariaLabel);
           const compactAria = compactNormalize(ariaLabel);
 
-          const ariaRoleDesc = (el.getAttribute('aria-roledescription') || '').trim();
+          const ariaRoleDesc = safeGetAttr(el, 'aria-roledescription');
           const cleanAriaDesc = stripSymbols(ariaRoleDesc);
 
-          const placeholder = (el.getAttribute('placeholder') || '').trim();
+          const placeholder = safeGetAttr(el, 'placeholder');
           const cleanPlaceholder = stripSymbols(placeholder);
           const compactPlaceholder = compactNormalize(placeholder);
 
-          const alt = (el.getAttribute('alt') || '').trim();
+          const alt = safeGetAttr(el, 'alt');
           const cleanAlt = stripSymbols(alt);
           const compactAlt = compactNormalize(alt);
 
-          const role = (el.getAttribute('role') || '').toLowerCase();
-          const href = (el.getAttribute('href') || el.src || '').toLowerCase();
-          const id = (el.id || '').toLowerCase();
-          const testid = (el.getAttribute('data-testid') || '').toLowerCase();
-          const classStr = (typeof el.className === 'string' ? el.className : '').toLowerCase();
+          const role = safeGetAttr(el, 'role').toLowerCase();
+          const href = (safeGetAttr(el, 'href') || safeGetAttr(el, 'src')).toLowerCase();
+          const id = safeGetAttr(el, 'id').toLowerCase();
+          const testid = safeGetAttr(el, 'data-testid').toLowerCase();
+          const classStr = (typeof el.className === 'string' ? el.className : (el.className?.baseVal || safeGetAttr(el, 'class'))).toLowerCase();
 
           // 3. Abstract Shape & SVG Icon Discovery
           let svgIconHint = '';
-          const svgChild = el.tagName === 'SVG' ? el : el.querySelector('svg, i, span[class*="icon"], [class*="icon"]');
-          if (svgChild) {
-            const svgClass = (typeof svgChild.className === 'string' ? svgChild.className : '').toLowerCase();
-            const svgName = (svgChild.getAttribute('data-icon') || svgChild.getAttribute('data-name') || '').toLowerCase();
-            const svgUse = svgChild.querySelector('use');
-            const useHref = (svgUse ? (svgUse.getAttribute('href') || svgUse.getAttribute('xlink:href') || '') : '').toLowerCase();
-            const svgTitle = (svgChild.querySelector('title') ? svgChild.querySelector('title').textContent : '').toLowerCase();
-            svgIconHint = [svgClass, svgName, useHref, svgTitle].join(' ');
-          }
+          try {
+            const svgChild = (el.tagName && el.tagName.toUpperCase() === 'SVG') ? el : (el.querySelector ? el.querySelector('svg, i, span[class*="icon"], [class*="icon"]') : null);
+            if (svgChild) {
+              const svgClass = (typeof svgChild.className === 'string' ? svgChild.className : (svgChild.className?.baseVal || safeGetAttr(svgChild, 'class'))).toLowerCase();
+              const svgName = (safeGetAttr(svgChild, 'data-icon') || safeGetAttr(svgChild, 'data-name')).toLowerCase();
+              const svgUse = svgChild.querySelector ? svgChild.querySelector('use') : null;
+              const useHref = svgUse ? (safeGetAttr(svgUse, 'href') || safeGetAttr(svgUse, 'xlink:href')).toLowerCase() : '';
+              const svgTitleEl = svgChild.querySelector ? svgChild.querySelector('title') : null;
+              const svgTitle = svgTitleEl ? (svgTitleEl.textContent || '').toLowerCase() : '';
+              svgIconHint = [svgClass, svgName, useHref, svgTitle].join(' ');
+            }
+          } catch (_) {}
 
           // Combined descriptor string
           const combinedClean = [cleanText, cleanValue, cleanTitle, cleanAria, cleanPlaceholder, cleanAlt, href, id, testid, classStr, svgIconHint].join(' ');
@@ -440,24 +507,26 @@ function buildDOMGroundingScript(targetQuery, options = {}) {
       } catch (_) {}
 
       // Resolve actionable container for dual dispatch
-      const clickableContainer = bestMatch.closest('div[role="button"], button, a, [role="link"], div[role="row"], div[role="listitem"], [role="gridcell"][tabindex], [tabindex="0"]') || bestMatch;
-      const innerActionable = clickableContainer.querySelector('[role="button"], [role="gridcell"][tabindex="0"], button, a') || clickableContainer;
-      const targetRect = (innerActionable && innerActionable.getBoundingClientRect().width > 0)
-        ? innerActionable.getBoundingClientRect()
-        : ((clickableContainer && clickableContainer.getBoundingClientRect().width > 0)
-          ? clickableContainer.getBoundingClientRect()
-          : bestMatch.getBoundingClientRect());
+      const clickableContainer = safeClosest(bestMatch, 'div[role="button"], button, a, [role="link"], div[role="row"], div[role="listitem"], [role="gridcell"][tabindex], [tabindex="0"]') || bestMatch;
+      const innerActionable = (clickableContainer && clickableContainer.querySelector)
+        ? (clickableContainer.querySelector('[role="button"], [role="gridcell"][tabindex="0"], button, a') || clickableContainer)
+        : clickableContainer;
+      const targetRect = safeGetRect(innerActionable) || safeGetRect(clickableContainer) || safeGetRect(bestMatch) || { left: 0, top: 0, width: 0, height: 0 };
 
       const x = Math.round(targetRect.left + targetRect.width / 2);
       const y = Math.round(targetRect.top + targetRect.height / 2);
-      const label = (bestMatch.getAttribute('title') || bestMatch.getAttribute('aria-label') || bestMatch.innerText || bestMatch.tagName).slice(0, 40).replace(/\\n/g, ' ');
+      const label = (safeGetAttr(bestMatch, 'title') || safeGetAttr(bestMatch, 'aria-label') || bestMatch.innerText || bestMatch.tagName || '').slice(0, 40).replace(/\\n/g, ' ');
 
       // Chrome DevTools Telemetry Metadata
-      const cs = window.getComputedStyle(bestMatch);
-      const rawClasses = Array.from(bestMatch.classList || []).filter(c => !c.startsWith('__')).slice(0, 3).map(c => '.' + c).join('');
+      let rawClasses = '';
+      try {
+        if (bestMatch.classList) {
+          rawClasses = Array.from(bestMatch.classList).filter(c => typeof c === 'string' && !c.startsWith('__')).slice(0, 3).map(c => '.' + c).join('');
+        }
+      } catch (_) {}
       const dims = Math.round(targetRect.width) + ' × ' + Math.round(targetRect.height);
-      const role = bestMatch.getAttribute('role') || (
-        ['a', 'button', 'input', 'select', 'textarea'].includes(bestMatch.tagName.toLowerCase()) ? bestMatch.tagName.toLowerCase() : 'generic'
+      const role = safeGetAttr(bestMatch, 'role') || (
+        bestMatch.tagName ? bestMatch.tagName.toLowerCase() : 'generic'
       );
 
       // Render Clean Target Focus Reticle
@@ -529,8 +598,15 @@ function buildDOMGroundingScript(targetQuery, options = {}) {
         highestScore,
         intentMatched: activeIntent
       };
-    })()
-  `;
+    } catch (err) {
+      return {
+        found: false,
+        error: (err && err.stack) ? err.stack : String(err),
+        reason: 'SCRIPT_EXCEPTION'
+      };
+    }
+  })()
+`;
 }
 
 module.exports = {
