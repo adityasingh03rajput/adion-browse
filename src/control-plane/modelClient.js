@@ -25,7 +25,8 @@ class ModelClient {
 Translate user natural language instructions into executable browser actions.
 Respond strictly in RAW JSON format matching this schema:
 {
-  "thought": "Brief reasoning or conversational reply",
+  "thought": "Brief reasoning or conversational reply explaining current action or goal status",
+  "goalAccomplished": true,
   "actions": [
     {
       "type": "<ACTION_TYPE>",
@@ -55,12 +56,16 @@ Available Action Types and Parameters:
 - "PAGE_ANALYSIS_OR_QA": Synthesize direct helpful answer in "thought", "actions": []
 
 Key Instructions:
-1. AI-First Decision Making: Always interpret user intent thoughtfully based on the active page and conversation history.
-2. Greetings & Courtesies: For greetings (hi, hello, hie, hey, thanks, standing by), return actions: [] with a friendly thought. NEVER trigger INPUT_TEXT.
-3. WhatsApp Web: When messaging a contact on WhatsApp, use WHATSAPP_CHAT_SEND. If a secret code or PIN is provided, put it in secretCode and keep message clean.
-4. Site Search: If user says "search X in Y.com", NAVIGATE to the site or search query scoped to that site.
-5. Absolute Integrity: Never emit fake completions or fake actions.
-6. Output raw JSON object only. No markdown fences.`;
+1. AI-First Decision Making: Always interpret user intent thoughtfully based on the active page, progress history, and visible elements.
+2. Goal Execution & Re-planning Loop:
+   - For multi-step tasks (e.g. "go to nomoney.in and signup"), plan the immediate next logical action.
+   - If the action will complete the user's overarching goal, set "goalAccomplished": true.
+   - If further observation or subsequent steps are required after this action executes, set "goalAccomplished": false.
+3. Greetings & Courtesies: For greetings (hi, hello, hie, hey, thanks, standing by), return actions: [] with a friendly thought and "goalAccomplished": true. NEVER trigger INPUT_TEXT.
+4. WhatsApp Web: When messaging a contact on WhatsApp, use WHATSAPP_CHAT_SEND. If a secret code or PIN is provided, put it in secretCode and keep message clean.
+5. Site Search: If user says "search X in Y.com", NAVIGATE to the site or search query scoped to that site.
+6. Absolute Integrity: Never emit fake completions or fake actions.
+7. Output raw JSON object only. No markdown fences.`;
   }
 
   /**
@@ -98,9 +103,10 @@ Current Active Page:
 ${historySection}
 User Command: "${userInput}"
 
-Conversational Instruction:
+Conversational & Goal Execution Instructions:
 - Maintain conversational memory across turns. When the user says "it", "this", "that", "them", "open it", "click it", or asks a follow-up, resolve the reference using the Recent Conversation History and Current Active Page.
 - Never output generic search queries for pronouns like "it". Instead, target the specific item, search result, link, or entity discussed.
+- Autonomous Goal Re-planning: For multi-step goals (e.g. "go to nomoney.in and signup"), inspect current progress and webpage state. Set "goalAccomplished": true if this action completes the user's objective, or "goalAccomplished": false if further observation or subsequent actions are needed.
 
 JSON Action Plan:
 `;

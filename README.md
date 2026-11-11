@@ -182,7 +182,7 @@ Adion Browse goes beyond rigid regex matching: it grounds natural language instr
 | `Ctrl + Shift + Tab` | Switch to Previous Tab |
 | `Ctrl + 1-9` | Switch to Tab by Index |
 | `Escape` | Close Open Overlays and Modals |
-
+ 
 ---
 
 ## 📄 License

@@ -103,6 +103,78 @@ async function runSessionAndJarvisTests() {
   assert.ok(cdpBridgeSrc.includes('hrefDomainMatches'), 'cdpBridge must match domains in hrefs for links');
   console.log('  ✔ Multi-turn conversation memory and cognitive element grounding verified.');
 
+  // Test 6: Autonomous Goal Execution & Re-Planning Loop (/goal Pattern)
+  console.log('\nTest 6: Autonomous Sense-Plan-Act-Verify Re-Planning Goal Loop...');
+  let planningCallCount = 0;
+  const observedContexts = [];
+
+  const mockModel = {
+    async planActions(prompt, pageContext, conversationHistory) {
+      planningCallCount++;
+      observedContexts.push({ pageContext, conversationHistory });
+
+      if (planningCallCount === 1) {
+        return {
+          thought: 'Step 1: Navigating to nomoney.in to inspect page structure',
+          actions: [{ type: 'NAVIGATE', url: 'https://nomoney.in' }],
+          goalAccomplished: false
+        };
+      } else {
+        return {
+          thought: 'Step 2: Sensed active page and buttons. Clicking Sign Up button to complete goal.',
+          actions: [{ type: 'CLICK_SELECTOR', target: 'Sign Up' }],
+          goalAccomplished: true
+        };
+      }
+    }
+  };
+
+  const executedIntents = [];
+  const mockTab = {
+    id: 'tab-1',
+    url: 'https://nomoney.in',
+    title: 'BooksByMohit — Read, Rent & Buy Books',
+    view: {
+      webContents: {
+        isLoading: () => false,
+        executeJavaScript: async () => ({ found: true, x: 605, y: 195, tag: 'A', name: 'Sign Up' }),
+        sendInputEvent: () => {}
+      }
+    }
+  };
+
+  const mockTabManager = {
+    getActiveTab: () => mockTab,
+    navigateActiveTab: (url) => { mockTab.url = url; },
+    tabs: new Map([['tab-1', mockTab]])
+  };
+
+  const goalRuntime = new AgentRuntime(mockTabManager, null, null, null, null, sessionManager);
+  goalRuntime.model = mockModel;
+  goalRuntime.cdp = { attach: async () => {}, highlightElement: async () => {}, dispatchClick: async () => {} };
+  goalRuntime.autonomousInspectAndClick = async (tab, target) => {
+    return { success: true, label: target, x: 605, y: 195 };
+  };
+
+  goalRuntime.getActivePageContext = async () => {
+    return {
+      url: mockTab.url,
+      title: mockTab.title,
+      buttons: ['Search by title, auth', 'Log In', 'Sign Up', 'Explore Books']
+    };
+  };
+
+  const goalFeedback = [];
+  goalRuntime.on('feedback', (f) => goalFeedback.push(f.message));
+
+  await goalRuntime.processCommand('go to nomoney.in and signup');
+
+  assert.strictEqual(planningCallCount, 2, 'Autonomous Goal Loop should have re-planned across 2 iterations');
+  assert.ok(goalFeedback.some(m => m.includes('Step 1')), 'Should emit Step 1 feedback');
+  assert.ok(goalFeedback.some(m => m.includes('Step 2')), 'Should emit Step 2 feedback');
+  assert.ok(observedContexts[1].conversationHistory.some(h => (h.agent || '').includes('NAVIGATE') || (h.agent || '').includes('Step 1')), 'Iteration 2 should contain Step 1 progress history');
+  console.log('  ✔ Autonomous goal re-planning loop successfully executed and verified over multiple turns.');
+
   console.log('\nâœ… ALL SESSION MEMORY & JARVIS ARCHITECTURE TESTS PASSED SUCCESSFULLY!');
 }
 

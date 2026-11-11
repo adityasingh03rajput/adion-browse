@@ -327,23 +327,31 @@ class AgentRuntime extends EventEmitter {
         status: item.status
       }));
 
-      // 3. TIER 1: AI-FIRST AUTONOMOUS COGNITIVE PLANNING (Groq LPU / Configured AI Provider)
-      // The AI model is ALWAYS the primary decision maker. No hardcoded regexes hijack user commands.
-      let plan = null;
+      // 3. TIER 1: AI-FIRST AUTONOMOUS GOAL EXECUTION & RE-PLANNING LOOP
+      // Sense -> Plan -> Act -> Verify. The agent senses live page state after each action,
+      // reports execution results back to the model, and iteratively replans until the goal is accomplished.
+      const maxGoalIterations = 5;
+      let iteration = 0;
+      let goalAccomplished = false;
+      const stepHistory = [];
+      let finalFeedback = '';
+      let initialPlan = null;
+
       if (this.model) {
         try {
-          plan = await this.model.planActions(text, pageContext, conversationHistory);
+          initialPlan = await this.model.planActions(text, pageContext, conversationHistory);
         } catch (err) {
-          console.warn('[AgentRuntime] AI Model planning error:', err.message);
+          console.warn('[AgentRuntime] Initial AI Model planning error:', err.message);
         }
       }
 
-      if (plan && (Array.isArray(plan.actions) || plan.thought)) {
-        if (!Array.isArray(plan.actions)) plan.actions = [];
+      if (initialPlan && (Array.isArray(initialPlan.actions) || initialPlan.thought)) {
+        if (!Array.isArray(initialPlan.actions)) initialPlan.actions = [];
 
-        if (plan.actions.length === 0) {
+        // If conversational / courtesy / greeting with no actions needed
+        if (initialPlan.actions.length === 0) {
           this.setState(AgentState.IDLE);
-          const feedbackMsg = plan.thought || 'Standing by for browser commands.';
+          const feedbackMsg = initialPlan.thought || 'Standing by for browser commands.';
           this.emit('feedback', { message: feedbackMsg, level: 'info' });
           this.emit('jarvis-notification', { type: 'info', message: feedbackMsg });
           this.sessionManager.recordInteraction({
@@ -351,28 +359,119 @@ class AgentRuntime extends EventEmitter {
             rawPrompt: exactPrompt,
             transcription: text,
             pageContext: pageContext,
-            modelResponse: plan,
+            modelResponse: initialPlan,
             status: 'success',
             feedback: feedbackMsg
           });
           return;
         }
 
-        executedPlan = plan;
-        this.emit('feedback', { message: `AI Plan: ${plan.thought || 'Executing actions'}`, level: 'success' });
-        console.log(`[AgentRuntime Plan] Executing ${plan.actions.length} action(s):`, plan.thought);
+        let currentPlan = initialPlan;
 
-        for (let i = 0; i < plan.actions.length; i++) {
-          const act = plan.actions[i];
-          const intent = { type: act.type, ...(act.params || {}), raw: exactPrompt };
-          await this.executeIntent(intent);
-          if (i < plan.actions.length - 1) {
-            await new Promise(r => setTimeout(r, 350));
+        while (iteration < maxGoalIterations && !goalAccomplished) {
+          iteration++;
+          executedPlan = currentPlan;
+
+          const planThought = currentPlan.thought || `Executing autonomous step ${iteration}`;
+          console.log(`[AgentRuntime GoalLoop Iteration #${iteration}]`, planThought);
+          this.emit('feedback', { 
+            message: `Step ${iteration}: ${planThought}`, 
+            level: 'success' 
+          });
+
+          let actionsInTurn = Array.isArray(currentPlan.actions) ? currentPlan.actions : [];
+          let allSubActionsSucceeded = true;
+          let turnOutcomeMsg = '';
+
+          for (let i = 0; i < actionsInTurn.length; i++) {
+            const act = actionsInTurn[i];
+            const intent = { type: act.type, ...(act.params || {}), raw: exactPrompt };
+
+            const execRes = await this.executeIntent(intent);
+            const isSuccess = execRes ? execRes.success !== false : true;
+
+            const subSummary = isSuccess 
+              ? `${act.type} ${intent.url || intent.target || intent.text || ''}`.trim()
+              : `Failed: ${execRes?.crossQuestion || execRes?.reason || 'action unfulfilled'}`;
+
+            stepHistory.push({
+              iteration,
+              action: act.type,
+              status: isSuccess ? 'SUCCESS' : 'FAILED',
+              summary: subSummary
+            });
+
+            if (!isSuccess) {
+              allSubActionsSucceeded = false;
+              turnOutcomeMsg = execRes?.crossQuestion || execRes?.reason || 'Action could not be executed';
+              // If cross-question was emitted (e.g. Sign Up vs Log In conflict), pause and let user reply
+              if (execRes?.crossQuestion) {
+                goalAccomplished = true;
+                finalFeedback = execRes.crossQuestion;
+                break;
+              }
+            }
+
+            if (i < actionsInTurn.length - 1) {
+              await new Promise(r => setTimeout(r, 350));
+            }
+          }
+
+          finalFeedback = currentPlan.thought || turnOutcomeMsg || 'Task step executed.';
+
+          // Check if the model explicitly marked the overall goal as accomplished
+          if (currentPlan.goalAccomplished === true && allSubActionsSucceeded) {
+            goalAccomplished = true;
+            break;
+          }
+
+          // If this was the last iteration, stop
+          if (iteration >= maxGoalIterations) {
+            console.log(`[AgentRuntime GoalLoop] Reached max goal iterations (${maxGoalIterations}).`);
+            break;
+          }
+
+          // Sense: Pause for live DOM settling and dynamic re-hydration
+          await new Promise(r => setTimeout(r, 600));
+
+          const currentTab = this.tabManager ? this.tabManager.getActiveTab() : null;
+          const livePageContext = await this.getActivePageContext(currentTab);
+
+          // Build augmented conversational history containing live goal execution progress
+          const augmentedHistory = [...conversationHistory];
+          augmentedHistory.push({
+            user: `Goal: "${exactPrompt}"`,
+            agent: `Progress so far:\n` + stepHistory.map(s => `- [Step ${s.iteration}] ${s.summary} (${s.status})`).join('\n') +
+                   `\nCurrent Active Page: "${livePageContext.title || livePageContext.url}" with buttons: [${(livePageContext.buttons || []).slice(0, 8).join(', ')}]`
+          });
+
+          // Re-plan: Query model with observed state and step history
+          try {
+            console.log(`[AgentRuntime GoalLoop] Re-planning next step on "${livePageContext.title || livePageContext.url}"...`);
+            this.emit('feedback', { 
+              message: `Inspected page "${livePageContext.title || livePageContext.url}". Evaluating next step for goal...`, 
+              level: 'info' 
+            });
+            const nextPlan = await this.model.planActions(exactPrompt, livePageContext, augmentedHistory);
+            if (nextPlan && (Array.isArray(nextPlan.actions) || nextPlan.thought)) {
+              if (!Array.isArray(nextPlan.actions)) nextPlan.actions = [];
+              if (nextPlan.actions.length === 0 || (nextPlan.goalAccomplished === true && nextPlan.actions.length === 0)) {
+                goalAccomplished = true;
+                finalFeedback = nextPlan.thought || finalFeedback;
+                break;
+              }
+              currentPlan = nextPlan;
+            } else {
+              break;
+            }
+          } catch (replanErr) {
+            console.warn('[AgentRuntime GoalLoop] Re-planning error:', replanErr.message);
+            break;
           }
         }
 
         // Cache resolved plan
-        this.preprocessor.cachePlan(activeTab?.url, prep.normalized, plan);
+        this.preprocessor.cachePlan(activeTab?.url, prep.normalized, executedPlan || initialPlan);
 
         // Record interaction in session memory log
         this.sessionManager.recordInteraction({
@@ -380,14 +479,14 @@ class AgentRuntime extends EventEmitter {
           rawPrompt: exactPrompt,
           transcription: text,
           pageContext: pageContext,
-          modelResponse: plan,
+          modelResponse: executedPlan || initialPlan,
           status: 'success',
-          feedback: plan.thought || 'Task completed successfully'
+          feedback: finalFeedback || (executedPlan && executedPlan.thought) || 'Task completed successfully'
         });
 
         this.emit('jarvis-notification', {
           type: 'success',
-          message: plan.thought || `Task executed successfully.`
+          message: finalFeedback || (executedPlan && executedPlan.thought) || `Task executed successfully.`
         });
         return;
       }
@@ -823,6 +922,8 @@ class AgentRuntime extends EventEmitter {
     this.setState(AgentState.EXECUTING_ACTION, { action: intent });
     this.emit('action-started', intent);
 
+    let executionResult = { success: true, intent };
+
     const activeTab = this.tabManager ? this.tabManager.getActiveTab() : null;
     if (!activeTab && intent.type !== ActionType.NEW_TAB) {
       throw new Error('No active browser tab found');
@@ -1183,11 +1284,13 @@ class AgentRuntime extends EventEmitter {
         if (/(developer tools|devtools|dev tools|code button|developer button)/i.test(targetLower)) {
           this.tabManager.toggleDevTools();
           this.emit('feedback', { message: 'Toggled Developer Tools', level: 'success' });
+          executionResult = { success: true };
           break;
         }
         if (/(settings|gear)/i.test(targetLower)) {
           this.emit('shell-action', { action: 'OPEN_SETTINGS' });
           this.emit('feedback', { message: 'Opened Settings', level: 'success' });
+          executionResult = { success: true };
           break;
         }
         if (/(bookmark button|star button|toggle bookmark|add bookmark)/i.test(targetLower)) {
@@ -1196,11 +1299,13 @@ class AgentRuntime extends EventEmitter {
         if (/(bookmark menu|bookmarks list|open bookmarks|show bookmarks)/i.test(targetLower)) {
           this.emit('shell-action', { action: 'OPEN_BOOKMARKS' });
           this.emit('feedback', { message: 'Opened Bookmarks', level: 'success' });
+          executionResult = { success: true };
           break;
         }
         if (/(history)/i.test(targetLower)) {
           this.emit('shell-action', { action: 'OPEN_HISTORY' });
           this.emit('feedback', { message: 'Opened History', level: 'success' });
+          executionResult = { success: true };
           break;
         }
 
@@ -1210,10 +1315,12 @@ class AgentRuntime extends EventEmitter {
         const clickRes = await this.autonomousInspectAndClick(activeTab, intent.target);
         if (clickRes && clickRes.success) {
           this.emit('feedback', { message: `Clicked "${clickRes.label || intent.target}" at (${clickRes.x}, ${clickRes.y})`, level: 'success' });
+          executionResult = { success: true, label: clickRes.label || intent.target, x: clickRes.x, y: clickRes.y };
         } else {
           // If cross-questioning is recommended (e.g. Sign Up vs Sign In conflict, or multiple candidates)
           if (clickRes && clickRes.crossQuestion) {
             this.emit('feedback', { message: clickRes.crossQuestion, level: 'warning', isCrossQuestion: true });
+            executionResult = { success: false, crossQuestion: clickRes.crossQuestion };
             break;
           }
           // Fallback to Vision Grounder if active
@@ -1223,8 +1330,10 @@ class AgentRuntime extends EventEmitter {
             await new Promise((r) => setTimeout(r, 150));
             await this.cdp.dispatchClick(match.x, match.y);
             this.emit('feedback', { message: `Clicked "${match.label || match.text || intent.target}" at (${match.x}, ${match.y})`, level: 'success' });
+            executionResult = { success: true, label: match.label || match.text || intent.target, x: match.x, y: match.y };
           } else {
             this.emit('feedback', { message: `Could not locate element matching: "${intent.target}"`, level: 'warning' });
+            executionResult = { success: false, reason: clickRes?.reason || `Could not locate element matching: "${intent.target}"` };
           }
         }
         break;
@@ -1315,26 +1424,30 @@ class AgentRuntime extends EventEmitter {
           console.warn(`[AgentRuntime Guard] Blocked unintended text input "${textVal}": identified as conversational greeting, not a page input command.`);
           this.emit('feedback', { message: `Greeting recognized: "${textVal}". Standing by for browser commands.`, level: 'info' });
           this.emit('jarvis-notification', { type: 'info', message: 'Ready for browser commands.' });
+          executionResult = { success: true, greeting: true };
           break;
         }
 
         const selector = intent.selector || intent.target || '';
-        await this.autonomousTypeIntoElement(activeTab, selector, textVal, {
+        const typeRes = await this.autonomousTypeIntoElement(activeTab, selector, textVal, {
           submit: intent.submit !== false,
           rawPrompt
         });
+        executionResult = { success: typeRes ? typeRes.success !== false : true, typeRes };
         break;
       }
 
       default:
         console.warn('[AgentRuntime] Unhandled intent type:', intent.type);
+        executionResult = { success: false, reason: `Unhandled intent type: ${intent.type}` };
     }
 
-    this.actionHistory.push({ intent, timestamp: Date.now() });
-    this.emit('action-finished', intent);
+    this.actionHistory.push({ intent, result: executionResult, timestamp: Date.now() });
+    this.emit('action-finished', { ...intent, result: executionResult });
     if (!this.continuousVoice) {
       this.setState(AgentState.IDLE);
     }
+    return executionResult;
   }
 
   /**
@@ -2794,6 +2907,12 @@ class AgentRuntime extends EventEmitter {
               .map(h => (h.innerText || '').trim())
               .filter(t => t.length > 2 && t.length < 80);
 
+            // Extract visible interactive buttons and prominent links
+            const buttons = Array.from(document.querySelectorAll('button, a[role="button"], a[class*="btn"], input[type="submit"], input[type="button"], nav a, header a'))
+              .slice(0, 15)
+              .map(b => (b.innerText || b.value || b.getAttribute('title') || b.getAttribute('aria-label') || '').trim())
+              .filter(t => t.length > 1 && t.length < 40);
+
             const favEl = document.querySelector('link[rel*="icon"]');
             const favicon = favEl ? favEl.href : '';
 
@@ -2803,13 +2922,14 @@ class AgentRuntime extends EventEmitter {
               .trim()
               .slice(0, 4000);
 
-            return { title, headings: headings.slice(0, 6), favicon, text };
+            return { title, headings: headings.slice(0, 6), buttons: Array.from(new Set(buttons)), favicon, text };
           })()
         `).catch(() => null);
 
         if (details) {
           if (details.title) basicContext.title = details.title;
           if (details.favicon) basicContext.favicon = details.favicon;
+          if (Array.isArray(details.buttons)) basicContext.buttons = details.buttons;
           if (Array.isArray(details.headings) && details.headings.length > 0) {
             basicContext.headings = details.headings;
             // Generate smart contextual suggestions from headings (Chrome Gemini Style)
