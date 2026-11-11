@@ -35,6 +35,7 @@ class AgentRuntime extends EventEmitter {
     this.lastDOMAction = null;
     this.isPageShared = true; // Chrome Gemini-style active page context sharing
     this.verboseAudioLogging = false; // Filtered to suppress repetitive audio frame status spam
+    this.maxGoalIterations = 15; // Autonomous Sense-Plan-Act-Verify re-planning goal loop depth
 
     // Audio stream session state & VAD tracking
     this.audioSession = {
@@ -320,17 +321,17 @@ class AgentRuntime extends EventEmitter {
       }
 
       // 2. Retrieve recent conversation history from SessionManager so agent retains conversational memory
-      const recentInteractions = this.sessionManager ? (this.sessionManager.getHistory().interactions || []).slice(-8) : [];
+      const recentInteractions = this.sessionManager ? (this.sessionManager.getHistory().interactions || []).slice(-10) : [];
       const conversationHistory = recentInteractions.map(item => ({
-        user: item.rawPrompt || item.transcription,
-        agent: item.feedback || (item.modelResponse && item.modelResponse.thought) || '',
-        status: item.status
-      }));
+        user: item.prompt?.raw || item.prompt?.transcription || item.rawPrompt || item.transcription || '',
+        agent: item.response?.thought || item.response?.feedback || item.feedback || (item.modelResponse && item.modelResponse.thought) || '',
+        status: item.response?.status || item.status || 'success'
+      })).filter(h => h.user && h.user.trim().length > 0);
 
       // 3. TIER 1: AI-FIRST AUTONOMOUS GOAL EXECUTION & RE-PLANNING LOOP
       // Sense -> Plan -> Act -> Verify. The agent senses live page state after each action,
       // reports execution results back to the model, and iteratively replans until the goal is accomplished.
-      const maxGoalIterations = 5;
+      const maxGoalIterations = this.maxGoalIterations || 15;
       let iteration = 0;
       let goalAccomplished = false;
       const stepHistory = [];
@@ -1048,20 +1049,31 @@ class AgentRuntime extends EventEmitter {
       }
 
       case 'WHATSAPP_CHAT_SEND': {
-        const contact = intent.contact || intent.target || intent.phone || intent.params?.contact || '';
-        const message = intent.message || intent.text || intent.params?.message || '';
+        let contact = intent.contact || intent.target || intent.phone || intent.params?.contact || '';
+        let message = intent.message || intent.text || intent.params?.message || '';
         let secretCode = intent.secretCode || intent.passcode || intent.pin || intent.params?.secretCode || intent.params?.passcode || null;
 
-        // Multi-turn conversational memory: if secretCode not in current turn, check recent session interactions
-        if (!secretCode && this.sessionManager) {
+        // Multi-turn conversational memory: if secretCode, contact, or message not in current turn, check recent session interactions
+        if (this.sessionManager) {
           try {
-            const history = (this.sessionManager.getHistory().interactions || []).slice(-8);
+            const history = (this.sessionManager.getHistory().interactions || []).slice(-10);
             for (let i = history.length - 1; i >= 0; i--) {
-              const raw = history[i].prompt?.raw || history[i].prompt?.transcription || '';
-              const m = raw.match(/(?:secret\s+code|passcode|pin|lock\s+code|hidden\s+(?:chat\s+)?code|locked\s+(?:chat\s+)?code|password)(?:\s+(?:of|for)\s+(?:the\s+)?(?:hidden|locked)?\s*(?:chat|folder|conversation))?\s*(?:is|:|=)?\s*([a-zA-Z0-9_\-]+)/i);
-              if (m) {
-                secretCode = m[1].trim();
-                break;
+              const entry = history[i];
+              const raw = entry.prompt?.raw || entry.prompt?.transcription || entry.rawPrompt || '';
+              const actions = entry.response?.actions || entry.modelResponse?.actions || [];
+              const pastWa = actions.find(a => a.type === 'WHATSAPP_CHAT_SEND' || a.type === 'WHATSAPP_SEND');
+
+              if (!contact && pastWa) {
+                contact = pastWa.contact || pastWa.params?.contact || '';
+              }
+              if (!message && pastWa) {
+                message = pastWa.message || pastWa.params?.message || '';
+              }
+              if (!secretCode) {
+                const m = raw.match(/(?:secret\s+code|passcode|pin|lock\s+code|hidden\s+(?:chat\s+)?code|locked\s+(?:chat\s+)?code|password|code)(?:\s+(?:of|for)\s+(?:the\s+)?(?:hidden|locked)?\s*(?:chat|folder|conversation))?\s*(?:is|:|=)?\s*([a-zA-Z0-9_\-]+)/i);
+                if (m) {
+                  secretCode = m[1].trim();
+                }
               }
             }
           } catch (_) {}

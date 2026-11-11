@@ -2318,6 +2318,63 @@ input:checked+.slider:before {
   flex-direction: column;
   gap: 12px;
   width: 100%;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
+/* Enable Full Text Selection and Copying across Copilot Chat */
+.jarvis-side-panel,
+.side-panel-body,
+.copilot-msg-user,
+.copilot-user-content,
+.copilot-msg-agent,
+.copilot-card-body,
+.copilot-card-header,
+.copilot-card-plan,
+.copilot-card-nav,
+.copilot-card-tab,
+.copilot-card-target,
+.copilot-card-step,
+.copilot-card-success,
+.copilot-card-question,
+.copilot-card-default,
+.copilot-badge,
+.copilot-inspector-card,
+.copilot-inspector-header,
+.copilot-inspector-classes,
+.copilot-inspector-dims,
+.copilot-inspector-acc,
+.copilot-url-chip,
+.copilot-entity-chip {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
+.copilot-btn-copy {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  transition: all 0.18s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none !important;
+  opacity: 0.65;
+}
+
+.copilot-msg-user:hover .copilot-btn-copy,
+.copilot-msg-agent:hover .copilot-btn-copy {
+  opacity: 1;
+}
+
+.copilot-btn-copy:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.2);
 }
 
 /* User Message: Sleek Indigo Gradient with Badge */

@@ -862,12 +862,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (sidePanelEmptyState) sidePanelEmptyState.style.display = 'none';
 
     const msgEl = document.createElement('div');
+    const copyBtnHtml = `<button class="copilot-btn-copy" title="Copy text" onclick="event.stopPropagation(); const targetBody = this.closest('.copilot-msg-user, .copilot-msg-agent').querySelector('.copilot-card-body, .copilot-user-content'); const textToCopy = targetBody ? targetBody.innerText.trim() : this.closest('.copilot-msg-user, .copilot-msg-agent').innerText.trim(); navigator.clipboard.writeText(textToCopy); const prev = this.innerHTML; this.innerHTML='✓'; setTimeout(() => { this.innerHTML=prev; }, 1400);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>`;
 
     if (sender === 'user') {
       msgEl.className = 'copilot-msg-user';
       msgEl.innerHTML = `
         <div class="copilot-user-header">
           <span class="copilot-user-badge">You</span>
+          ${copyBtnHtml}
         </div>
         <div class="copilot-user-content">${text}</div>
       `;
@@ -880,6 +882,7 @@ document.addEventListener('DOMContentLoaded', () => {
         msgEl.innerHTML = `
           <div class="copilot-card-header">
             <span class="copilot-badge badge-amber">❓ Clarification Needed</span>
+            ${copyBtnHtml}
           </div>
           <div class="copilot-card-body">${formatCopilotText(text)}</div>
         `;
@@ -889,6 +892,7 @@ document.addEventListener('DOMContentLoaded', () => {
         msgEl.innerHTML = `
           <div class="copilot-card-header">
             <span class="copilot-badge badge-purple">🧠 AI Strategy Plan</span>
+            ${copyBtnHtml}
           </div>
           <div class="copilot-card-body">${formatCopilotText(planContent)}</div>
         `;
@@ -897,6 +901,7 @@ document.addEventListener('DOMContentLoaded', () => {
         msgEl.innerHTML = `
           <div class="copilot-card-header">
             <span class="copilot-badge badge-cyan">🌐 Web Navigation</span>
+            ${copyBtnHtml}
           </div>
           <div class="copilot-card-body">${formatCopilotText(text)}</div>
         `;
@@ -905,6 +910,7 @@ document.addEventListener('DOMContentLoaded', () => {
         msgEl.innerHTML = `
           <div class="copilot-card-header">
             <span class="copilot-badge badge-coral">📑 Tab Manager</span>
+            ${copyBtnHtml}
           </div>
           <div class="copilot-card-body">${formatCopilotText(text)}</div>
         `;
@@ -913,6 +919,7 @@ document.addEventListener('DOMContentLoaded', () => {
         msgEl.innerHTML = `
           <div class="copilot-card-header">
             <span class="copilot-badge badge-emerald">🎯 Element Grounding</span>
+            ${copyBtnHtml}
           </div>
           <div class="copilot-card-body">${formatCopilotText(text)}</div>
         `;
@@ -921,6 +928,7 @@ document.addEventListener('DOMContentLoaded', () => {
         msgEl.innerHTML = `
           <div class="copilot-card-header">
             <span class="copilot-badge badge-green">✓ Task Verified</span>
+            ${copyBtnHtml}
           </div>
           <div class="copilot-card-body">${formatCopilotText(text)}</div>
         `;
@@ -929,12 +937,16 @@ document.addEventListener('DOMContentLoaded', () => {
         msgEl.innerHTML = `
           <div class="copilot-card-header">
             <span class="copilot-badge badge-blue"><span class="step-live-dot"></span> Autonomous Step</span>
+            ${copyBtnHtml}
           </div>
           <div class="copilot-card-body">${formatCopilotText(text)}</div>
         `;
       } else {
         msgEl.className = 'copilot-msg-agent copilot-card-default';
         msgEl.innerHTML = `
+          <div class="copilot-card-header" style="justify-content: flex-end; margin-bottom: 2px;">
+            ${copyBtnHtml}
+          </div>
           <div class="copilot-card-body">${formatCopilotText(text)}</div>
         `;
       }
