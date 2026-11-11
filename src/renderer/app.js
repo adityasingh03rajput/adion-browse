@@ -1395,12 +1395,14 @@ document.addEventListener('DOMContentLoaded', () => {
     updateConfigFormForProvider(targetProvider);
     if (modelConfigModal) {
       modelConfigModal.classList.add('show');
+      updateOverlayState();
     }
   }
 
   function closeModelConfigModal() {
     if (modelConfigModal) {
       modelConfigModal.classList.remove('show');
+      updateOverlayState();
     }
   }
 
