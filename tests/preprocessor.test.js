@@ -176,6 +176,31 @@ async function testPreprocessorPerformance() {
   assert.strictEqual(openThisFastIntent, null, '"open this" must not be hijacked as a literal URL search query');
   console.log('  ✔ Pronouns and relative references preserved for contextual multi-turn resolution.');
 
+  // Test 12: WhatsApp Hidden / Locked Chat Secret Code Extraction
+  console.log('\nTest 12: WhatsApp Hidden / Locked Chat Secret Code Extraction...');
+  const secretCodePrep1 = preprocessor.preprocess('text pidduk i love you , secret code of hidden chat is 1512');
+  const secretCodeIntent1 = preprocessor.extractFastIntent(secretCodePrep1, waContext);
+  assert.ok(secretCodeIntent1 !== null, 'secretCodeIntent1 should not be null');
+  assert.strictEqual(secretCodeIntent1.type, 'WHATSAPP_CHAT_SEND');
+  assert.strictEqual(secretCodeIntent1.contact, 'pidduk');
+  assert.strictEqual(secretCodeIntent1.message, 'i love you');
+  assert.strictEqual(secretCodeIntent1.secretCode, '1512');
+
+  const secretCodePrep2 = preprocessor.preprocess('send i love you to pidduk , secret code is 1512');
+  const secretCodeIntent2 = preprocessor.extractFastIntent(secretCodePrep2);
+  assert.ok(secretCodeIntent2 !== null, 'secretCodeIntent2 should not be null');
+  assert.strictEqual(secretCodeIntent2.contact, 'pidduk');
+  assert.strictEqual(secretCodeIntent2.message, 'i love you');
+  assert.strictEqual(secretCodeIntent2.secretCode, '1512');
+
+  const secretCodePrep3 = preprocessor.preprocess('text pidduk i love you , pin is 1512');
+  const secretCodeIntent3 = preprocessor.extractFastIntent(secretCodePrep3);
+  assert.ok(secretCodeIntent3 !== null, 'secretCodeIntent3 should not be null');
+  assert.strictEqual(secretCodeIntent3.contact, 'pidduk');
+  assert.strictEqual(secretCodeIntent3.message, 'i love you');
+  assert.strictEqual(secretCodeIntent3.secretCode, '1512');
+  console.log('  ✔ Hidden chat secret code parsed cleanly: message freed from security credentials and secretCode extracted.');
+
   console.log('\n✅ ALL QUERY PREPROCESSING & PERFORMANCE BENCHMARKS PASSED!');
 }
 

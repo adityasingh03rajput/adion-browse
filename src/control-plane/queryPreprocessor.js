@@ -260,10 +260,22 @@ class QueryPreprocessor {
     }
 
     // D. Context-Aware WhatsApp Contact Messaging & Direct Dispatch
-    const isWhatsAppContext = (pageContext && pageContext.url && pageContext.url.includes('whatsapp.com')) || /(?:on|in|via)\s+whatsapp/i.test(lower);
+    const isWhatsAppContext = (pageContext && pageContext.url && pageContext.url.includes('whatsapp.com')) || 
+      /(?:on|in|via)\s+whatsapp/i.test(lower) || 
+      /(?:hidden|locked)\s+chat|secret\s+code|passcode|lock\s+code|\bpin\s+is\b/i.test(lower);
+
     if (isWhatsAppContext) {
       let cleaned = lower.trim().replace(/\s+(?:on|in|via)\s+whatsapp(?:\s*[\.\?!])?$/i, '');
       cleaned = cleaned.replace(/[\.\?!]+$/, '').trim();
+
+      // Extract secret code / passcode / PIN if specified (e.g. "secret code of hidden chat is 1512", "passcode is 1234", "with secret code 1512")
+      let secretCode = null;
+      const secretCodeRegex = /(?:,|and|\s+with|\s+using)?\s*(?:the\s+)?(?:secret\s+code|passcode|pin|lock\s+code|hidden\s+(?:chat\s+)?code|locked\s+(?:chat\s+)?code|code|password)(?:\s+(?:of|for)\s+(?:the\s+)?(?:hidden|locked)?\s*(?:chat|folder|conversation))?\s*(?:is|:|=)?\s*([a-zA-Z0-9_\-]+)/i;
+      const secretMatch = cleaned.match(secretCodeRegex);
+      if (secretMatch) {
+        secretCode = secretMatch[1].trim();
+        cleaned = cleaned.replace(secretMatch[0], '').trim();
+      }
 
       let contact = null;
       let msg = null;
@@ -301,8 +313,11 @@ class QueryPreprocessor {
         const cleanPhone = contact.replace(/[^0-9]/g, '');
         const isNumericPhone = cleanPhone.length >= 7 && cleanPhone.length <= 15 && !/[a-zA-Z]/.test(contact);
 
+        // Clean msg from any leftover punctuation or connectors
+        msg = msg.replace(/^[,;:\s]+|[,;:\s]+$/g, '').trim();
+
         // If numeric phone and not on WhatsApp Web, use WHATSAPP_SEND direct link
-        if (isNumericPhone && (!pageContext?.url || !pageContext.url.includes('whatsapp.com'))) {
+        if (isNumericPhone && (!pageContext?.url || !pageContext.url.includes('whatsapp.com')) && !secretCode) {
           return {
             type: 'WHATSAPP_SEND',
             phone: cleanPhone,
@@ -313,13 +328,16 @@ class QueryPreprocessor {
           };
         }
 
-        // Context-aware or named contact search on WhatsApp Web
+        // Context-aware or named contact search on WhatsApp Web (supports hidden/locked chats with secret code)
         return {
           type: 'WHATSAPP_CHAT_SEND',
           contact: contact,
           phone: isNumericPhone ? cleanPhone : null,
           message: msg,
-          thought: `Search for contact "${contact}" in WhatsApp and send "${msg}"`
+          secretCode: secretCode || null,
+          thought: secretCode
+            ? `Search for hidden contact "${contact}" using secret code "${secretCode}" in WhatsApp and send "${msg}"`
+            : `Search for contact "${contact}" in WhatsApp and send "${msg}"`
         };
       }
 

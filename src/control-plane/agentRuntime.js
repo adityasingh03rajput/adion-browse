@@ -890,8 +890,25 @@ class AgentRuntime extends EventEmitter {
       }
 
       case 'WHATSAPP_CHAT_SEND': {
-        const contact = intent.contact || intent.target || intent.phone || '';
-        const message = intent.message || intent.text || '';
+        const contact = intent.contact || intent.target || intent.phone || intent.params?.contact || '';
+        const message = intent.message || intent.text || intent.params?.message || '';
+        let secretCode = intent.secretCode || intent.passcode || intent.pin || intent.params?.secretCode || intent.params?.passcode || null;
+
+        // Multi-turn conversational memory: if secretCode not in current turn, check recent session interactions
+        if (!secretCode && this.sessionManager) {
+          try {
+            const history = (this.sessionManager.getHistory().interactions || []).slice(-8);
+            for (let i = history.length - 1; i >= 0; i--) {
+              const raw = history[i].prompt?.raw || history[i].prompt?.transcription || '';
+              const m = raw.match(/(?:secret\s+code|passcode|pin|lock\s+code|hidden\s+(?:chat\s+)?code|locked\s+(?:chat\s+)?code|password)(?:\s+(?:of|for)\s+(?:the\s+)?(?:hidden|locked)?\s*(?:chat|folder|conversation))?\s*(?:is|:|=)?\s*([a-zA-Z0-9_\-]+)/i);
+              if (m) {
+                secretCode = m[1].trim();
+                break;
+              }
+            }
+          } catch (_) {}
+        }
+
         const cleanPhone = (intent.phone || contact).replace(/[^0-9]/g, '');
         const isNumericPhone = cleanPhone.length >= 7 && cleanPhone.length <= 15 && !/[a-zA-Z]/.test(contact);
         
@@ -905,7 +922,7 @@ class AgentRuntime extends EventEmitter {
             targetTab = existingWaTab;
             this.emit('feedback', { message: `Switched to active WhatsApp Web tab for "${contact}"`, level: 'info' });
           } else {
-            const waUrl = isNumericPhone 
+            const waUrl = (isNumericPhone && !secretCode)
               ? `https://web.whatsapp.com/send/?phone=${cleanPhone}&text=${encodeURIComponent(message)}`
               : 'https://web.whatsapp.com/';
             if (activeTab && activeTab.url && !activeTab.url.startsWith('adion://newtab')) {
@@ -920,7 +937,7 @@ class AgentRuntime extends EventEmitter {
           }
         }
 
-        await this.sendWhatsAppChat(targetTab, contact, message, isNumericPhone ? cleanPhone : null);
+        await this.sendWhatsAppChat(targetTab, contact, message, isNumericPhone ? cleanPhone : null, secretCode);
         break;
       }
 
@@ -1996,11 +2013,114 @@ class AgentRuntime extends EventEmitter {
   }
 
   /**
+   * Generalized Autonomous Secret Code / Passcode Unlocker.
+   * Unlocks protected, hidden, or locked sections across web applications (such as WhatsApp Web locked chats).
+   * 1. Detects any active passcode/PIN/password input fields or unlock modals on the page and submits secretCode.
+   * 2. For WhatsApp Web (and search-based unlock systems):
+   *    Types the secret code into the search box to reveal the "Locked chats" entry, then clicks it using autonomousInspectAndClick.
+   * 3. Handles unlock prompts and transitions into the unlocked view.
+   */
+  async autonomousUnlockWithSecret(tab, secretCode) {
+    if (!tab || !tab.view) tab = this.tabManager ? this.tabManager.getActiveTab() : null;
+    if (!tab || !tab.view) return { success: false, reason: 'No active tab view' };
+    const contents = tab.view.webContents;
+    if (!contents) return { success: false, reason: 'No webContents' };
+    const code = (secretCode || '').trim();
+    if (!code) return { success: false, reason: 'No secret code provided' };
+
+    console.log(`[AgentRuntime Unlock] 🔐 Initiating autonomous unlock sequence with code "${code}"...`);
+    this.emit('feedback', { message: `Step 1/4: Unlocking protected chats with secret code...`, level: 'info' });
+
+    // Step 1: Check if an unlock prompt, PIN modal, or password field is already visible on screen
+    const modalCheck = await contents.executeJavaScript(`
+      (() => {
+        const input = document.querySelector(
+          'input[type="password"], input[type="number"][placeholder*="code" i], input[placeholder*="code" i], input[placeholder*="pin" i], input[aria-label*="code" i], input[aria-label*="secret" i], [data-testid*="secret-code"], [data-testid*="lock-code"]'
+        );
+        if (input && input.offsetParent !== null) {
+          input.focus();
+          return { foundInput: true };
+        }
+        return { foundInput: false };
+      })()
+    `).catch(() => ({ foundInput: false }));
+
+    if (modalCheck && modalCheck.foundInput) {
+      console.log(`[AgentRuntime Unlock] Found visible passcode input modal. Typing secret code...`);
+      await this.autonomousTypeIntoElement(tab, 'input[type="password"], input[placeholder*="code" i], input[placeholder*="pin" i]', code, { submit: true });
+      await new Promise(r => setTimeout(r, 600));
+      return { success: true, method: 'modal_input' };
+    }
+
+    // Step 2: Search-based unlock (WhatsApp Web Chat Lock pattern)
+    // Typing the secret code into the main search box reveals the "Locked chats" entry
+    console.log(`[AgentRuntime Unlock] Typing secret code into search bar to reveal locked chats...`);
+    const searchResult = await contents.executeJavaScript(`
+      (() => {
+        const searchBox = document.querySelector(
+          '#side div[contenteditable="true"], [data-testid="chat-list-search"], div[title="Search or start new chat"], div[role="textbox"][data-tab="3"], #side [role="textbox"], input[type="search"]'
+        );
+        if (!searchBox) return { searchFound: false };
+        searchBox.focus();
+        document.execCommand('selectAll', false, null);
+        document.execCommand('insertText', false, ${JSON.stringify(code)});
+        searchBox.dispatchEvent(new Event('input', { bubbles: true }));
+        searchBox.dispatchEvent(new Event('change', { bubbles: true }));
+        return { searchFound: true };
+      })()
+    `).catch(() => ({ searchFound: false }));
+
+    if (searchResult && searchResult.searchFound) {
+      await new Promise(r => setTimeout(r, 500));
+
+      // Click "Locked chats" entry that appears in the search results
+      const clickLocked = await this.autonomousInspectAndClick(tab, 'Locked chats');
+      if (clickLocked && clickLocked.success) {
+        console.log(`[AgentRuntime Unlock] 🔓 Clicked "Locked chats" item (${clickLocked.x}, ${clickLocked.y}).`);
+        await new Promise(r => setTimeout(r, 600));
+
+        // Check if an unlock PIN dialog popped up after clicking "Locked chats"
+        const postModalCheck = await contents.executeJavaScript(`
+          (() => {
+            const pinInput = document.querySelector('input[type="password"], input[placeholder*="code" i], input[placeholder*="pin" i], div[contenteditable="true"][aria-label*="code" i]');
+            return Boolean(pinInput && pinInput.offsetParent !== null);
+          })()
+        `).catch(() => false);
+
+        if (postModalCheck) {
+          console.log(`[AgentRuntime Unlock] Unlock PIN dialog appeared. Entering secret code...`);
+          await this.autonomousTypeIntoElement(tab, 'input[type="password"], input[placeholder*="code" i], input[placeholder*="pin" i]', code, { submit: true });
+          await new Promise(r => setTimeout(r, 600));
+        }
+
+        return { success: true, method: 'search_reveal_clicked' };
+      }
+
+      // Also try clicking "Locked"
+      const clickLockedShort = await this.autonomousInspectAndClick(tab, 'Locked');
+      if (clickLockedShort && clickLockedShort.success) {
+        console.log(`[AgentRuntime Unlock] 🔓 Clicked "Locked" item (${clickLockedShort.x}, ${clickLockedShort.y}).`);
+        await new Promise(r => setTimeout(r, 600));
+        return { success: true, method: 'search_reveal_clicked' };
+      }
+    }
+
+    // Step 3: Check if "Locked chats" is already visible in the chat list without search
+    const clickDirect = await this.autonomousInspectAndClick(tab, 'Locked chats');
+    if (clickDirect && clickDirect.success) {
+      await new Promise(r => setTimeout(r, 600));
+      return { success: true, method: 'direct_locked_clicked' };
+    }
+
+    return { success: false, reason: 'Could not unlock hidden chats with secret code' };
+  }
+
+  /**
    * Autonomous in-page WhatsApp contact search, chat activation, and message dispatch.
    * Handles user intentions like "say thankyou to safal in whatsapp" directly
-   * inside the authenticated WhatsApp Web interface.
+   * inside the authenticated WhatsApp Web interface (including locked/hidden chats).
    */
-  async sendWhatsAppChat(tab, contact = '', message = '', phone = null) {
+  async sendWhatsAppChat(tab, contact = '', message = '', phone = null, secretCode = null) {
     if (!tab || !tab.view) {
       console.warn('[AgentRuntime WhatsApp] ⚠️ No active tab view available to dispatch WhatsApp message');
       return { success: false, reason: 'No active tab view' };
@@ -2011,10 +2131,12 @@ class AgentRuntime extends EventEmitter {
       return { success: false, reason: 'No webContents' };
     }
 
-    console.log(`[AgentRuntime WhatsApp] 🚀 Initiating autonomous workflow: Send "${message}" to "${contact}"`);
-    this.emit('feedback', { message: `Step 1/3: Searching for contact "${contact}" in WhatsApp...`, level: 'info' });
+    const stepTotal = secretCode ? '4' : '3';
+    console.log(`[AgentRuntime WhatsApp] 🚀 Initiating autonomous workflow: Send "${message}" to "${contact}"${secretCode ? ` (secretCode: ${secretCode})` : ''}`);
+    this.emit('feedback', { message: `Step 1/${stepTotal}: Locating contact "${contact}" in WhatsApp...`, level: 'info' });
     this.emit('jarvis-notification', { type: 'info', message: `Searching for contact "${contact}" in WhatsApp...` });
 
+    let unlocked = false;
     let searchTyped = false;
     let chatSelected = false;
     let messageSent = false;
@@ -2186,8 +2308,21 @@ class AgentRuntime extends EventEmitter {
           await new Promise(r => setTimeout(r, 450));
         }
 
+        // Autonomous Secret Code Unlock for Hidden / Locked Chats (e.g. WhatsApp Chat Lock with PIN/secret code)
+        if (secretCode && !unlocked && !chatSelected) {
+          unlocked = true;
+          console.log(`[AgentRuntime WhatsApp] 🔐 Unlocking hidden/locked chats with secret code "${secretCode}"...`);
+          this.emit('feedback', { message: `Unlocking hidden/locked chats with secret code...`, level: 'info' });
+          const unlockRes = await this.autonomousUnlockWithSecret(tab, secretCode);
+          if (unlockRes && unlockRes.success) {
+            console.log(`[AgentRuntime WhatsApp] 🔓 Hidden chats unlocked successfully.`);
+            this.emit('feedback', { message: `Locked chats unlocked. Selecting "${contact}"...`, level: 'info' });
+            await new Promise(r => setTimeout(r, 600));
+          }
+        }
+
         // Live Inspect & Click: Select contact from live search results or chat list using real hardware mouse dispatch
-        if (!chatSelected && (searchTyped || attempts >= 2)) {
+        if (!chatSelected && (searchTyped || attempts >= 2 || unlocked)) {
           const inspectClick = await this.autonomousInspectAndClick(tab, contact);
           if (inspectClick && inspectClick.success) {
             chatSelected = true;

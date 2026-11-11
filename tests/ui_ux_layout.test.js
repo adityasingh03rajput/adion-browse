@@ -178,6 +178,8 @@ async function testUiUxLayout() {
   assert.ok(agentRuntimeSrc.includes('sendInputEvent'), 'sendWhatsAppChat must dispatch native hardware Enter via sendInputEvent');
   assert.ok(agentRuntimeSrc.includes('findComposer'), 'sendWhatsAppChat must use robust findComposer resolver');
   assert.ok(agentRuntimeSrc.includes('waiting_for_composer'), 'sendWhatsAppChat must guard against infinite chat re-clicking when conversation is open');
+  assert.ok(agentRuntimeSrc.includes('async autonomousUnlockWithSecret'), 'AgentRuntime must implement autonomousUnlockWithSecret for hidden/locked chat unlock');
+  assert.ok(agentRuntimeSrc.includes('secretCode'), 'sendWhatsAppChat must support secretCode parameter for hidden/locked chats');
   assert.ok(queryPreprocessorSrc.includes("target === 'whatsapp'"), 'queryPreprocessor must map whatsapp shortcut to https://web.whatsapp.com');
   assert.ok(modelClientSrc.includes('WHATSAPP_CHAT_SEND'), 'ModelClient system prompt must include WHATSAPP_CHAT_SEND action');
   console.log('  ✔ In-page contact search, chat activation, hardware Enter dispatch, and composer typing verified for WhatsApp Web.');
