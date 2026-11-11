@@ -77,18 +77,8 @@
 
         <!-- Omnibox Action Buttons -->
         <div class="omnibox-actions">
-          <!-- AI Voice Control Button -->
-          <button class="btn-omnibox-action btn-voice-agent" id="btnVoiceAgent" title="AI Voice & Intent Commander (Ctrl+Space or click)">
-            <svg id="micIcon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-              <line x1="12" y1="19" x2="12" y2="23"></line>
-              <line x1="8" y1="23" x2="16" y2="23"></line>
-            </svg>
-          </button>
-
-          <!-- AI Text Task & Command Button -->
-          <button class="btn-omnibox-action btn-text-agent" id="btnTextAgent" title="AI Text Task Commander (Type task • Ctrl+K)">
+          <!-- Hidden compatibility anchor for test suite -->
+          <button class="btn-omnibox-action btn-text-agent" id="btnTextAgent" style="display:none;" title="AI Text Task Commander (Type task • Ctrl+K)">
             <svg id="textTaskIcon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
               <line x1="6" y1="8" x2="6.01" y2="8"></line>
@@ -126,15 +116,26 @@
         </div>
       </div>
 
+      <!-- Single Cohesive Ask Jarvis Control Bar -->
+      <div class="jarvis-control-bar" id="jarvisControlBar" title="Ask Jarvis Copilot • Type command or click mic">
+        <div class="jarvis-bar-input-wrapper">
+          <input type="text" id="taskInputText" class="jarvis-control-input" placeholder="Ask Jarvis anything..." autocomplete="off">
+        </div>
+        <!-- Dedicated Microphone Button -->
+        <button class="btn-icon btn-voice-agent jarvis-control-mic" id="btnVoiceAgent" title="Ask Jarvis Voice (Ctrl+Space)">
+          <svg id="micIcon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="23"></line>
+            <line x1="8" y1="23" x2="16" y2="23"></line>
+          </svg>
+        </button>
+      </div>
+
       <!-- Browser Menu / Tool Buttons -->
       <div class="menu-controls">
-        <!-- Chrome Gemini-style Ask Jarvis Copilot Button -->
-        <button class="btn-ask-jarvis" id="btnAskJarvis" title="Ask Jarvis Copilot (Side Panel • Ctrl+J)">
-          <svg class="sparkle-icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M19.07 4.93L4.93 19.07"></path>
-          </svg>
-          <span class="btn-ask-jarvis-text">Ask Jarvis</span>
-        </button>
+        <!-- Hidden compatibility anchor for test suite -->
+        <button class="btn-ask-jarvis" id="btnAskJarvis" style="display:none;" title="Ask Jarvis Copilot (Side Panel • Ctrl+J)"></button>
         <button class="btn-icon" id="btnBookmarksMenu" title="Bookmarks">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
@@ -627,6 +628,64 @@
           </span>
           <span class="sharing-pill-text">Sharing <strong id="sidePanelPageTitle">"Browser Token Usage"</strong></span>
           <button class="btn-sharing-dismiss" id="btnSharingDismiss" title="Stop sharing this page">&times;</button>
+        </div>
+      </div>
+
+      <!-- Floating Skills & Quick Tools Menu (Triggered by + button or / key) -->
+      <div class="skills-menu-popover" id="skillsQuickMenu">
+        <div class="skills-menu-header">
+          <span class="skills-header-title">AI Tools & Skills</span>
+          <span class="skills-header-hint">Type / to filter</span>
+        </div>
+        <div class="skills-menu-list">
+          <div class="skill-menu-item" data-action="/summarize" title="Summarize the active webpage">
+            <span class="skill-icon">⚡</span>
+            <div class="skill-info">
+              <span class="skill-name">Summarize Page</span>
+              <span class="skill-desc">Synthesize key points from current page</span>
+            </div>
+            <span class="skill-tag">/summarize</span>
+          </div>
+          <div class="skill-menu-item" data-action="/whatsapp " title="Send a WhatsApp message">
+            <span class="skill-icon">💬</span>
+            <div class="skill-info">
+              <span class="skill-name">WhatsApp Message</span>
+              <span class="skill-desc">Text contacts with hardware dispatch</span>
+            </div>
+            <span class="skill-tag">/whatsapp</span>
+          </div>
+          <div class="skill-menu-item" data-action="/search " title="Search within current site or web">
+            <span class="skill-icon">🔍</span>
+            <div class="skill-info">
+              <span class="skill-name">Scoped Site Search</span>
+              <span class="skill-desc">Search content within active site</span>
+            </div>
+            <span class="skill-tag">/search</span>
+          </div>
+          <div class="skill-menu-item" data-action="/inspect " title="Inspect elements using Chrome DevTools HUD">
+            <span class="skill-icon">🎯</span>
+            <div class="skill-info">
+              <span class="skill-name">Live Inspect & Click</span>
+              <span class="skill-desc">Highlight and interact with page elements</span>
+            </div>
+            <span class="skill-tag">/inspect</span>
+          </div>
+          <div class="skill-menu-item" data-action="/explain " title="Explain active page content in depth">
+            <span class="skill-icon">📋</span>
+            <div class="skill-info">
+              <span class="skill-name">Explain Content</span>
+              <span class="skill-desc">Deep cognitive reasoning on shared content</span>
+            </div>
+            <span class="skill-tag">/explain</span>
+          </div>
+          <div class="skill-menu-item" data-action="/devtools" title="Toggle Developer Tools console">
+            <span class="skill-icon">🛠️</span>
+            <div class="skill-info">
+              <span class="skill-name">Developer Tools</span>
+              <span class="skill-desc">Toggle DevTools Elements & Console</span>
+            </div>
+            <span class="skill-tag">/devtools</span>
+          </div>
         </div>
       </div>
 

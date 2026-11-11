@@ -2578,3 +2578,242 @@ input:checked+.slider:before {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(66, 133, 244, 0.6);
 }
+
+/* ==========================================================================
+   UNIFIED ASK JARVIS CONTROL BAR (Top Navigation Integration)
+   ========================================================================== */
+
+.jarvis-control-bar {
+  display: flex;
+  align-items: center;
+  background: rgba(18, 24, 38, 0.85);
+  border: 1px solid rgba(0, 242, 254, 0.35);
+  border-radius: 20px;
+  height: 34px;
+  min-width: 200px;
+  max-width: 280px;
+  flex: 0 1 250px;
+  padding: 0 4px 0 12px;
+  gap: 6px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  position: relative;
+  z-index: 65;
+}
+
+.jarvis-control-bar:focus-within {
+  background: rgba(13, 19, 32, 0.98);
+  border-color: #00f2fe;
+  box-shadow: 0 0 0 2px rgba(0, 242, 254, 0.25), 0 4px 16px rgba(0, 242, 254, 0.2);
+}
+
+.jarvis-bar-input-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.jarvis-control-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #e6edf3;
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 500;
+  padding: 0;
+}
+
+.jarvis-control-input::placeholder {
+  color: #8b949e;
+  font-weight: 400;
+}
+
+.jarvis-control-mic {
+  width: 26px !important;
+  height: 26px !important;
+  min-width: 26px !important;
+  min-height: 26px !important;
+  border-radius: 50% !important;
+  background: rgba(0, 242, 254, 0.12) !important;
+  border: 1px solid rgba(0, 242, 254, 0.3) !important;
+  color: #00f2fe !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  padding: 0;
+}
+
+.jarvis-control-mic:hover {
+  background: rgba(0, 242, 254, 0.25) !important;
+  color: #ffffff !important;
+  border-color: #00f2fe !important;
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.45) !important;
+  transform: scale(1.05);
+}
+
+.jarvis-control-mic.listening {
+  background: #ff3366 !important;
+  border-color: #ff3366 !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 12px rgba(255, 51, 102, 0.7) !important;
+  animation: pulseMic 1.2s infinite;
+}
+
+@keyframes pulseMic {
+  0% { transform: scale(1); box-shadow: 0 0 8px rgba(255, 51, 102, 0.4); }
+  50% { transform: scale(1.08); box-shadow: 0 0 16px rgba(255, 51, 102, 0.85); }
+  100% { transform: scale(1); box-shadow: 0 0 8px rgba(255, 51, 102, 0.4); }
+}
+
+/* ==========================================================================
+   FLOATING SKILLS & QUICK TOOLS MENU POPOVER (+ Button Workflow)
+   ========================================================================== */
+
+.btn-input-add {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-input-add.active {
+  transform: rotate(45deg);
+  background: rgba(0, 242, 254, 0.25) !important;
+  color: #00f2fe !important;
+  border-color: #00f2fe !important;
+}
+
+.skills-menu-popover {
+  position: absolute;
+  bottom: 70px;
+  left: 12px;
+  right: 12px;
+  background: #161b22;
+  border: 1px solid rgba(0, 242, 254, 0.3);
+  border-radius: 12px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.75), 0 0 20px rgba(0, 242, 254, 0.15);
+  padding: 8px;
+  z-index: 250;
+  display: none;
+  flex-direction: column;
+  backdrop-filter: blur(16px);
+  animation: popoverFadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.skills-menu-popover.open {
+  display: flex;
+}
+
+@keyframes popoverFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.skills-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 6px;
+}
+
+.skills-header-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #00f2fe;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.skills-header-hint {
+  font-size: 10px;
+  color: #8b949e;
+}
+
+.skills-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.skill-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.skill-menu-item:hover {
+  background: rgba(0, 242, 254, 0.12);
+  border-left: 2px solid #00f2fe;
+  padding-left: 8px;
+}
+
+.skill-icon {
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+
+.skill-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.skill-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #e6edf3;
+  line-height: 1.2;
+}
+
+.skill-desc {
+  font-size: 11px;
+  color: #8b949e;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.skill-tag {
+  font-size: 10.5px;
+  font-family: monospace;
+  color: #00f2fe;
+  background: rgba(0, 242, 254, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* ==========================================================================
+   SUPPRESSION OF REDUNDANT AGENTIC OVERLAYS (Eliminate Clutter)
+   ========================================================================== */
+
+.jarvis-container,
+.jarvis-panel-overlay,
+.task-modal-overlay,
+.agent-hud-overlay {
+  display: none !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+}

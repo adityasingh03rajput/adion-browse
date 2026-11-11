@@ -926,6 +926,81 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // --- Quick Tools & Skills Menu Controller (+ Button & / Shortcut) ---
+  const btnSidePanelAdd = document.getElementById('btnSidePanelAdd');
+  const skillsQuickMenu = document.getElementById('skillsQuickMenu');
+
+  function toggleSkillsMenu() {
+    if (!skillsQuickMenu) return;
+    const isOpen = skillsQuickMenu.classList.toggle('open');
+    if (btnSidePanelAdd) {
+      btnSidePanelAdd.classList.toggle('active', isOpen);
+    }
+  }
+
+  function closeSkillsMenu() {
+    if (!skillsQuickMenu) return;
+    skillsQuickMenu.classList.remove('open');
+    if (btnSidePanelAdd) {
+      btnSidePanelAdd.classList.remove('active');
+    }
+  }
+
+  if (btnSidePanelAdd) {
+    btnSidePanelAdd.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleSkillsMenu();
+    });
+  }
+
+  if (skillsQuickMenu) {
+    skillsQuickMenu.querySelectorAll('.skill-menu-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const action = item.getAttribute('data-action');
+        closeSkillsMenu();
+        if (!action) return;
+
+        if (action === '/summarize') {
+          submitSidePanelTask('summarize this page');
+        } else if (action === '/devtools') {
+          if (window.adionAPI && window.adionAPI.tabs) {
+            window.adionAPI.tabs.toggleDevTools();
+          }
+        } else {
+          if (sidePanelInput) {
+            sidePanelInput.value = action;
+            sidePanelInput.focus();
+            sidePanelInput.setSelectionRange(action.length, action.length);
+          }
+        }
+      });
+    });
+  }
+
+  if (sidePanelInput) {
+    sidePanelInput.addEventListener('input', () => {
+      if (sidePanelInput.value.trim() === '/') {
+        skillsQuickMenu?.classList.add('open');
+        btnSidePanelAdd?.classList.add('active');
+      } else if (!sidePanelInput.value.startsWith('/')) {
+        closeSkillsMenu();
+      }
+    });
+  }
+
+  document.addEventListener('click', (e) => {
+    if (skillsQuickMenu && !skillsQuickMenu.contains(e.target) && e.target !== btnSidePanelAdd) {
+      closeSkillsMenu();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && skillsQuickMenu && skillsQuickMenu.classList.contains('open')) {
+      closeSkillsMenu();
+    }
+  });
+
   // Model selector dropdown toggle / cycle in side panel footer
   const modelSelectorBadge = document.getElementById('modelSelectorBadge');
   const activeModelLabel = document.getElementById('activeModelLabel');
