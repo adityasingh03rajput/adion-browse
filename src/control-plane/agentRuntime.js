@@ -1486,7 +1486,13 @@ class AgentRuntime extends EventEmitter {
           targetEl.dispatchEvent(new Event('input', { bubbles: true }));
           targetEl.dispatchEvent(new Event('change', { bubbles: true }));
         } else {
-          targetEl.value = txt;
+          const proto = targetEl instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          if (setter) {
+            setter.call(targetEl, txt);
+          } else {
+            targetEl.value = txt;
+          }
           targetEl.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: txt }));
           targetEl.dispatchEvent(new Event('input', { bubbles: true }));
           targetEl.dispatchEvent(new Event('change', { bubbles: true }));
@@ -2058,12 +2064,26 @@ class AgentRuntime extends EventEmitter {
     const searchResult = await contents.executeJavaScript(`
       (() => {
         const searchBox = document.querySelector(
-          '#side div[contenteditable="true"], [data-testid="chat-list-search"], div[title="Search or start new chat"], div[role="textbox"][data-tab="3"], #side [role="textbox"], input[type="search"]'
-        );
+          '#side input[type="text"], #side input[role="textbox"], #side input, #side div[contenteditable="true"], [data-testid="chat-list-search"], div[title="Search or start new chat"], div[role="textbox"][data-tab="3"], #side [role="textbox"], input[type="search"]'
+        ) || Array.from(document.querySelectorAll('#side input, #side [role="textbox"], #side div[contenteditable="true"]')).find(el => {
+          const t = ((el.getAttribute('placeholder') || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('title') || '')).toLowerCase();
+          return t.includes('search') || t.includes('start');
+        });
         if (!searchBox) return { searchFound: false };
         searchBox.focus();
-        document.execCommand('selectAll', false, null);
-        document.execCommand('insertText', false, ${JSON.stringify(code)});
+        if (searchBox.tagName === 'INPUT' || searchBox.tagName === 'TEXTAREA') {
+          const proto = searchBox instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          if (setter) {
+            setter.call(searchBox, ${JSON.stringify(code)});
+          } else {
+            searchBox.value = ${JSON.stringify(code)};
+          }
+        } else {
+          document.execCommand('selectAll', false, null);
+          document.execCommand('insertText', false, ${JSON.stringify(code)});
+        }
+        searchBox.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: ${JSON.stringify(code)} }));
         searchBox.dispatchEvent(new Event('input', { bubbles: true }));
         searchBox.dispatchEvent(new Event('change', { bubbles: true }));
         return { searchFound: true };
@@ -2071,7 +2091,7 @@ class AgentRuntime extends EventEmitter {
     `).catch(() => ({ searchFound: false }));
 
     if (searchResult && searchResult.searchFound) {
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 600));
 
       // Click "Locked chats" entry that appears in the search results
       const clickLocked = await this.autonomousInspectAndClick(tab, 'Locked chats');
@@ -2103,6 +2123,30 @@ class AgentRuntime extends EventEmitter {
         await new Promise(r => setTimeout(r, 600));
         return { success: true, method: 'search_reveal_clicked' };
       }
+
+      // If "Locked chats" was not a separate folder, clear the search box cleanly so direct contact search can proceed
+      await contents.executeJavaScript(`
+        (() => {
+          const cancelBtn = document.querySelector(
+            '#side button[aria-label*="cancel" i], #side button[aria-label*="clear" i], #side button[aria-label*="end icon" i], #side span[data-icon="x-alt"], #side button[data-testid="search-cancel"]'
+          )?.closest('button');
+          if (cancelBtn) { cancelBtn.click(); return; }
+          const s = document.querySelector('#side input, #side [role="textbox"]');
+          if (s) {
+            if (s.tagName === 'INPUT' || s.tagName === 'TEXTAREA') {
+              const proto = s instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+              const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+              if (setter) setter.call(s, '');
+              else s.value = '';
+            } else {
+              document.execCommand('selectAll', false, null);
+              document.execCommand('delete', false, null);
+            }
+            s.dispatchEvent(new Event('input', { bubbles: true }));
+            s.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        })()
+      `).catch(() => null);
     }
 
     // Step 3: Check if "Locked chats" is already visible in the chat list without search
@@ -2283,17 +2327,28 @@ class AgentRuntime extends EventEmitter {
 
             // E. Search Bar: If not found in immediate list, focus and search
             const searchBox = document.querySelector(
-              '#side div[contenteditable="true"], [data-testid="chat-list-search"], div[title="Search or start new chat"], div[role="textbox"][data-tab="3"], #side [role="textbox"]'
-            ) || Array.from(document.querySelectorAll('#side div[contenteditable="true"], div[role="textbox"]')).find(el => {
-              const t = cleanStr(el.getAttribute('title') || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.innerText || '');
+              '#side input[type="text"], #side input[role="textbox"], #side input, #side div[contenteditable="true"], [data-testid="chat-list-search"], div[title="Search or start new chat"], div[role="textbox"][data-tab="3"], #side [role="textbox"], input[type="search"]'
+            ) || Array.from(document.querySelectorAll('#side input, #side [role="textbox"], #side div[contenteditable="true"]')).find(el => {
+              const t = cleanStr((el.getAttribute('title') || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('placeholder') || '') + ' ' + (el.innerText || ''));
               return t.includes('search') || t.includes('start');
             });
 
             if (searchBox) {
               if (!${JSON.stringify(searchTyped)}) {
                 searchBox.focus();
-                document.execCommand('selectAll', false, null);
-                document.execCommand('insertText', false, ${JSON.stringify(contact)});
+                if (searchBox.tagName === 'INPUT' || searchBox.tagName === 'TEXTAREA') {
+                  const proto = searchBox instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+                  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                  if (setter) {
+                    setter.call(searchBox, ${JSON.stringify(contact)});
+                  } else {
+                    searchBox.value = ${JSON.stringify(contact)};
+                  }
+                } else {
+                  document.execCommand('selectAll', false, null);
+                  document.execCommand('insertText', false, ${JSON.stringify(contact)});
+                }
+                searchBox.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: ${JSON.stringify(contact)} }));
                 searchBox.dispatchEvent(new Event('input', { bubbles: true }));
                 searchBox.dispatchEvent(new Event('change', { bubbles: true }));
                 return { action: 'search_typed', currentHeader: rawHeader };
@@ -2375,14 +2430,19 @@ class AgentRuntime extends EventEmitter {
           `).catch(() => null);
 
           // Verify if sent
-          await new Promise(r => setTimeout(r, 350));
+          await new Promise(r => setTimeout(r, 450));
           const verifySent = await contents.executeJavaScript(`
             (() => {
               const comp = document.querySelector('#main div[contenteditable="true"], div[title="Type a message"], div[aria-label*="Type a message" i]');
               const text = comp ? (comp.innerText || comp.textContent || '').trim() : '';
-              return text === '';
+              const isCleared = text === '';
+              const recentOut = Array.from(document.querySelectorAll('#main div.message-out, #main [data-testid^="msg-container"]'));
+              const lastOut = recentOut.length > 0 ? (recentOut[recentOut.length - 1].innerText || '').toLowerCase() : '';
+              const targetMsg = ${JSON.stringify(message.toLowerCase().trim())};
+              const matchesMsg = targetMsg && lastOut.includes(targetMsg);
+              return isCleared || matchesMsg;
             })()
-          `).catch(() => true);
+          `).catch(() => false);
 
           if (verifySent) {
             messageSent = true;

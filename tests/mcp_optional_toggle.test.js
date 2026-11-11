@@ -17,8 +17,10 @@ async function testMcpOptionalAndDiagnostics() {
 
   // Test 2: Verifying persistent store getSetting and setSetting
   console.log('Test 2: Testing persistence of MCP toggle and diagnostic configurations...');
+  const originalMcpEnabled = store.getSetting('mcpServerEnabled');
   store.setSetting('mcpServerEnabled', false);
   assert.strictEqual(store.getSetting('mcpServerEnabled'), false);
+  store.setSetting('mcpServerEnabled', originalMcpEnabled !== undefined ? originalMcpEnabled : true);
 
   store.setSetting('diagnosticLogging', true);
   assert.strictEqual(store.getSetting('diagnosticLogging'), true);
