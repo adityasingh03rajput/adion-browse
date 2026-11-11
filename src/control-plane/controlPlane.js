@@ -89,6 +89,10 @@ class ControlPlane {
       this.sendToUI(IPCChannels.AGENT_FEEDBACK_MESSAGE, data);
     });
 
+    this.runtime.on('inspector-telemetry', (data) => {
+      this.sendToUI(IPCChannels.AGENT_INSPECTOR_TELEMETRY, data);
+    });
+
     this.runtime.on('transcript', (data) => {
       this.sendToUI(IPCChannels.AGENT_VOICE_TRANSCRIPT, data);
     });

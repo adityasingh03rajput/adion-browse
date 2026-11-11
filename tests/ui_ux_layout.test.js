@@ -212,6 +212,19 @@ async function testUiUxLayout() {
   assert.ok(cdpBridgeSrc.includes('stripSymbols'), 'cdpBridge must support emoji and symbol stripping');
   console.log('  ✔ Live Inspect & Click Tool, DevTools-style HUD overlay, and dual-tier hardware mouse dispatch verified.');
 
+  // --- Test 13: Active Dual Tracking & Chrome DevTools-Style Live Element Inspector ---
+  console.log('\nTest 13: Active Dual Tracking & Chrome DevTools-Style Live Element Inspector...');
+  const protocolSrc = fs.readFileSync(path.join(__dirname, '../src/control-plane/protocol.js'), 'utf8');
+  const stylesSrc = fs.readFileSync(path.join(__dirname, '../src/renderer/styles.css'), 'utf8');
+
+  assert.ok(agentRuntimeSrc.includes('async renderChromeInspectOverlay'), 'agentRuntime.js must implement renderChromeInspectOverlay');
+  assert.ok(agentRuntimeSrc.includes("this.emit('inspector-telemetry'"), 'agentRuntime.js must emit inspector-telemetry for Layer 2 dual tracking');
+  assert.ok(protocolSrc.includes('AGENT_INSPECTOR_TELEMETRY'), 'protocol.js must define AGENT_INSPECTOR_TELEMETRY');
+  assert.ok(preloadSrc.includes('onInspectorTelemetry'), 'preload.js must expose onInspectorTelemetry');
+  assert.ok(stylesSrc.includes('.copilot-inspector-card'), 'styles.css must style the DevTools inspector card in Copilot');
+  assert.ok(appSrc.includes('onInspectorTelemetry'), 'app.js must register onInspectorTelemetry listener');
+  console.log('  ✔ Active Dual Tracking, Chrome DevTools Inspect Tooltip Card, and IPC telemetry bridge verified.');
+
   console.log('\n✅ ALL UI/UX LAYOUT & RESIZE TESTS PASSED SUCCESSFULLY!\n');
 }
 

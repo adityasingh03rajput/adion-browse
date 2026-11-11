@@ -71,7 +71,8 @@ const IPCChannels = {
   AGENT_ACTION_STARTED: 'agent:action-started',
   AGENT_ACTION_FINISHED: 'agent:action-finished',
   AGENT_DISAMBIGUATION_REQUIRED: 'agent:disambiguation-required',
-  AGENT_FEEDBACK_MESSAGE: 'agent:feedback-message'
+  AGENT_FEEDBACK_MESSAGE: 'agent:feedback-message',
+  AGENT_INSPECTOR_TELEMETRY: 'agent:inspector-telemetry'
 };
 
 module.exports = {

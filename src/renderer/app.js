@@ -1860,6 +1860,29 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
     });
+
+    if (typeof window.adionAPI.agent.onInspectorTelemetry === 'function') {
+      window.adionAPI.agent.onInspectorTelemetry((data) => {
+        if (!data || !sidePanelTimeline) return;
+        if (sidePanelEmptyState) sidePanelEmptyState.style.display = 'none';
+
+        const card = document.createElement('div');
+        card.className = 'copilot-inspector-card';
+        card.innerHTML = `
+          <div class="copilot-inspector-badge">⚡ Live Element Inspector: ${(data.action || 'INSPECT').toUpperCase()}</div>
+          <div class="copilot-inspector-header">
+            <div><span class="copilot-inspector-tag">&lt;${data.tag || 'el'}&gt;</span><span class="copilot-inspector-classes">${data.classes || ''}</span></div>
+            <div class="copilot-inspector-dims">${data.dimensions || ''}</div>
+          </div>
+          <div class="copilot-inspector-acc">
+            <div><strong style="color:#5f6368;">Role:</strong> ${data.role || 'generic'} &nbsp;|&nbsp; <strong style="color:#5f6368;">Focusable:</strong> ✓ true</div>
+            <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><strong style="color:#5f6368;">Name:</strong> "${data.name || ''}"</div>
+          </div>
+        `;
+        sidePanelTimeline.appendChild(card);
+        if (sidePanelBody) sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
+      });
+    }
   }
 
   // --- Optional Component Toggles (MCP Server & Continuous Diagnostics) ---

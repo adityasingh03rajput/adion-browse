@@ -21,6 +21,7 @@ async function testPreprocessorPerformance() {
 
   // Test 2: Zero-Latency Fast-Path Intent Extraction
   console.log('\nTest 2: Fast-Path Intent Extraction (<0.5ms)...');
+  preprocessor.extractFastIntent(prep1); // Warm-up JIT
   const startT = process.hrtime.bigint();
   const fastIntent = preprocessor.extractFastIntent(prep1);
   const endT = process.hrtime.bigint();
