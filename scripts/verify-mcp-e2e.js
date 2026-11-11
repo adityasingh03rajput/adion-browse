@@ -52,7 +52,7 @@ async function run() {
   console.log('\n=== Step 5: Testing STT Transient Noise Rejection ===');
   const STTEngine = require('../src/control-plane/sttEngine');
   const stt = new STTEngine();
-  
+
   // Test 1: Ambient Whisper hallucination rejection
   const cleaned1 = stt.cleanAndNormalizeTranscript('Browser voice commands, web search, page navigation, and tab management.');
   console.log('Cleaned prompt hallucination:', JSON.stringify(cleaned1));
@@ -90,3 +90,4 @@ run().catch(err => {
   console.error('Error during test:', err);
   process.exit(1);
 });
+

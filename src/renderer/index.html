@@ -497,15 +497,27 @@
 
       <!-- Session Memory Meta -->
       <div class="jarvis-session-meta">
-        <span id="jarvisSessionId">Session: Initializing...</span>
-        <span id="jarvisInteractionCount">0 Interactions</span>
+        <div class="jarvis-session-meta-pill">
+          <span class="meta-dot"></span>
+          <span id="jarvisSessionId">Session: Initializing...</span>
+        </div>
+        <div class="jarvis-session-count-pill">
+          <span id="jarvisInteractionCount">0 Exchanges</span>
+        </div>
       </div>
 
       <!-- Jarvis Component Controls: Optional MCP Server Toggle & Diagnostic Monitoring -->
       <div class="jarvis-component-strip">
         <div class="jarvis-strip-item">
+          <div class="strip-icon-badge">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+          </div>
           <div class="strip-item-info">
-            <span class="strip-label">MCP Server (External AI)</span>
+            <span class="strip-label">MCP Server</span>
             <span class="strip-status" id="jarvisMcpStatus"><span class="status-dot dot-off"></span> Standby</span>
           </div>
           <button class="btn-toggle-switch" id="btnToggleMcp" title="Toggle Model Context Protocol Server (Optional Component)">
@@ -513,8 +525,13 @@
           </button>
         </div>
         <div class="jarvis-strip-item">
+          <div class="strip-icon-badge">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+            </svg>
+          </div>
           <div class="strip-item-info">
-            <span class="strip-label">Continuous Diagnostics</span>
+            <span class="strip-label">Diagnostics</span>
             <span class="strip-status" id="jarvisDiagStatus"><span class="status-dot dot-on"></span> Active</span>
           </div>
           <button class="btn-toggle-switch active" id="btnToggleDiagnostics" title="Toggle Real-Time System Diagnostic Monitoring">
@@ -534,21 +551,25 @@
 
       <!-- Quick Chat Input Box -->
       <div class="jarvis-chat-input-row">
-        <input type="text" id="jarvisChatInput" placeholder="Command browser or chat with Jarvis..." autocomplete="off">
-        <button class="btn-jarvis-mic" id="btnJarvisVoice" title="Toggle Hands-Free Voice Input">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-            <line x1="12" y1="19" x2="12" y2="23"></line>
-            <line x1="8" y1="23" x2="16" y2="23"></line>
-          </svg>
-        </button>
-        <button class="btn-jarvis-send" id="btnJarvisSend" title="Send Command">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="22" y1="2" x2="11" y2="13"></line>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-          </svg>
-        </button>
+        <div class="jarvis-input-dock">
+          <input type="text" id="jarvisChatInput" placeholder="Command browser or chat with Jarvis..." autocomplete="off">
+          <div class="jarvis-dock-actions">
+            <button class="btn-jarvis-mic" id="btnJarvisVoice" title="Toggle Hands-Free Voice Input">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                <line x1="12" y1="19" x2="12" y2="23"></line>
+                <line x1="8" y1="23" x2="16" y2="23"></line>
+              </svg>
+            </button>
+            <button class="btn-jarvis-send" id="btnJarvisSend" title="Send Command">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
