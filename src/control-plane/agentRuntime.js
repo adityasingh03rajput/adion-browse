@@ -1155,17 +1155,20 @@ class AgentRuntime extends EventEmitter {
         this.setState(AgentState.GROUNDING_UI, { target: intent.target });
         this.emit('feedback', { message: `Grounding target: "${intent.target}"...`, level: 'info' });
 
-        const match = this.vision ? await this.vision.groundElement(intent.target) : await this.cdp.findElementCoordinates(intent.target);
-        if (match && (match.found || match.success)) {
-          // Highlight target visual box first
-          await this.cdp.highlightElement(match.x, match.y, match.width, match.height, `Target: ${intent.target}`);
-          await new Promise((r) => setTimeout(r, 150));
-
-          // Dispatch synthetic click at exact hardware coordinates
-          await this.cdp.dispatchClick(match.x, match.y);
-          this.emit('feedback', { message: `Clicked "${match.label || match.text || intent.target}" at (${match.x}, ${match.y})`, level: 'success' });
+        const clickRes = await this.autonomousInspectAndClick(activeTab, intent.target);
+        if (clickRes && clickRes.success) {
+          this.emit('feedback', { message: `Clicked "${clickRes.label || intent.target}" at (${clickRes.x}, ${clickRes.y})`, level: 'success' });
         } else {
-          this.emit('feedback', { message: `Could not locate element matching: "${intent.target}"`, level: 'warning' });
+          // Fallback to Vision Grounder if active
+          const match = this.vision ? await this.vision.groundElement(intent.target) : null;
+          if (match && (match.found || match.success)) {
+            await this.cdp.highlightElement(match.x, match.y, match.width, match.height, `Target: ${intent.target}`);
+            await new Promise((r) => setTimeout(r, 150));
+            await this.cdp.dispatchClick(match.x, match.y);
+            this.emit('feedback', { message: `Clicked "${match.label || match.text || intent.target}" at (${match.x}, ${match.y})`, level: 'success' });
+          } else {
+            this.emit('feedback', { message: `Could not locate element matching: "${intent.target}"`, level: 'warning' });
+          }
         }
         break;
       }
@@ -1520,6 +1523,321 @@ class AgentRuntime extends EventEmitter {
   }
 
   /**
+   * Generalized Autonomous Live Inspect & Click Tool across ANY website.
+   * Functions like the live Chrome DevTools Inspect tool:
+   * - Traverses live DOM (standard DOM & Shadow DOM) with cognitive semantic and token matching
+   * - Strips emojis/symbols and computes leaf-level specificity bonus (pinpoints exact text element)
+   * - Generates live DevTools-style inspect overlay HUD (cyan bounding box, tag name, dimensions)
+   * - Dispatches in-page pointer & mouse event sequence (pointerdown, mousedown, pointerup, mouseup, click)
+   * - Dispatches real OS-level Chromium hardware mouse events via webContents.sendInputEvent
+   * - Dispatches CDP Input.dispatchMouseEvent for absolute framework/React 18+ event registration
+   */
+  async autonomousInspectAndClick(tab, targetQuery, options = {}) {
+    if (!tab || !tab.view) tab = this.tabManager ? this.tabManager.getActiveTab() : null;
+    if (!tab || !tab.view) return { success: false, reason: 'No active tab view' };
+    const contents = tab.view.webContents;
+    if (!contents) return { success: false, reason: 'No webContents' };
+
+    const query = (targetQuery || '').trim();
+    if (!query) return { success: false, reason: 'No target query provided' };
+
+    // Attach CDP if not already attached
+    if (this.cdp && !this.cdp.isAttached) {
+      try { await this.cdp.attach(contents); } catch (_) {}
+    }
+
+    // Step 1: In-page Live DOM Inspection & Coordinate Discovery
+    const inspectResult = await contents.executeJavaScript(`
+      (() => {
+        const query = ${JSON.stringify(query)};
+        const queryLower = query.toLowerCase().trim();
+
+        // Helper: Strip emojis, zero-width chars, and punctuation for pure phonetic/semantic comparison
+        function stripSymbols(s) {
+          if (!s) return '';
+          return s
+            .replace(/[\\u{1F600}-\\u{1F64F}\\u{1F300}-\\u{1F5FF}\\u{1F680}-\\u{1F6FF}\\u{1F1E0}-\\u{1F1FF}\\u{2600}-\\u{26FF}\\u{2700}-\\u{27BF}\\u{FE00}-\\u{FE0F}]/gu, '')
+            .replace(/[^\\p{L}\\p{N}\\s]/gu, ' ')
+            .replace(/\\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+        }
+
+        const cleanQuery = stripSymbols(query);
+        const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'for', 'in', 'on', 'at', 'to', 'from', 'by', 'with', 'link', 'website', 'page', 'site', 'button', 'click', 'open', 'tap', 'please', 'can', 'you']);
+        const queryTokens = cleanQuery.split(/\\s+/).filter(t => !stopWords.has(t) && t.length > 1);
+
+        // Helper: Traverse all elements including open shadowRoots
+        function getAllVisibleElements(root = document.body) {
+          let elements = [];
+          if (!root) return elements;
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null, false);
+          let node = walker.currentNode;
+          while (node) {
+            const style = window.getComputedStyle(node);
+            if (style && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
+              const rect = node.getBoundingClientRect();
+              if (rect.width > 2 && rect.height > 2) {
+                elements.push(node);
+              }
+            }
+            if (node.shadowRoot) {
+              elements = elements.concat(getAllVisibleElements(node.shadowRoot));
+            }
+            node = walker.nextNode();
+          }
+          return elements;
+        }
+
+        let bestMatch = null;
+        let highestScore = 0;
+
+        // Direct CSS selector attempt
+        if (/^[#\\.]?[a-zA-Z0-9_\\-\\[\\]="':*^~$]+$/.test(query)) {
+          try {
+            const el = document.querySelector(query);
+            if (el) {
+              const r = el.getBoundingClientRect();
+              if (r.width > 2 && r.height > 2) {
+                bestMatch = el;
+                highestScore = 1500;
+              }
+            }
+          } catch (_) {}
+        }
+
+        if (!bestMatch) {
+          const all = getAllVisibleElements();
+          for (const el of all) {
+            let score = 0;
+            const text = (el.innerText || el.textContent || '').trim();
+            const textLower = text.toLowerCase();
+            const cleanText = stripSymbols(text);
+
+            const title = (el.getAttribute('title') || '').trim();
+            const cleanTitle = stripSymbols(title);
+
+            const ariaLabel = (el.getAttribute('aria-label') || '').trim();
+            const cleanAria = stripSymbols(ariaLabel);
+
+            const placeholder = (el.getAttribute('placeholder') || '').trim();
+            const cleanPlaceholder = stripSymbols(placeholder);
+
+            const role = (el.getAttribute('role') || '').toLowerCase();
+            const href = (el.getAttribute('href') || el.src || '').toLowerCase();
+            const id = (el.id || '').toLowerCase();
+            const testid = (el.getAttribute('data-testid') || '').toLowerCase();
+
+            // 1. Exact string matches (after emoji/symbol strip)
+            if (cleanText === cleanQuery || cleanTitle === cleanQuery || cleanAria === cleanQuery) {
+              score += 1000;
+            } else if (textLower === queryLower || title.toLowerCase() === queryLower || ariaLabel.toLowerCase() === queryLower) {
+              score += 900;
+            }
+
+            // 2. Substring matches
+            if (cleanTitle && (cleanTitle.includes(cleanQuery) || cleanQuery.includes(cleanTitle))) {
+              score += 600;
+            } else if (cleanAria && (cleanAria.includes(cleanQuery) || cleanQuery.includes(cleanAria))) {
+              score += 550;
+            } else if (cleanText && cleanText.includes(cleanQuery)) {
+              score += 450;
+            } else if (cleanPlaceholder && cleanPlaceholder.includes(cleanQuery)) {
+              score += 400;
+            }
+
+            // 3. Multi-token semantic coverage
+            if (queryTokens.length > 0) {
+              let matchedCount = 0;
+              const combinedClean = [cleanText, cleanTitle, cleanAria, cleanPlaceholder, href, id, testid].join(' ');
+              for (const tok of queryTokens) {
+                if (combinedClean.includes(tok)) matchedCount++;
+              }
+              const coverage = matchedCount / queryTokens.length;
+              if (coverage >= 0.99) {
+                score += 350 + (queryTokens.length * 20);
+              } else if (coverage >= 0.5) {
+                score += 150 + (matchedCount * 25);
+              }
+            }
+
+            if (score <= 0) continue;
+
+            // 4. Specificity & Leaf-level Bonus vs Giant Container Penalty
+            const targetLen = cleanQuery.length;
+            const textLen = cleanText.length;
+            if (textLen > 0) {
+              const diff = Math.abs(textLen - targetLen);
+              if (diff <= 5) {
+                score += 500; // Major leaf specificity bonus!
+              } else if (diff <= 15) {
+                score += 250;
+              } else if (textLen > 150) {
+                score -= 300; // Penalize ancestor wrappers
+              }
+            }
+
+            // 5. Interactive context bonus
+            const isClickable = el.tagName === 'BUTTON' || el.tagName === 'A' || role === 'button' || role === 'link' ||
+              role === 'listitem' || role === 'row' || el.hasAttribute('tabindex') ||
+              window.getComputedStyle(el).cursor === 'pointer' || el.onclick != null;
+            if (isClickable) {
+              score += 100;
+            }
+
+            if (score > highestScore) {
+              highestScore = score;
+              bestMatch = el;
+            }
+          }
+        }
+
+        if (!bestMatch || highestScore < 100) {
+          return { found: false, highestScore };
+        }
+
+        // Scroll into view & compute exact live viewport coordinates
+        try {
+          bestMatch.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+        } catch (_) {}
+
+        const rect = bestMatch.getBoundingClientRect();
+        const x = Math.round(rect.left + rect.width / 2);
+        const y = Math.round(rect.top + rect.height / 2);
+
+        // Find closest clickable container (for dual-dispatch)
+        const clickableContainer = bestMatch.closest('a, button, [role="button"], [role="link"], [role="listitem"], [role="row"], [tabindex], [data-testid^="list-item"]') || bestMatch;
+
+        // Render DevTools-style Live Inspect Tool HUD Overlay
+        let overlay = document.getElementById('__adion_inspect_overlay__');
+        if (!overlay) {
+          overlay = document.createElement('div');
+          overlay.id = '__adion_inspect_overlay__';
+          overlay.style.position = 'fixed';
+          overlay.style.pointerEvents = 'none';
+          overlay.style.zIndex = '2147483647';
+          overlay.style.border = '2px solid #00f2fe';
+          overlay.style.backgroundColor = 'rgba(0, 242, 254, 0.18)';
+          overlay.style.borderRadius = '4px';
+          overlay.style.boxShadow = '0 0 16px rgba(0, 242, 254, 0.65)';
+          overlay.style.transition = 'all 0.12s ease-out';
+
+          const tag = document.createElement('div');
+          tag.id = '__adion_inspect_badge__';
+          tag.style.position = 'absolute';
+          tag.style.top = '-26px';
+          tag.style.left = '0';
+          tag.style.background = 'linear-gradient(135deg, #00f2fe 0%, #4facfe 100%)';
+          tag.style.color = '#0b0f19';
+          tag.style.fontSize = '11px';
+          tag.style.fontFamily = 'monospace';
+          tag.style.fontWeight = '700';
+          tag.style.padding = '2px 8px';
+          tag.style.borderRadius = '4px';
+          tag.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.4)';
+          tag.style.whiteSpace = 'nowrap';
+          overlay.appendChild(tag);
+          document.body.appendChild(overlay);
+        }
+
+        overlay.style.left = rect.left + 'px';
+        overlay.style.top = rect.top + 'px';
+        overlay.style.width = rect.width + 'px';
+        overlay.style.height = rect.height + 'px';
+        overlay.style.display = 'block';
+
+        const labelText = (bestMatch.getAttribute('title') || bestMatch.innerText || bestMatch.getAttribute('aria-label') || bestMatch.tagName).slice(0, 35);
+        const badge = overlay.querySelector('#__adion_inspect_badge__');
+        if (badge) {
+          badge.innerText = bestMatch.tagName.toLowerCase() + ' | ' + labelText + ' (' + Math.round(rect.width) + '×' + Math.round(rect.height) + ')';
+        }
+
+        setTimeout(() => {
+          if (overlay) overlay.style.display = 'none';
+        }, 2500);
+
+        // Dispatch in-page pointer & mouse event sequence across both leaf and container
+        const eventOpts = {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: x,
+          clientY: y,
+          screenX: x,
+          screenY: y,
+          button: 0,
+          buttons: 1
+        };
+
+        try {
+          bestMatch.dispatchEvent(new PointerEvent('pointerdown', { ...eventOpts, pointerId: 1, pointerType: 'mouse' }));
+          bestMatch.dispatchEvent(new MouseEvent('mousedown', eventOpts));
+          if (bestMatch.focus) bestMatch.focus();
+          bestMatch.dispatchEvent(new PointerEvent('pointerup', { ...eventOpts, buttons: 0 }));
+          bestMatch.dispatchEvent(new MouseEvent('mouseup', { ...eventOpts, buttons: 0 }));
+          bestMatch.dispatchEvent(new MouseEvent('click', { ...eventOpts, buttons: 0 }));
+
+          if (clickableContainer && clickableContainer !== bestMatch) {
+            clickableContainer.dispatchEvent(new PointerEvent('pointerdown', { ...eventOpts, pointerId: 1, pointerType: 'mouse' }));
+            clickableContainer.dispatchEvent(new MouseEvent('mousedown', eventOpts));
+            clickableContainer.dispatchEvent(new PointerEvent('pointerup', { ...eventOpts, buttons: 0 }));
+            clickableContainer.dispatchEvent(new MouseEvent('mouseup', { ...eventOpts, buttons: 0 }));
+            try { clickableContainer.click(); } catch(_) {}
+          }
+        } catch (_) {}
+
+        return {
+          found: true,
+          score: highestScore,
+          x,
+          y,
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+          tag: bestMatch.tagName,
+          label: labelText
+        };
+      })()
+    `).catch(err => ({ found: false, error: err.message }));
+
+    if (!inspectResult || !inspectResult.found) {
+      console.warn(`[AgentRuntime InspectClick] No element found for: "${query}"`);
+      return { success: false, reason: `Could not locate element matching "${query}" on page` };
+    }
+
+    const { x, y, width, height, tag, label } = inspectResult;
+
+    // Step 2: Dispatch Native Chromium OS-Level Hardware Mouse Events
+    try {
+      contents.sendInputEvent({ type: 'mouseMove', x, y });
+      await new Promise(r => setTimeout(r, 25));
+      contents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+      await new Promise(r => setTimeout(r, 50));
+      contents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+    } catch (_) {}
+
+    // Step 3: Dispatch CDP Mouse Events (if attached)
+    if (this.cdp && this.cdp.isAttached) {
+      try {
+        await this.cdp.dispatchClick(x, y);
+      } catch (_) {}
+    }
+
+    const successMsg = `Inspected & Clicked <${tag.toLowerCase()}> "${label}" at (${x}, ${y})`;
+    console.log(`[AgentRuntime InspectClick] 🎯 ${successMsg}`);
+    this.emit('feedback', { message: successMsg, level: 'success' });
+
+    return {
+      success: true,
+      x,
+      y,
+      width,
+      height,
+      tag,
+      label
+    };
+  }
+
+  /**
    * Autonomous observer for WhatsApp & web messaging workflows.
    * Automatically bypasses intermediate landing gateways (e.g. "Continue to chat", "use WhatsApp Web"),
    * detects authentication states (QR code vs ready chat), and auto-dispatches the Send button
@@ -1865,6 +2183,20 @@ class AgentRuntime extends EventEmitter {
           searchTyped = true;
           console.log(`[AgentRuntime WhatsApp] 🔍 Typed "${contact}" into WhatsApp search bar...`);
           this.emit('feedback', { message: `Step 1/3: Searching for "${contact}"...`, level: 'info' });
+          await new Promise(r => setTimeout(r, 450));
+        }
+
+        // Live Inspect & Click: Select contact from live search results or chat list using real hardware mouse dispatch
+        if (!chatSelected && (searchTyped || attempts >= 2)) {
+          const inspectClick = await this.autonomousInspectAndClick(tab, contact);
+          if (inspectClick && inspectClick.success) {
+            chatSelected = true;
+            const matchLabel = `"${inspectClick.label || contact}"`;
+            console.log(`[AgentRuntime WhatsApp] 💬 Selected chat with ${matchLabel}, opening conversation...`);
+            this.emit('feedback', { message: `Step 2/3: Opened chat with ${matchLabel}. Typing message...`, level: 'info' });
+            await new Promise(r => setTimeout(r, 600));
+            continue;
+          }
         }
 
         if (result && (result.action === 'chat_clicked' || result.action === 'search_entered')) {

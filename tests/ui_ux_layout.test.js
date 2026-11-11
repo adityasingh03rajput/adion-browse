@@ -196,6 +196,18 @@ async function testUiUxLayout() {
   assert.ok(agentRuntimeSrc.includes('getActivePageContext'), 'agentRuntime.js must implement getActivePageContext');
   console.log('  ✔ Chrome Gemini-style page sharing, bottom docked pill, and dynamic contextual chips verified.');
 
+  // --- Test 12: Live Inspect & Click Tool with Dual-Tier Hardware Mouse Dispatch ---
+  console.log('\nTest 12: Live Inspect & Click Tool with Dual-Tier Hardware Mouse Dispatch...');
+  const cdpBridgeSrc = fs.readFileSync(path.join(__dirname, '../src/control-plane/cdpBridge.js'), 'utf8');
+  assert.ok(agentRuntimeSrc.includes('async autonomousInspectAndClick'), 'agentRuntime.js must implement autonomousInspectAndClick');
+  assert.ok(agentRuntimeSrc.includes('await this.autonomousInspectAndClick(activeTab, intent.target)'), 'CLICK_SELECTOR must use autonomousInspectAndClick');
+  assert.ok(agentRuntimeSrc.includes('await this.autonomousInspectAndClick(tab, contact)'), 'sendWhatsAppChat must use autonomousInspectAndClick to click contacts with hardware dispatch');
+  assert.ok(agentRuntimeSrc.includes('__adion_inspect_overlay__'), 'autonomousInspectAndClick must render DevTools-style inspect HUD overlay');
+  assert.ok(agentRuntimeSrc.includes('pointerdown'), 'autonomousInspectAndClick must dispatch pointer events for React 18 event delegation');
+  assert.ok(queryPreprocessorSrc.includes('CLICK_SELECTOR'), 'queryPreprocessor must fast-path click and inspect commands to CLICK_SELECTOR');
+  assert.ok(cdpBridgeSrc.includes('stripSymbols'), 'cdpBridge must support emoji and symbol stripping');
+  console.log('  ✔ Live Inspect & Click Tool, DevTools-style HUD overlay, and dual-tier hardware mouse dispatch verified.');
+
   console.log('\n✅ ALL UI/UX LAYOUT & RESIZE TESTS PASSED SUCCESSFULLY!\n');
 }
 

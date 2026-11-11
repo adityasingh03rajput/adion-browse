@@ -165,9 +165,22 @@ class CDPBridge {
       (() => {
         const query = ${JSON.stringify(target.toLowerCase().trim())};
 
+        // Helper: Strip emojis, zero-width chars, and punctuation for pure phonetic/semantic comparison
+        function stripSymbols(s) {
+          if (!s) return '';
+          return s
+            .replace(/[\\u{1F600}-\\u{1F64F}\\u{1F300}-\\u{1F5FF}\\u{1F680}-\\u{1F6FF}\\u{1F1E0}-\\u{1F1FF}\\u{2600}-\\u{26FF}\\u{2700}-\\u{27BF}\\u{FE00}-\\u{FE0F}]/gu, '')
+            .replace(/[^\\p{L}\\p{N}\\s]/gu, ' ')
+            .replace(/\\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+        }
+
+        const cleanQuery = stripSymbols(query);
+
         // Extract meaningful semantic tokens for conceptual & fuzzy matching
         const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'for', 'in', 'on', 'at', 'to', 'from', 'by', 'with', 'link', 'website', 'page', 'site', 'button', 'click', 'open', 'tap', 'please', 'can', 'you']);
-        const rawTokens = query.replace(/[^\\w\\s\\.-]/g, ' ').split(/\\s+/).filter(Boolean);
+        const rawTokens = (cleanQuery || query).replace(/[^\\w\\s\\.-]/g, ' ').split(/\\s+/).filter(Boolean);
         const meaningfulTokens = rawTokens.filter(t => !stopWords.has(t) && t.length > 1);
 
         // Recursive tree walker traversing both standard DOM and Shadow DOM
@@ -215,14 +228,22 @@ class CDPBridge {
           const parentCardText = parentCard ? (parentCard.innerText || '').slice(0, 350).toLowerCase() : '';
           const combined = (text + ' ' + ariaLabel + ' ' + title + ' ' + alt + ' ' + href + ' ' + parentCardText).toLowerCase();
 
-          // 1. Exact string matches
-          if (ariaLabel === query || title === query || text === query || alt === query) {
-            score = 120;
-          } else if (ariaLabel.includes(query) || title.includes(query) || alt.includes(query)) {
+          // Clean phonetic/emoji-stripped strings
+          const cleanText = stripSymbols(text);
+          const cleanTitle = stripSymbols(title);
+          const cleanAria = stripSymbols(ariaLabel);
+
+          // 1. Exact string matches (including clean/emoji-stripped)
+          if (ariaLabel === query || title === query || text === query || alt === query || cleanText === cleanQuery || cleanTitle === cleanQuery || cleanAria === cleanQuery) {
+            score = 150;
+            if (cleanText.length > 0 && Math.abs(cleanText.length - cleanQuery.length) <= 5) {
+              score += 50; // Leaf-level specificity bonus
+            }
+          } else if (ariaLabel.includes(query) || title.includes(query) || alt.includes(query) || (cleanTitle && cleanTitle.includes(cleanQuery))) {
             score = 100;
           } else if (text.length < 120 && text.includes(query)) {
             score = 90;
-          } else if (text.includes(query)) {
+          } else if (text.includes(query) || (cleanText && cleanText.includes(cleanQuery))) {
             score = 75;
           } else if (combined.includes(query)) {
             score = 65;
@@ -275,8 +296,8 @@ class CDPBridge {
         }
 
         if (bestMatch && highestScore >= 35) {
-          // If bestMatch is inside or contains an anchor or button, target the clickable container
-          let clickable = bestMatch.closest('a, button, [role="button"], [role="link"]');
+          // If bestMatch is inside or contains an interactive container, target the clickable container
+          let clickable = bestMatch.closest('a, button, [role="button"], [role="link"], [role="listitem"], [role="row"], [tabindex], [data-testid^="list-item"]');
           if (!clickable) {
             clickable = bestMatch.querySelector('a, button, [role="button"], [role="link"]') || bestMatch;
           }
@@ -285,10 +306,23 @@ class CDPBridge {
           } catch(e) {}
           const newRect = clickable.getBoundingClientRect();
 
-          // Dispatch synthetic DOM click as direct trigger
+          // Dispatch dual-tier DOM pointer and mouse events
           try {
-            clickable.focus();
-            clickable.click();
+            const ev = { bubbles: true, cancelable: true, view: window };
+            bestMatch.dispatchEvent(new PointerEvent('pointerdown', ev));
+            bestMatch.dispatchEvent(new MouseEvent('mousedown', ev));
+            if (bestMatch.focus) bestMatch.focus();
+            bestMatch.dispatchEvent(new PointerEvent('pointerup', ev));
+            bestMatch.dispatchEvent(new MouseEvent('mouseup', ev));
+            bestMatch.dispatchEvent(new MouseEvent('click', ev));
+
+            if (clickable && clickable !== bestMatch) {
+              clickable.dispatchEvent(new PointerEvent('pointerdown', ev));
+              clickable.dispatchEvent(new MouseEvent('mousedown', ev));
+              clickable.dispatchEvent(new PointerEvent('pointerup', ev));
+              clickable.dispatchEvent(new MouseEvent('mouseup', ev));
+              try { clickable.click(); } catch(_) {}
+            }
           } catch(e) {}
 
           return {
@@ -298,8 +332,8 @@ class CDPBridge {
             y: Math.round(newRect.top + newRect.height / 2),
             width: Math.round(newRect.width),
             height: Math.round(newRect.height),
-            tag: clickable.tagName,
-            label: (clickable.getAttribute('aria-label') || clickable.innerText || clickable.title || clickable.getAttribute('alt') || '').slice(0, 50)
+            tag: bestMatch.tagName,
+            label: (bestMatch.getAttribute('title') || bestMatch.innerText || bestMatch.getAttribute('aria-label') || clickable.innerText || '').slice(0, 50)
           };
         }
 

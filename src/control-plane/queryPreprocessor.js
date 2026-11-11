@@ -410,7 +410,21 @@ class QueryPreprocessor {
       };
     }
 
-    // H. Conversational Courtesy & Ambient Speech Fast-Path (STRICT STANDALONE CHECK ONLY)
+    // H. Live Inspect & Click Fast-Path: e.g. "click on it 2017 imdb website", "can you click on it 2017 imdb website", "click Mummy", "inspect and click Mummy"
+    const clickMatch = lower.match(/^(?:please\s+)?(?:can\s+you\s+)?(?:use\s+(?:the\s+)?inspect\s+tool\s+to\s+click|inspect\s+and\s+click|click\s+on|click|tap\s+on|tap)\s+(?:the\s+)?(.+?)$/i);
+    if (clickMatch) {
+      const rawTarget = clickMatch[1].replace(/[\?\!\.,]+$/, '').trim();
+      const isBareCoreference = /^(?:it|this|that|them|one)$/i.test(rawTarget);
+      if (rawTarget && !isBareCoreference) {
+        return {
+          type: ActionType.CLICK_SELECTOR,
+          target: rawTarget,
+          thought: `Inspect and click element matching "${rawTarget}"`
+        };
+      }
+    }
+
+    // I. Conversational Courtesy & Ambient Speech Fast-Path (STRICT STANDALONE CHECK ONLY)
     // Prevents hijacking any utterance containing actionable verbs
     const isActionable = /(?:search|open|go|navigate|shut|close|change|set|click|scroll|play|switch|tab|bookmark|type|input|write|enter|fill)/i.test(lower);
     if (!isActionable && /^(?:thank\s*you|thanks|thx|gracias|merci|danke|hello|hi|hie|hei|hy|heyy|heya|hai|hiya|hey|howdy|yo|greetings|good\s*(?:morning|afternoon|evening)|bye|goodbye|cool|awesome|ok|okay|ok\s+fine|fine|alright)(?:\s*,?\s*jarvis)?[\.\!\?]?$/i.test(lower)) {
