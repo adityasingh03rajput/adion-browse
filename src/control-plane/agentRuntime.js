@@ -1684,6 +1684,11 @@ class AgentRuntime extends EventEmitter {
               }
             }
 
+            // Penalize indirect references / group membership notes e.g. "X is also in this group"
+            if (cleanTitle.includes('is also in this') || cleanText.includes('is also in this')) {
+              score -= 1000;
+            }
+
             if (score <= 0) continue;
 
             // 4. Specificity & Leaf-level Bonus vs Giant Container Penalty
@@ -1724,12 +1729,13 @@ class AgentRuntime extends EventEmitter {
           bestMatch.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
         } catch (_) {}
 
-        const rect = bestMatch.getBoundingClientRect();
-        const x = Math.round(rect.left + rect.width / 2);
-        const y = Math.round(rect.top + rect.height / 2);
-
         // Find closest clickable container (for dual-dispatch)
         const clickableContainer = bestMatch.closest('a, button, [role="button"], [role="link"], [role="listitem"], [role="row"], [tabindex], [data-testid^="list-item"]') || bestMatch;
+        const targetRect = (clickableContainer && clickableContainer.getBoundingClientRect().width > 0)
+          ? clickableContainer.getBoundingClientRect()
+          : bestMatch.getBoundingClientRect();
+        const x = Math.round(targetRect.left + targetRect.width / 2);
+        const y = Math.round(targetRect.top + targetRect.height / 2);
 
         // Render DevTools-style Live Inspect Tool HUD Overlay
         let overlay = document.getElementById('__adion_inspect_overlay__');
@@ -2277,7 +2283,13 @@ class AgentRuntime extends EventEmitter {
             if (composer && isOpenChat) {
               composer.focus();
               composer.click();
-              document.execCommand('selectAll', false, null);
+              const p = composer.querySelector('p') || composer;
+              const range = document.createRange();
+              range.selectNodeContents(p);
+              range.collapse(false);
+              const sel = window.getSelection();
+              sel.removeAllRanges();
+              sel.addRange(range);
               document.execCommand('insertText', false, msg);
               composer.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: msg }));
               composer.dispatchEvent(new Event('input', { bubbles: true }));
@@ -2393,8 +2405,39 @@ class AgentRuntime extends EventEmitter {
           }
         }
 
+        // If target chat is not selected yet, type contact into search box to filter results
+        if (!chatSelected && !searchTyped) {
+          const typeSearchRes = await contents.executeJavaScript(`
+            (() => {
+              const s = document.querySelector('#side input[type="text"], #side input[role="textbox"], #side input, #side [contenteditable="true"]');
+              if (!s) return false;
+              s.focus();
+              if (s.tagName === 'INPUT' || s.tagName === 'TEXTAREA') {
+                const proto = window.HTMLInputElement.prototype;
+                const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                if (setter) setter.call(s, ${JSON.stringify(contact)});
+                else s.value = ${JSON.stringify(contact)};
+              } else {
+                document.execCommand('selectAll', false, null);
+                document.execCommand('insertText', false, ${JSON.stringify(contact)});
+              }
+              s.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ${JSON.stringify(contact)} }));
+              s.dispatchEvent(new Event('input', { bubbles: true }));
+              s.dispatchEvent(new Event('change', { bubbles: true }));
+              return true;
+            })()
+          `).catch(() => false);
+
+          if (typeSearchRes) {
+            searchTyped = true;
+            console.log(`[AgentRuntime WhatsApp] 🔍 Typed "${contact}" into WhatsApp search bar...`);
+            this.emit('feedback', { message: `Step 1/3: Searching for "${contact}"...`, level: 'info' });
+            await new Promise(r => setTimeout(r, 650));
+          }
+        }
+
         // Live Inspect & Click: Select contact from live search results or chat list using real hardware mouse dispatch
-        if (!chatSelected && (searchTyped || attempts >= 2 || unlocked)) {
+        if (!chatSelected && (searchTyped || attempts >= 2)) {
           const inspectClick = await this.autonomousInspectAndClick(tab, contact);
           if (inspectClick && inspectClick.success) {
             chatSelected = true;
@@ -2414,9 +2457,23 @@ class AgentRuntime extends EventEmitter {
         }
 
         if (result && result.action === 'composer_typed') {
-          console.log(`[AgentRuntime WhatsApp] ⌨️ Dispatching native hardware Enter to WhatsApp composer for "${contact}"...`);
-          await new Promise(r => setTimeout(r, 150));
-          // Dispatch hardware Enter key directly via Chromium webContents
+          console.log(`[AgentRuntime WhatsApp] ⌨️ Dispatching native hardware typing and Enter to WhatsApp composer for "${contact}"...`);
+          // 1. Dispatch real CDP hardware text insertion for Lexical / React 18
+          if (this.cdp && !this.cdp.isAttached) {
+            try { await this.cdp.attach(contents); } catch (_) {}
+          }
+          if (this.cdp && this.cdp.isAttached) {
+            try {
+              await this.cdp.dispatchInsertText(message);
+            } catch (_) {}
+          } else {
+            for (const char of message) {
+              contents.sendInputEvent({ type: 'char', keyCode: char });
+            }
+          }
+          await new Promise(r => setTimeout(r, 200));
+
+          // 2. Dispatch hardware Enter key directly via Chromium webContents
           contents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
           contents.sendInputEvent({ type: 'char', keyCode: '\r' });
           contents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
@@ -2429,25 +2486,24 @@ class AgentRuntime extends EventEmitter {
             })()
           `).catch(() => null);
 
-          // Verify if sent
-          await new Promise(r => setTimeout(r, 450));
+          // 3. Verify if sent and rendered in the message list
+          await new Promise(r => setTimeout(r, 600));
           const verifySent = await contents.executeJavaScript(`
             (() => {
               const comp = document.querySelector('#main div[contenteditable="true"], div[title="Type a message"], div[aria-label*="Type a message" i]');
               const text = comp ? (comp.innerText || comp.textContent || '').trim() : '';
-              const isCleared = text === '';
               const recentOut = Array.from(document.querySelectorAll('#main div.message-out, #main [data-testid^="msg-container"]'));
               const lastOut = recentOut.length > 0 ? (recentOut[recentOut.length - 1].innerText || '').toLowerCase() : '';
               const targetMsg = ${JSON.stringify(message.toLowerCase().trim())};
               const matchesMsg = targetMsg && lastOut.includes(targetMsg);
-              return isCleared || matchesMsg;
+              return matchesMsg || (text === '' && recentOut.length > 0);
             })()
           `).catch(() => false);
 
           if (verifySent) {
             messageSent = true;
             const successMsg = `✅ Sent "${message}" to "${contact}" on WhatsApp!`;
-            console.log(`[AgentRuntime WhatsApp] 🎉 ${successMsg} (hardware_enter)`);
+            console.log(`[AgentRuntime WhatsApp] 🎉 ${successMsg} (hardware_dispatch)`);
             this.emit('feedback', { message: successMsg, level: 'success' });
             this.emit('jarvis-notification', { type: 'success', message: successMsg });
             return { success: true, message: successMsg };

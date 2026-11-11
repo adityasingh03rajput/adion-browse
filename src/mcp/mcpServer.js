@@ -197,6 +197,17 @@ class MCPServer extends EventEmitter {
         }
       },
       {
+        name: 'browser_dispatch_agent_command',
+        description: 'Send a natural language instruction or autonomous command to the browser AI agent (Jarvis) runtime.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            command: { type: 'string', description: 'The natural language instruction to execute' }
+          },
+          required: ['command']
+        }
+      },
+      {
         name: 'audio_adjust_slider',
         description: 'Directly adjust audio DSP parameters (Bass Frequency Boost, VAD Speech Threshold, Noise Suppression) with instant UI and disk persistence.',
         inputSchema: {
@@ -628,33 +639,33 @@ class MCPServer extends EventEmitter {
 
       case 'browser_click_element': {
         if (!activeTab || !activeTab.view) throw new Error('No active browser tab found');
-        await this.ensureCdpAttached(activeTab);
+        const contents = activeTab.view.webContents;
         const sel = args.selector;
         if (!sel) throw new Error('Missing parameter: selector');
 
-        // Execute click via CDP evaluate or coordinate dispatch
-        const clickScript = `
+        // Locate coordinates via DOM
+        const coords = await contents.executeJavaScript(`
           (() => {
             const query = ${JSON.stringify(sel)};
             let el = document.querySelector(query);
             if (!el) {
-              const buttons = Array.from(document.querySelectorAll('button, a, input[type="button"], input[type="submit"]'));
-              el = buttons.find(b => (b.innerText || b.value || '').toLowerCase().includes(query.toLowerCase()));
+              const all = Array.from(document.querySelectorAll('*'));
+              el = all.find(e => (e.innerText || e.getAttribute('title') || '').toLowerCase().includes(query.toLowerCase()));
             }
-            if (!el) return { success: false, reason: 'Element not found for selector: ' + query };
-
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            el.click();
-            return {
-              success: true,
-              tagName: el.tagName,
-              id: el.id,
-              text: (el.innerText || el.value || '').slice(0, 60)
-            };
+            if (!el) return null;
+            el.scrollIntoView({ behavior: 'auto', block: 'center' });
+            const r = (el.closest('div[role="button"], div[role="row"]') || el).getBoundingClientRect();
+            return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2), text: (el.innerText || el.getAttribute('title') || '').slice(0, 50) };
           })()
-        `;
-        const res = await this.cdp.evaluate(clickScript);
-        return res || { success: true, selector: sel };
+        `);
+
+        if (coords) {
+          contents.sendInputEvent({ type: 'mouseMove', x: coords.x, y: coords.y });
+          contents.sendInputEvent({ type: 'mouseDown', x: coords.x, y: coords.y, button: 'left', clickCount: 1 });
+          contents.sendInputEvent({ type: 'mouseUp', x: coords.x, y: coords.y, button: 'left', clickCount: 1 });
+          return { success: true, coords };
+        }
+        return { success: false, reason: 'Element not found for selector: ' + sel };
       }
 
       case 'browser_modify_dom': {
@@ -682,8 +693,8 @@ class MCPServer extends EventEmitter {
 
       case 'browser_evaluate_javascript': {
         if (!activeTab || !activeTab.view) throw new Error('No active browser tab found');
-        await this.ensureCdpAttached(activeTab);
-        const result = await this.cdp.evaluate(args.expression);
+        const contents = activeTab.view.webContents;
+        const result = await contents.executeJavaScript(args.expression);
         return { result };
       }
 
@@ -712,13 +723,27 @@ class MCPServer extends EventEmitter {
 
       case 'browser_capture_screenshot': {
         if (!activeTab || !activeTab.view) throw new Error('No active browser tab found');
-        await this.ensureCdpAttached(activeTab);
-        const base64Png = await this.cdp.captureScreenshot();
+        const contents = activeTab.view.webContents;
+        let base64Png = '';
+        try {
+          const image = await contents.capturePage();
+          base64Png = image.toPNG().toString('base64');
+        } catch (_) {
+          if (this.cdp && this.cdp.isAttached) {
+            try { base64Png = await this.cdp.captureScreenshot(); } catch (__) {}
+          }
+        }
         return {
           format: 'image/png;base64',
           data: base64Png ? base64Png.slice(0, 80) + `... [${base64Png.length} total bytes]` : null,
           byteLength: base64Png ? base64Png.length : 0
         };
+      }
+
+      case 'browser_dispatch_agent_command': {
+        if (!this.runtime) throw new Error('Agent runtime not initialized');
+        const res = await this.runtime.processCommand(args.command);
+        return { success: true, result: res, state: this.runtime.state };
       }
 
       case 'audio_adjust_slider': {

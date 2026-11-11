@@ -65,13 +65,26 @@ class CDPBridge {
   }
 
   /**
-   * Send a CDP command to the attached Chromium session
+   * Send a CDP command to the attached Chromium session with timeout safety
    */
-  async sendCommand(method, params = {}) {
+  async sendCommand(method, params = {}, timeoutMs = 4000) {
     if (!this.isAttached || !this.currentWebContents) {
       throw new Error(`CDP not attached. Cannot send command: ${method}`);
     }
-    return this.currentWebContents.debugger.sendCommand(method, params);
+    return Promise.race([
+      this.currentWebContents.debugger.sendCommand(method, params),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`CDP command timed out: ${method}`)), timeoutMs))
+    ]);
+  }
+
+  /**
+   * Dispatch real hardware text insertion via Chrome DevTools Protocol.
+   * Universal across React 18, Lexical, Draft.js, ProseMirror, Slate, standard HTML inputs.
+   */
+  async dispatchInsertText(text) {
+    if (!this.isAttached) throw new Error('CDP not attached');
+    await this.sendCommand('Input.insertText', { text: String(text) });
+    return { text, inserted: true };
   }
 
   /**

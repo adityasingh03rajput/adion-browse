@@ -52,8 +52,17 @@ function startBrowser() {
   browserProcess = spawn(ELECTRON_BIN, ['.'], {
     cwd: ROOT_DIR,
     env: getEnv(),
-    stdio: 'inherit'
+    stdio: ['inherit', 'pipe', 'pipe']
   });
+
+  if (browserProcess.stdout) {
+    browserProcess.stdout.pipe(process.stdout);
+    browserProcess.stdout.pipe(logStream);
+  }
+  if (browserProcess.stderr) {
+    browserProcess.stderr.pipe(process.stderr);
+    browserProcess.stderr.pipe(logStream);
+  }
 
   const currentPid = browserProcess.pid;
   console.log(`[Adion Supervisor] Browser process active (PID: ${currentPid})`);
