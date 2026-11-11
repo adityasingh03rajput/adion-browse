@@ -298,11 +298,95 @@ class AgentRuntime extends EventEmitter {
         pageContext.lastDOMSelector = this.lastDOMSelector;
       }
 
-      // TIER 1: ZERO-LATENCY FAST-PATH ROUTER (<0.5ms execution)
-      // Resolves DOM styles, audio sliders, navigation, and bookmarks immediately without remote LLM latency
+      // 1. Gather Active Page Context (including shared page context if page sharing is enabled)
+      if (activeTab && activeTab.view && !activeTab.url.startsWith('adion://newtab') && this.isPageShared !== false) {
+        try {
+          const sharedCtx = await this.getActivePageContext();
+          if (sharedCtx) {
+            pageContext = { ...pageContext, ...sharedCtx };
+          }
+        } catch (_) {}
+      }
+
+      // 2. Retrieve recent conversation history from SessionManager so agent retains conversational memory
+      const recentInteractions = this.sessionManager ? (this.sessionManager.getHistory().interactions || []).slice(-8) : [];
+      const conversationHistory = recentInteractions.map(item => ({
+        user: item.rawPrompt || item.transcription,
+        agent: item.feedback || (item.modelResponse && item.modelResponse.thought) || '',
+        status: item.status
+      }));
+
+      // 3. TIER 1: AI-FIRST AUTONOMOUS COGNITIVE PLANNING (Groq LPU / Configured AI Provider)
+      // The AI model is ALWAYS the primary decision maker. No hardcoded regexes hijack user commands.
+      let plan = null;
+      if (this.model) {
+        try {
+          plan = await this.model.planActions(text, pageContext, conversationHistory);
+        } catch (err) {
+          console.warn('[AgentRuntime] AI Model planning error:', err.message);
+        }
+      }
+
+      if (plan && (Array.isArray(plan.actions) || plan.thought)) {
+        if (!Array.isArray(plan.actions)) plan.actions = [];
+
+        if (plan.actions.length === 0) {
+          this.setState(AgentState.IDLE);
+          const feedbackMsg = plan.thought || 'Standing by for browser commands.';
+          this.emit('feedback', { message: feedbackMsg, level: 'info' });
+          this.emit('jarvis-notification', { type: 'info', message: feedbackMsg });
+          this.sessionManager.recordInteraction({
+            source: source,
+            rawPrompt: exactPrompt,
+            transcription: text,
+            pageContext: pageContext,
+            modelResponse: plan,
+            status: 'success',
+            feedback: feedbackMsg
+          });
+          return;
+        }
+
+        executedPlan = plan;
+        this.emit('feedback', { message: `AI Plan: ${plan.thought || 'Executing actions'}`, level: 'success' });
+        console.log(`[AgentRuntime Plan] Executing ${plan.actions.length} action(s):`, plan.thought);
+
+        for (let i = 0; i < plan.actions.length; i++) {
+          const act = plan.actions[i];
+          const intent = { type: act.type, ...(act.params || {}), raw: exactPrompt };
+          await this.executeIntent(intent);
+          if (i < plan.actions.length - 1) {
+            await new Promise(r => setTimeout(r, 350));
+          }
+        }
+
+        // Cache resolved plan
+        this.preprocessor.cachePlan(activeTab?.url, prep.normalized, plan);
+
+        // Record interaction in session memory log
+        this.sessionManager.recordInteraction({
+          source: source,
+          rawPrompt: exactPrompt,
+          transcription: text,
+          pageContext: pageContext,
+          modelResponse: plan,
+          status: 'success',
+          feedback: plan.thought || 'Task completed successfully'
+        });
+
+        this.emit('jarvis-notification', {
+          type: 'success',
+          message: plan.thought || `Task executed successfully.`
+        });
+        return;
+      }
+
+      // TIER 2: OFFLINE / EDGE FALLBACK ONLY
+      // If AI model is completely offline or unavailable, fallback to local heuristics
+      console.warn(`[AgentRuntime Fallback] AI model produced no plan; evaluating offline edge fallback for: "${text}"`);
       const fastIntent = this.preprocessor.extractFastIntent(prep, pageContext);
       if (fastIntent) {
-        console.log(`[AgentRuntime FastPath] Executed in ${prep.durationMs}ms:`, fastIntent.thought || fastIntent.type);
+        console.log(`[AgentRuntime FastPath Fallback] Executed in ${prep.durationMs}ms:`, fastIntent.thought || fastIntent.type);
 
         if (fastIntent.type === 'CONVERSATIONAL_ACKNOWLEDGE') {
           const feedbackMsg = fastIntent.thought || 'Standing by: ready for your browser commands.';
@@ -357,10 +441,10 @@ class AgentRuntime extends EventEmitter {
         return;
       }
 
-      // TIER 2: QUERY PLAN LRU CACHE LOOKUP (<0.2ms)
+      // TIER 3: CACHED PLAN FALLBACK
       const cachedPlan = this.preprocessor.getCachedPlan(activeTab?.url, prep.normalized);
       if (cachedPlan && Array.isArray(cachedPlan.actions) && cachedPlan.actions.length > 0) {
-        console.log(`[AgentRuntime Cache] Cache hit for "${prep.normalized}"! Executing plan:`, cachedPlan.thought);
+        console.log(`[AgentRuntime Cache Fallback] Cache hit for "${prep.normalized}"! Executing plan:`, cachedPlan.thought);
         this.emit('feedback', { message: `AI Plan (Cached): ${cachedPlan.thought}`, level: 'success' });
 
         for (let i = 0; i < cachedPlan.actions.length; i++) {
@@ -382,82 +466,6 @@ class AgentRuntime extends EventEmitter {
         this.emit('jarvis-notification', {
           type: 'success',
           message: cachedPlan.thought
-        });
-        return;
-      }
-
-      // TIER 3: COMPLEX / MULTI-STEP REASONING (Groq Cloud / Local Model)
-      // If active tab has content loaded and page sharing is enabled, retrieve shared page context
-      if (activeTab && activeTab.view && !activeTab.url.startsWith('adion://newtab') && this.isPageShared !== false) {
-        try {
-          const sharedCtx = await this.getActivePageContext();
-          if (sharedCtx) {
-            pageContext = { ...pageContext, ...sharedCtx };
-          }
-        } catch (_) {}
-      }
-
-      // Retrieve recent conversation history from SessionManager so agent never forgets previous chat
-      const recentInteractions = this.sessionManager ? (this.sessionManager.getHistory().interactions || []).slice(-8) : [];
-      const conversationHistory = recentInteractions.map(item => ({
-        user: item.rawPrompt || item.transcription,
-        agent: item.feedback || (item.modelResponse && item.modelResponse.thought) || '',
-        status: item.status
-      }));
-
-      let plan = null;
-      try {
-        plan = await this.model.planActions(text, pageContext, conversationHistory);
-      } catch (err) {
-        console.warn('[AgentRuntime] Model planning notice:', err.message);
-      }
-
-      if (plan && Array.isArray(plan.actions)) {
-        if (plan.actions.length === 0) {
-          this.setState(AgentState.IDLE);
-          const feedbackMsg = plan.thought || 'Standing by for browser commands.';
-          this.emit('feedback', { message: feedbackMsg, level: 'success' });
-          this.emit('jarvis-notification', { type: 'info', message: feedbackMsg });
-          this.sessionManager.recordInteraction({
-            source: source,
-            rawPrompt: exactPrompt,
-            transcription: text,
-            pageContext: pageContext,
-            modelResponse: plan,
-            status: 'success',
-            feedback: feedbackMsg
-          });
-          return;
-        }
-
-        executedPlan = plan;
-        this.preprocessor.cachePlan(activeTab?.url, prep.normalized, plan);
-        this.emit('feedback', { message: `AI Plan: ${plan.thought || 'Executing actions'}`, level: 'success' });
-        console.log(`[AgentRuntime Plan] Executing ${plan.actions.length} action(s):`, plan.thought);
-
-        for (let i = 0; i < plan.actions.length; i++) {
-          const act = plan.actions[i];
-          const intent = { type: act.type, ...(act.params || {}), raw: exactPrompt };
-          await this.executeIntent(intent);
-          if (i < plan.actions.length - 1) {
-            await new Promise(r => setTimeout(r, 350));
-          }
-        }
-
-        // Record interaction in session memory log
-        this.sessionManager.recordInteraction({
-          source: source,
-          rawPrompt: exactPrompt,
-          transcription: text,
-          pageContext: pageContext,
-          modelResponse: plan,
-          status: 'success',
-          feedback: plan.thought || 'Task completed successfully'
-        });
-
-        this.emit('jarvis-notification', {
-          type: 'success',
-          message: plan.thought || `Task executed successfully.`
         });
         return;
       }
