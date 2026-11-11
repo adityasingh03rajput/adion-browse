@@ -874,7 +874,15 @@ document.addEventListener('DOMContentLoaded', () => {
       const lower = (text || '').toLowerCase();
 
       // Intelligently categorize messages to break monochromacy with distinct color palettes
-      if (lower.startsWith('ai plan:') || lower.includes('plan:')) {
+      if (lower.includes('would you like me to') || lower.includes('did you mean') || lower.includes('clarification') || lower.includes('i found "') || lower.includes('opposite_intent')) {
+        msgEl.className = 'copilot-msg-agent copilot-card-question';
+        msgEl.innerHTML = `
+          <div class="copilot-card-header">
+            <span class="copilot-badge badge-amber">❓ Clarification Needed</span>
+          </div>
+          <div class="copilot-card-body">${formatCopilotText(text)}</div>
+        `;
+      } else if (lower.startsWith('ai plan:') || lower.includes('plan:')) {
         msgEl.className = 'copilot-msg-agent copilot-card-plan';
         const planContent = text.replace(/^ai plan:\s*/i, '');
         msgEl.innerHTML = `

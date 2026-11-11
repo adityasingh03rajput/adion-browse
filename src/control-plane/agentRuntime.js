@@ -1198,6 +1198,11 @@ class AgentRuntime extends EventEmitter {
         if (clickRes && clickRes.success) {
           this.emit('feedback', { message: `Clicked "${clickRes.label || intent.target}" at (${clickRes.x}, ${clickRes.y})`, level: 'success' });
         } else {
+          // If cross-questioning is recommended (e.g. Sign Up vs Sign In conflict, or multiple candidates)
+          if (clickRes && clickRes.crossQuestion) {
+            this.emit('feedback', { message: clickRes.crossQuestion, level: 'warning', isCrossQuestion: true });
+            break;
+          }
           // Fallback to Vision Grounder if active
           const match = this.vision ? await this.vision.groundElement(intent.target) : null;
           if (match && (match.found || match.success)) {
@@ -1800,6 +1805,8 @@ class AgentRuntime extends EventEmitter {
         function stripSymbols(s) {
           if (!s) return '';
           return s
+            .replace(/[\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]/g, ' ')
+            .replace(/[\u00AD\u200B\u200C\u200D]/g, '')
             .replace(/[\\u{1F600}-\\u{1F64F}\\u{1F300}-\\u{1F5FF}\\u{1F680}-\\u{1F6FF}\\u{1F1E0}-\\u{1F1FF}\\u{2600}-\\u{26FF}\\u{2700}-\\u{27BF}\\u{FE00}-\\u{FE0F}]/gu, '')
             .replace(/[^\\p{L}\\p{N}\\s]/gu, ' ')
             .replace(/\\s+/g, ' ')
@@ -1807,7 +1814,66 @@ class AgentRuntime extends EventEmitter {
             .toLowerCase();
         }
 
+        // Helper: Strip all spaces, hyphens and punctuation to create a canonical compact token
+        // Resolves formatting quirks: "sign   up" -> "signup", "s i g n u p" -> "signup", "sign-up" -> "signup"
+        function compactNormalize(s) {
+          if (!s) return '';
+          return stripSymbols(s).replace(/[\\s\\-_\\.\\/\\\\:;,'"\`!?()\\[\\]{}]+/g, '');
+        }
+
         const cleanQuery = stripSymbols(query);
+        const compactQuery = compactNormalize(query);
+
+        // Semantic Intent Engine: Clusters & Disambiguation
+        const CLUSTERS = {
+          SIGN_UP: {
+            synonyms: ['signup', 'sign up', 'register', 'registration', 'create account', 'create an account', 'create new account', 'join', 'join now', 'join free', 'get started', 'start free', 'subscribe', 'new user'],
+            antonym: 'SIGN_IN',
+            iconHints: ['user-plus', 'person-add', 'user-add', 'signup'],
+            hrefPatterns: ['signup', 'register', 'join', 'create-account', 'get-started']
+          },
+          SIGN_IN: {
+            synonyms: ['signin', 'sign in', 'login', 'log in', 'enter', 'log into', 'my account', 'welcome back', 'portal', 'existing user'],
+            antonym: 'SIGN_UP',
+            iconHints: ['login', 'sign-in', 'lock', 'key', 'enter'],
+            hrefPatterns: ['login', 'signin', 'auth/login', 'portal']
+          },
+          SEARCH: {
+            synonyms: ['search', 'find', 'lookup', 'query', 'explore'],
+            iconHints: ['search', 'magnifying', 'glass', 'find', 'loupe'],
+            hrefPatterns: ['search', 'find', 'explore']
+          },
+          CART: {
+            synonyms: ['cart', 'basket', 'bag', 'checkout', 'my cart', 'shopping bag'],
+            iconHints: ['cart', 'shopping-cart', 'bag', 'basket'],
+            hrefPatterns: ['cart', 'basket', 'bag', 'checkout']
+          },
+          MENU: {
+            synonyms: ['menu', 'navigation', 'nav', 'hamburger', 'sidebar', 'drawer'],
+            iconHints: ['menu', 'bars', 'hamburger', 'nav-icon'],
+            hrefPatterns: []
+          }
+        };
+
+        function detectIntent(q) {
+          const comp = compactNormalize(q);
+          const clean = stripSymbols(q);
+          for (const [key, cl] of Object.entries(CLUSTERS)) {
+            for (const s of cl.synonyms) {
+              if (comp === compactNormalize(s) || clean === s) return key;
+            }
+          }
+          for (const [key, cl] of Object.entries(CLUSTERS)) {
+            for (const s of cl.synonyms) {
+              if (comp.includes(compactNormalize(s)) || clean.includes(s)) return key;
+            }
+          }
+          return null;
+        }
+
+        const activeIntent = detectIntent(query);
+        let oppositeCandidate = null;
+
         const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'for', 'in', 'on', 'at', 'to', 'from', 'by', 'with', 'link', 'website', 'page', 'site', 'button', 'click', 'open', 'tap', 'please', 'can', 'you']);
         const queryTokens = cleanQuery.split(/\\s+/).filter(t => !stopWords.has(t) && t.length > 1);
 
@@ -1857,40 +1923,133 @@ class AgentRuntime extends EventEmitter {
             const text = (el.innerText || el.textContent || '').trim();
             const textLower = text.toLowerCase();
             const cleanText = stripSymbols(text);
+            const compactText = compactNormalize(text);
+
+            const valueAttr = (el.value || el.getAttribute('value') || '').trim();
+            const cleanValue = stripSymbols(valueAttr);
+            const compactValue = compactNormalize(valueAttr);
 
             const title = (el.getAttribute('title') || '').trim();
             const cleanTitle = stripSymbols(title);
+            const compactTitle = compactNormalize(title);
 
             const ariaLabel = (el.getAttribute('aria-label') || '').trim();
             const cleanAria = stripSymbols(ariaLabel);
+            const compactAria = compactNormalize(ariaLabel);
 
             const placeholder = (el.getAttribute('placeholder') || '').trim();
             const cleanPlaceholder = stripSymbols(placeholder);
+            const compactPlaceholder = compactNormalize(placeholder);
+
+            const alt = (el.getAttribute('alt') || '').trim();
+            const cleanAlt = stripSymbols(alt);
+            const compactAlt = compactNormalize(alt);
 
             const role = (el.getAttribute('role') || '').toLowerCase();
             const href = (el.getAttribute('href') || el.src || '').toLowerCase();
             const id = (el.id || '').toLowerCase();
             const testid = (el.getAttribute('data-testid') || '').toLowerCase();
+            const classStr = (typeof el.className === 'string' ? el.className : '').toLowerCase();
 
-            // 1. Exact string matches (after emoji/symbol strip)
-            if (cleanText === cleanQuery || cleanTitle === cleanQuery || cleanAria === cleanQuery) {
+            // Abstract Shape & SVG Icon Discovery
+            let svgIconHint = '';
+            const svgChild = el.tagName === 'SVG' ? el : el.querySelector('svg, i, span[class*="icon"], [class*="icon"]');
+            if (svgChild) {
+              const svgClass = (typeof svgChild.className === 'string' ? svgChild.className : (svgChild.className?.baseVal || '')).toLowerCase();
+              const svgName = (svgChild.getAttribute('data-icon') || svgChild.getAttribute('data-name') || '').toLowerCase();
+              const svgUse = svgChild.querySelector('use');
+              const useHref = (svgUse ? (svgUse.getAttribute('href') || svgUse.getAttribute('xlink:href') || '') : '').toLowerCase();
+              const svgTitle = (svgChild.querySelector('title') ? svgChild.querySelector('title').textContent : '').toLowerCase();
+              svgIconHint = [svgClass, svgName, useHref, svgTitle].join(' ');
+            }
+
+            // 1. Compact Canonical Matches (Handles Accidental Spaces like "sign   up" vs "signup" vs "sign-up")
+            if (compactQuery && (compactText === compactQuery || compactValue === compactQuery || compactAria === compactQuery || compactTitle === compactQuery || compactAlt === compactQuery)) {
+              score += 1200;
+            } else if (cleanText === cleanQuery || cleanTitle === cleanQuery || cleanAria === cleanQuery || cleanValue === cleanQuery) {
               score += 1000;
             } else if (textLower === queryLower || title.toLowerCase() === queryLower || ariaLabel.toLowerCase() === queryLower) {
               score += 900;
             }
 
-            // 2. Substring matches
-            if (cleanTitle && (cleanTitle.includes(cleanQuery) || cleanQuery.includes(cleanTitle))) {
-              score += 600;
-            } else if (cleanAria && (cleanAria.includes(cleanQuery) || cleanQuery.includes(cleanAria))) {
-              score += 550;
-            } else if (cleanText && cleanText.includes(cleanQuery)) {
-              score += 450;
-            } else if (cleanPlaceholder && cleanPlaceholder.includes(cleanQuery)) {
-              score += 400;
+            // 2. Substring & Compact Substring matches
+            if (compactQuery && compactQuery.length >= 3) {
+              if (compactTitle.includes(compactQuery) || compactAria.includes(compactQuery)) {
+                score += 650;
+              } else if (compactText.includes(compactQuery) || compactValue.includes(compactQuery)) {
+                score += 550;
+              }
+            } else {
+              if (cleanTitle && (cleanTitle.includes(cleanQuery) || cleanQuery.includes(cleanTitle))) {
+                score += 600;
+              } else if (cleanAria && (cleanAria.includes(cleanQuery) || cleanQuery.includes(cleanAria))) {
+                score += 550;
+              } else if (cleanText && cleanText.includes(cleanQuery)) {
+                score += 450;
+              } else if (cleanPlaceholder && cleanPlaceholder.includes(cleanQuery)) {
+                score += 400;
+              }
             }
 
-            // 3. Multi-token semantic coverage & Search Highlight Awareness
+            // 3. Semantic Intent Engine & Antonym Disambiguation (e.g. Sign Up vs Sign In)
+            if (activeIntent && CLUSTERS[activeIntent]) {
+              const currentCluster = CLUSTERS[activeIntent];
+              const antonymKey = currentCluster.antonym;
+              const antonymCluster = antonymKey ? CLUSTERS[antonymKey] : null;
+
+              // Check if element fulfills active intent synonyms
+              for (const syn of currentCluster.synonyms) {
+                const compSyn = compactNormalize(syn);
+                if (compactText === compSyn || compactValue === compSyn || compactAria === compSyn || cleanText === syn) {
+                  score += 900; // Strong semantic intent match!
+                  break;
+                } else if (compactText.includes(compSyn) || cleanText.includes(syn)) {
+                  score += 600;
+                  break;
+                }
+              }
+
+              // Abstract shape / icon hints
+              for (const hint of currentCluster.iconHints) {
+                if (svgIconHint.includes(hint) || classStr.includes(hint)) {
+                  score += 450;
+                  break;
+                }
+              }
+
+              // Semantic href patterns (e.g. href="/signup")
+              for (const pattern of currentCluster.hrefPatterns) {
+                if (href.includes(pattern)) {
+                  score += 400;
+                  break;
+                }
+              }
+
+              // ANTONYM PROTECTION: Prevent "Sign Up" from mistakenly clicking "Sign In"!
+              if (antonymCluster) {
+                let isAntonym = false;
+                for (const ant of antonymCluster.synonyms) {
+                  const compAnt = compactNormalize(ant);
+                  if (compactText === compAnt || compactValue === compAnt || compactAria === compAnt || cleanText === ant) {
+                    isAntonym = true;
+                    break;
+                  }
+                }
+
+                if (isAntonym) {
+                  score -= 2500; // Strictly penalize opposite action!
+                  if (!oppositeCandidate || (cleanText && cleanText.length < 25)) {
+                    oppositeCandidate = {
+                      label: text || ariaLabel || title || 'Sign In',
+                      intent: antonymKey,
+                      requestedIntent: activeIntent
+                    };
+                  }
+                }
+              }
+            }
+
+            // 4. Multi-token semantic coverage & Search Highlight Awareness
             const isHighlight = testid.includes('highlight') || el.tagName === 'MARK' || (el.className && typeof el.className === 'string' && el.className.includes('highlight'));
             if (isHighlight && (cleanText === cleanQuery || cleanQuery.includes(cleanText) || cleanText.includes(cleanQuery))) {
               score += 700; // Search engine highlight hit bonus across modern SPAs
@@ -1898,7 +2057,7 @@ class AgentRuntime extends EventEmitter {
 
             if (queryTokens.length > 0) {
               let matchedCount = 0;
-              const combinedClean = [cleanText, cleanTitle, cleanAria, cleanPlaceholder, href, id, testid].join(' ');
+              const combinedClean = [cleanText, cleanValue, cleanTitle, cleanAria, cleanPlaceholder, href, id, testid, svgIconHint].join(' ');
               for (const tok of queryTokens) {
                 if (combinedClean.includes(tok)) matchedCount++;
               }
@@ -1917,7 +2076,7 @@ class AgentRuntime extends EventEmitter {
 
             if (score <= 0) continue;
 
-            // 4. Specificity & Leaf-level Bonus vs Giant Container Penalty
+            // 5. Specificity & Leaf-level Bonus vs Giant Container Penalty
             const targetLen = cleanQuery.length;
             const textLen = cleanText.length;
             if (textLen > 0) {
@@ -1931,8 +2090,8 @@ class AgentRuntime extends EventEmitter {
               }
             }
 
-            // 5. Interactive context bonus
-            const isClickable = el.tagName === 'BUTTON' || el.tagName === 'A' || role === 'button' || role === 'link' ||
+            // 6. Interactive context bonus
+            const isClickable = el.tagName === 'BUTTON' || el.tagName === 'A' || el.tagName === 'INPUT' || role === 'button' || role === 'link' ||
               role === 'listitem' || role === 'row' || el.hasAttribute('tabindex') ||
               window.getComputedStyle(el).cursor === 'pointer' || el.onclick != null;
             if (isClickable) {
@@ -1947,7 +2106,18 @@ class AgentRuntime extends EventEmitter {
         }
 
         if (!bestMatch || highestScore < 100) {
-          return { found: false, highestScore };
+          if (oppositeCandidate && activeIntent) {
+            const reqName = activeIntent === 'SIGN_UP' ? 'Sign Up' : (activeIntent === 'SIGN_IN' ? 'Sign In' : activeIntent);
+            return {
+              found: false,
+              highestScore,
+              crossQuestion: 'I found "' + oppositeCandidate.label + '" on this page, but you asked for ' + reqName + '. Would you like me to click "' + oppositeCandidate.label + '", or look for another option?',
+              candidate: oppositeCandidate.label,
+              reason: 'OPPOSITE_INTENT_DETECTED'
+            };
+          }
+          return { found: false, highestScore, reason: 'ELEMENT_NOT_FOUND' };
+        }
         }
 
         // Scroll into view & compute exact live viewport coordinates
@@ -1968,7 +2138,7 @@ class AgentRuntime extends EventEmitter {
         const x = Math.round(targetRect.left + targetRect.width / 2);
         const y = Math.round(targetRect.top + targetRect.height / 2);
 
-        // Render Full JARVIS Quantum Radar Scanning Effect & Target Lock-On HUD
+        // Render Clean Chrome DevTools-Style Element Highlight HUD
         let radar = document.getElementById('__jarvis_radar_root__');
         if (radar) radar.remove();
 
@@ -1978,32 +2148,20 @@ class AgentRuntime extends EventEmitter {
 
         const style = document.createElement('style');
         style.id = '__jarvis_radar_styles__';
-        style.textContent = '@keyframes jarvisLaserSweep { 0% { top: -5%; opacity: 0.1; } 20% { opacity: 0.9; } 80% { opacity: 0.9; } 100% { top: 105%; opacity: 0.1; } } @keyframes jarvisPulseGlow { 0%, 100% { box-shadow: 0 0 15px rgba(0,242,254,0.4), inset 0 0 15px rgba(0,242,254,0.2); } 50% { box-shadow: 0 0 35px rgba(0,242,254,0.9), inset 0 0 25px rgba(0,242,254,0.5); } } @keyframes jarvisTargetLock { 0% { transform: scale(1.08); border-color: #00f2fe; box-shadow: 0 0 12px #00f2fe; } 50% { transform: scale(1.0); border-color: #10b981; box-shadow: 0 0 28px #10b981; } 100% { transform: scale(1.0); border-color: #00f2fe; box-shadow: 0 0 16px #00f2fe; } }';
+        style.textContent = '@keyframes targetFocusPulse { 0% { box-shadow: 0 0 0 2px #38bdf8, 0 0 16px rgba(56,189,248,0.5); } 50% { box-shadow: 0 0 0 3px #0284c7, 0 0 24px rgba(2,132,199,0.7); } 100% { box-shadow: 0 0 0 2px #38bdf8, 0 0 16px rgba(56,189,248,0.5); } }';
         document.head.appendChild(style);
 
-        const cleanQDisplay = (cleanQuery || query || 'TARGET').toUpperCase();
         const labelText = (bestMatch.getAttribute('title') || bestMatch.innerText || bestMatch.getAttribute('aria-label') || bestMatch.tagName).slice(0, 35).replace(/\\n/g, ' ');
 
-        // 1. Futuristic JARVIS Telemetry Radar Banner
-        const banner = document.createElement('div');
-        banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);background:rgba(10,15,29,0.92);backdrop-filter:blur(14px);border:1px solid #00f2fe;border-radius:8px;padding:8px 24px;color:#00f2fe;font-size:12px;font-weight:700;letter-spacing:1.5px;box-shadow:0 0 25px rgba(0,242,254,0.45);display:flex;align-items:center;gap:12px;z-index:2147483647;';
-        banner.innerHTML = '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#00f2fe;box-shadow:0 0 10px #00f2fe;animation:jarvisPulseGlow 1s infinite;"></span><span>JARVIS COGNITIVE RADAR // TARGET LOCKED: ' + cleanQDisplay + '</span><span style="font-size:11px;opacity:0.8;color:#a5f3fc;border-left:1px solid rgba(0,242,254,0.4);padding-left:10px;">SCORE ' + highestScore + '</span>';
-        radar.appendChild(banner);
-
-        // 2. Cyan Laser Scanning Beam
-        const beam = document.createElement('div');
-        beam.style.cssText = 'position:absolute;left:0;right:0;height:4px;background:linear-gradient(90deg,transparent 0%,rgba(0,242,254,0.3) 20%,#00f2fe 50%,#ffffff 51%,#00f2fe 52%,rgba(0,242,254,0.3) 80%,transparent 100%);box-shadow:0 0 25px #00f2fe, 0 0 50px rgba(0,242,254,0.7);animation:jarvisLaserSweep 1.8s cubic-bezier(0.4,0,0.2,1) infinite;';
-        radar.appendChild(beam);
-
-        // 3. Holographic Target Lock-On Reticle & Chrome Box Model Highlight
+        // Clean Target Lock Reticle (Chrome DevTools Box Model Overlay)
         const lockBox = document.createElement('div');
         lockBox.id = '__adion_inspect_overlay__';
-        lockBox.style.cssText = 'position:absolute;left:' + rect.left + 'px;top:' + rect.top + 'px;width:' + rect.width + 'px;height:' + rect.height + 'px;border:2px solid #00f2fe;background:rgba(111,168,220,0.42);border-radius:4px;animation:jarvisTargetLock 0.4s ease-out forwards;box-shadow:0 0 22px rgba(0,242,254,0.65);z-index:2147483646;';
+        lockBox.style.cssText = 'position:absolute;left:' + rect.left + 'px;top:' + rect.top + 'px;width:' + rect.width + 'px;height:' + rect.height + 'px;border:2px solid #38bdf8;background:rgba(56,189,248,0.18);border-radius:4px;animation:targetFocusPulse 1.2s ease-in-out infinite;z-index:2147483646;';
 
         const tagBadge = document.createElement('div');
         tagBadge.id = '__adion_inspect_badge__';
-        tagBadge.style.cssText = 'position:absolute;top:-26px;left:0;background:linear-gradient(135deg,#00f2fe 0%,#4facfe 100%);color:#0b0f19;font-size:11px;font-family:monospace;font-weight:700;padding:2px 8px;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.4);white-space:nowrap;';
-        tagBadge.innerText = '⌖ LOCKED: <' + bestMatch.tagName.toLowerCase() + '> ' + labelText + ' (' + Math.round(rect.width) + '×' + Math.round(rect.height) + ' at ' + x + ',' + y + ')';
+        tagBadge.style.cssText = 'position:absolute;top:-24px;left:0;background:#0284c7;color:#ffffff;font-size:11px;font-family:monospace;font-weight:600;padding:2px 8px;border-radius:3px;box-shadow:0 2px 6px rgba(0,0,0,0.3);white-space:nowrap;';
+        tagBadge.innerText = '<' + bestMatch.tagName.toLowerCase() + '> ' + labelText;
         lockBox.appendChild(tagBadge);
         radar.appendChild(lockBox);
 
@@ -2133,7 +2291,12 @@ class AgentRuntime extends EventEmitter {
 
     if (!inspectResult || !inspectResult.found) {
       console.warn(`[AgentRuntime InspectClick] No element found for: "${query}"`);
-      return { success: false, reason: `Could not locate element matching "${query}" on page` };
+      return {
+        success: false,
+        reason: inspectResult?.reason || `Could not locate element matching "${query}" on page`,
+        crossQuestion: inspectResult?.crossQuestion || null,
+        candidate: inspectResult?.candidate || null
+      };
     }
 
     const { x, y, width, height, tag, label } = inspectResult;

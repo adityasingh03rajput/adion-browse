@@ -182,6 +182,8 @@ class CDPBridge {
         function stripSymbols(s) {
           if (!s) return '';
           return s
+            .replace(/[\\u00A0\\u1680\\u2000-\\u200B\\u202F\\u205F\\u3000\\uFEFF]/g, ' ')
+            .replace(/[\\u00AD\\u200B\\u200C\\u200D]/g, '')
             .replace(/[\\u{1F600}-\\u{1F64F}\\u{1F300}-\\u{1F5FF}\\u{1F680}-\\u{1F6FF}\\u{1F1E0}-\\u{1F1FF}\\u{2600}-\\u{26FF}\\u{2700}-\\u{27BF}\\u{FE00}-\\u{FE0F}]/gu, '')
             .replace(/[^\\p{L}\\p{N}\\s]/gu, ' ')
             .replace(/\\s+/g, ' ')
@@ -189,7 +191,16 @@ class CDPBridge {
             .toLowerCase();
         }
 
+        // Helper: Strip all spaces and punctuation to create canonical compact token (e.g. "sign   up" -> "signup")
+        function compactNormalize(s) {
+          if (!s) return '';
+          return stripSymbols(s).replace(/[\\s\\-_\\.\\/\\\\:;,'"\`!?()\\[\\]{}]+/g, '');
+        }
+
         const cleanQuery = stripSymbols(query);
+        const compactQuery = compactNormalize(query);
+        const isSignUpQuery = ['signup', 'register', 'createaccount', 'join'].some(k => compactQuery.includes(k));
+        const isSignInQuery = ['signin', 'login', 'loginto', 'enter'].some(k => compactQuery.includes(k));
 
         // Extract meaningful semantic tokens for conceptual & fuzzy matching
         const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'for', 'in', 'on', 'at', 'to', 'from', 'by', 'with', 'link', 'website', 'page', 'site', 'button', 'click', 'open', 'tap', 'please', 'can', 'you']);
@@ -229,6 +240,7 @@ class CDPBridge {
 
           let score = 0;
           const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+          const valueAttr = (el.value || el.getAttribute('value') || '').trim().toLowerCase();
           const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
           const title = (el.getAttribute('title') || '').toLowerCase();
           const alt = (el.getAttribute('alt') || '').toLowerCase();
@@ -239,27 +251,48 @@ class CDPBridge {
           // Context from parent card or search result container
           const parentCard = el.closest('article, [class*="result" i], [class*="snippet" i], [class*="card" i], li, [data-sitelink]');
           const parentCardText = parentCard ? (parentCard.innerText || '').slice(0, 350).toLowerCase() : '';
-          const combined = (text + ' ' + ariaLabel + ' ' + title + ' ' + alt + ' ' + href + ' ' + parentCardText).toLowerCase();
+          const combined = (text + ' ' + valueAttr + ' ' + ariaLabel + ' ' + title + ' ' + alt + ' ' + href + ' ' + parentCardText).toLowerCase();
 
-          // Clean phonetic/emoji-stripped strings
+          // Clean phonetic/emoji-stripped strings & compact normalized strings
           const cleanText = stripSymbols(text);
+          const cleanValue = stripSymbols(valueAttr);
           const cleanTitle = stripSymbols(title);
           const cleanAria = stripSymbols(ariaLabel);
+          const compactText = compactNormalize(text);
+          const compactValue = compactNormalize(valueAttr);
+          const compactAria = compactNormalize(ariaLabel);
+          const compactTitle = compactNormalize(title);
 
-          // 1. Exact string matches (including clean/emoji-stripped)
-          if (ariaLabel === query || title === query || text === query || alt === query || cleanText === cleanQuery || cleanTitle === cleanQuery || cleanAria === cleanQuery) {
+          // 1. Exact string matches & Compact matching (resolves "sign   up", "sign-up", "signup")
+          if (compactQuery && (compactText === compactQuery || compactValue === compactQuery || compactAria === compactQuery || compactTitle === compactQuery)) {
+            score = 160;
+            if (cleanText.length > 0 && Math.abs(cleanText.length - cleanQuery.length) <= 5) {
+              score += 50; // Leaf-level specificity bonus
+            }
+          } else if (ariaLabel === query || title === query || text === query || alt === query || cleanText === cleanQuery || cleanValue === cleanQuery || cleanTitle === cleanQuery || cleanAria === cleanQuery) {
             score = 150;
             if (cleanText.length > 0 && Math.abs(cleanText.length - cleanQuery.length) <= 5) {
               score += 50; // Leaf-level specificity bonus
             }
           } else if (ariaLabel.includes(query) || title.includes(query) || alt.includes(query) || (cleanTitle && cleanTitle.includes(cleanQuery))) {
             score = 100;
+          } else if (compactQuery && (compactText.includes(compactQuery) || compactValue.includes(compactQuery))) {
+            score = 95;
           } else if (text.length < 120 && text.includes(query)) {
             score = 90;
           } else if (text.includes(query) || (cleanText && cleanText.includes(cleanQuery))) {
             score = 75;
           } else if (combined.includes(query)) {
             score = 65;
+          }
+
+          // Antonym protection: Never mistakenly click "Sign In" when user requested "Sign Up"
+          if (isSignUpQuery) {
+            const isSignInEl = ['signin', 'login', 'loginto', 'logon'].some(k => compactText === k || compactValue === k || compactAria === k || compactTitle === k);
+            if (isSignInEl) score -= 2500;
+          } else if (isSignInQuery) {
+            const isSignUpEl = ['signup', 'register', 'createaccount', 'join'].some(k => compactText === k || compactValue === k || compactAria === k || compactTitle === k);
+            if (isSignUpEl) score -= 2500;
           }
 
           // 2. Cognitive Multi-Token Semantic Coverage (what it could be)
