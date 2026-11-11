@@ -1669,7 +1669,12 @@ class AgentRuntime extends EventEmitter {
               score += 400;
             }
 
-            // 3. Multi-token semantic coverage
+            // 3. Multi-token semantic coverage & Search Highlight Awareness
+            const isHighlight = testid.includes('highlight') || el.tagName === 'MARK' || (el.className && typeof el.className === 'string' && el.className.includes('highlight'));
+            if (isHighlight && (cleanText === cleanQuery || cleanQuery.includes(cleanText) || cleanText.includes(cleanQuery))) {
+              score += 700; // Search engine highlight hit bonus across modern SPAs
+            }
+
             if (queryTokens.length > 0) {
               let matchedCount = 0;
               const combinedClean = [cleanText, cleanTitle, cleanAria, cleanPlaceholder, href, id, testid].join(' ');
@@ -1730,10 +1735,15 @@ class AgentRuntime extends EventEmitter {
         } catch (_) {}
 
         // Find closest clickable container (for dual-dispatch)
-        const clickableContainer = bestMatch.closest('a, button, [role="button"], [role="link"], [role="listitem"], [role="row"], [tabindex], [data-testid^="list-item"]') || bestMatch;
-        const targetRect = (clickableContainer && clickableContainer.getBoundingClientRect().width > 0)
-          ? clickableContainer.getBoundingClientRect()
-          : bestMatch.getBoundingClientRect();
+        const clickableContainer = bestMatch.closest('div[role="button"], button, a, [role="link"], div[role="row"], div[role="listitem"], [role="gridcell"][tabindex], [tabindex="0"], [data-testid^="list-item"]') || bestMatch;
+        // Prefer actionable inner button or gridcell if container is an outer row
+        const innerActionable = clickableContainer.querySelector('[role="button"], [role="gridcell"][tabindex="0"], button, a') || clickableContainer;
+        const targetRect = (innerActionable && innerActionable.getBoundingClientRect().width > 0)
+          ? innerActionable.getBoundingClientRect()
+          : ((clickableContainer && clickableContainer.getBoundingClientRect().width > 0)
+            ? clickableContainer.getBoundingClientRect()
+            : bestMatch.getBoundingClientRect());
+        const rect = targetRect;
         const x = Math.round(targetRect.left + targetRect.width / 2);
         const y = Math.round(targetRect.top + targetRect.height / 2);
 
@@ -2219,6 +2229,30 @@ class AgentRuntime extends EventEmitter {
         // Check DOM state in WhatsApp Web
         const result = await contents.executeJavaScript(`
           (() => {
+            // Check for Secret Code / PIN / Password Modal Dialog (e.g. Chat Lock unlock dialog)
+            const dialog = document.querySelector('[role="dialog"], [aria-modal="true"], div.modal');
+            const codeInput = (dialog || document).querySelector(
+              'input[type="password"], input[placeholder*="secret" i], input[placeholder*="code" i], input[placeholder*="pin" i], input[aria-label*="code" i], input[aria-label*="secret" i]'
+            );
+            if (codeInput && ${JSON.stringify(secretCode || '')}) {
+              codeInput.focus();
+              const proto = window.HTMLInputElement.prototype;
+              const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+              if (setter) setter.call(codeInput, ${JSON.stringify(secretCode || '')});
+              else codeInput.value = ${JSON.stringify(secretCode || '')};
+              codeInput.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: ${JSON.stringify(secretCode || '')} }));
+              codeInput.dispatchEvent(new Event('input', { bubbles: true }));
+              codeInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+              // Click Continue / Submit / OK
+              const continueBtn = Array.from((dialog || document).querySelectorAll('button, [role="button"]'))
+                .find(b => /continue|ok|submit|unlock/i.test(b.innerText || b.getAttribute('aria-label') || ''));
+              if (continueBtn && !continueBtn.disabled) {
+                continueBtn.click();
+              }
+              return { action: 'secret_code_submitted' };
+            }
+
             // A. Check for QR Code
             const hasQr = Boolean(
               document.querySelector('canvas[aria-label*="Scan"], div[data-ref], [data-testid="qrcode"]') ||
@@ -2281,25 +2315,42 @@ class AgentRuntime extends EventEmitter {
             // C. STRICT SAFETY: Only interact with composer IF the open chat is confirmed to match target contact!
             const composer = findComposer();
             if (composer && isOpenChat) {
-              composer.focus();
-              composer.click();
-              const p = composer.querySelector('p') || composer;
-              const range = document.createRange();
-              range.selectNodeContents(p);
-              range.collapse(false);
-              const sel = window.getSelection();
-              sel.removeAllRanges();
-              sel.addRange(range);
-              document.execCommand('insertText', false, msg);
-              composer.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: msg }));
-              composer.dispatchEvent(new Event('input', { bubbles: true }));
-              composer.dispatchEvent(new Event('change', { bubbles: true }));
+              const currentText = (composer.innerText || composer.textContent || '').trim();
+              if (!currentText.toLowerCase().includes(msg.toLowerCase())) {
+                composer.focus();
+                composer.click();
 
-              // Check if Send button is immediately active
+                // 1. Dispatch standard beforeinput for Lexical, Draft.js, and modern React 18 editors
+                const beforeInputEv = new InputEvent('beforeinput', {
+                  bubbles: true,
+                  cancelable: true,
+                  inputType: 'insertText',
+                  data: msg
+                });
+                composer.dispatchEvent(beforeInputEv);
+
+                // 2. Fallback to DOM Selection range + execCommand ONLY if beforeinput did not insert text
+                const afterText = (composer.innerText || composer.textContent || '').trim();
+                if (!afterText.toLowerCase().includes(msg.toLowerCase())) {
+                  const p = composer.querySelector('p') || composer;
+                  const range = document.createRange();
+                  range.selectNodeContents(p);
+                  range.collapse(false);
+                  const sel = window.getSelection();
+                  sel.removeAllRanges();
+                  sel.addRange(range);
+                  document.execCommand('insertText', false, msg);
+                }
+
+                composer.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: msg }));
+                composer.dispatchEvent(new Event('input', { bubbles: true }));
+                composer.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+
+              // Click send button if ready
               const sendBtn = findSendBtn();
               if (sendBtn && !sendBtn.disabled) {
                 sendBtn.click();
-                return { action: 'message_sent', method: 'button_click' };
               }
 
               return { action: 'composer_typed' };
@@ -2370,6 +2421,16 @@ class AgentRuntime extends EventEmitter {
             return { action: isUnmatchedChat ? 'unmatched_chat_open' : 'waiting_for_ui', currentHeader: rawHeader };
           })()
         `).catch(err => ({ action: 'eval_error', error: err.message }));
+
+        if (result && result.action === 'secret_code_submitted') {
+          console.log(`[AgentRuntime WhatsApp] 🔐 Secret code dialog detected and submitted. Awaiting chat unlock...`);
+          this.emit('feedback', { message: `Submitting secret code to unlock chat...`, level: 'info' });
+          contents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+          contents.sendInputEvent({ type: 'char', keyCode: '\r' });
+          contents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+          await new Promise(r => setTimeout(r, 800));
+          continue;
+        }
 
         if (result && result.action === 'qr_required' && !qrPromptEmitted) {
           qrPromptEmitted = true;
@@ -2456,22 +2517,26 @@ class AgentRuntime extends EventEmitter {
           this.emit('feedback', { message: `Step 2/3: Opened chat with ${matchLabel}. Typing message...`, level: 'info' });
         }
 
-        if (result && result.action === 'composer_typed') {
+        if (result && (result.action === 'composer_typed' || result.action === 'message_sent')) {
           console.log(`[AgentRuntime WhatsApp] ⌨️ Dispatching native hardware typing and Enter to WhatsApp composer for "${contact}"...`);
-          // 1. Dispatch real CDP hardware text insertion for Lexical / React 18
-          if (this.cdp && !this.cdp.isAttached) {
-            try { await this.cdp.attach(contents); } catch (_) {}
-          }
-          if (this.cdp && this.cdp.isAttached) {
-            try {
-              await this.cdp.dispatchInsertText(message);
-            } catch (_) {}
-          } else {
-            for (const char of message) {
-              contents.sendInputEvent({ type: 'char', keyCode: char });
+          // 1. Dispatch real hardware text insertion ONLY if composer not yet populated
+          const currentCompText = await contents.executeJavaScript(`
+            (() => {
+              const comp = document.querySelector('#main div[contenteditable="true"]');
+              return comp ? (comp.innerText || comp.textContent || '').trim().toLowerCase() : '';
+            })()
+          `).catch(() => '');
+
+          if (!currentCompText.includes(message.toLowerCase())) {
+            if (this.cdp && !this.cdp.isAttached) {
+              try { await this.cdp.attach(contents); } catch (_) {}
+            }
+            if (this.cdp && this.cdp.isAttached) {
+              try {
+                await this.cdp.dispatchInsertText(message);
+              } catch (_) {}
             }
           }
-          await new Promise(r => setTimeout(r, 200));
 
           // 2. Dispatch hardware Enter key directly via Chromium webContents
           contents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
@@ -2481,42 +2546,32 @@ class AgentRuntime extends EventEmitter {
           // Also attempt clicking Send button via DOM
           await contents.executeJavaScript(`
             (() => {
-              const btn = (document.querySelector('#main button[aria-label="Send"], #main span[data-icon="send"], button[aria-label="Send"], span[data-icon="send"]'))?.closest('button');
+              const btn = (document.querySelector('#main button[aria-label="Send"], #main span[data-icon="send"], button[aria-label="Send"], span[data-icon="send"], [data-testid="compose-btn-send"], [data-testid="send"]'))?.closest('button');
               if (btn && !btn.disabled) btn.click();
             })()
           `).catch(() => null);
 
-          // 3. Verify if sent and rendered in the message list
-          await new Promise(r => setTimeout(r, 600));
-          const verifySent = await contents.executeJavaScript(`
-            (() => {
-              const comp = document.querySelector('#main div[contenteditable="true"], div[title="Type a message"], div[aria-label*="Type a message" i]');
-              const text = comp ? (comp.innerText || comp.textContent || '').trim() : '';
-              const recentOut = Array.from(document.querySelectorAll('#main div.message-out, #main [data-testid^="msg-container"]'));
-              const lastOut = recentOut.length > 0 ? (recentOut[recentOut.length - 1].innerText || '').toLowerCase() : '';
-              const targetMsg = ${JSON.stringify(message.toLowerCase().trim())};
-              const matchesMsg = targetMsg && lastOut.includes(targetMsg);
-              return matchesMsg || (text === '' && recentOut.length > 0);
-            })()
-          `).catch(() => false);
+          // 3. Verify if sent and rendered in the live message list (check across 3 intervals)
+          for (let v = 0; v < 3; v++) {
+            await new Promise(r => setTimeout(r, 600));
+            const verifySent = await contents.executeJavaScript(`
+              (() => {
+                const targetMsg = ${JSON.stringify(message.toLowerCase().trim())};
+                const recentOut = Array.from(document.querySelectorAll('#main div.message-out, #main [data-testid^="msg-container"]'));
+                const hasMatchingMsg = recentOut.some(el => (el.innerText || el.textContent || '').toLowerCase().includes(targetMsg));
+                return hasMatchingMsg;
+              })()
+            `).catch(() => false);
 
-          if (verifySent) {
-            messageSent = true;
-            const successMsg = `✅ Sent "${message}" to "${contact}" on WhatsApp!`;
-            console.log(`[AgentRuntime WhatsApp] 🎉 ${successMsg} (hardware_dispatch)`);
-            this.emit('feedback', { message: successMsg, level: 'success' });
-            this.emit('jarvis-notification', { type: 'success', message: successMsg });
-            return { success: true, message: successMsg };
+            if (verifySent) {
+              messageSent = true;
+              const successMsg = `✅ Sent "${message}" to "${contact}" on WhatsApp!`;
+              console.log(`[AgentRuntime WhatsApp] 🎉 ${successMsg} (verified_in_dom)`);
+              this.emit('feedback', { message: successMsg, level: 'success' });
+              this.emit('jarvis-notification', { type: 'success', message: successMsg });
+              return { success: true, message: successMsg };
+            }
           }
-        }
-
-        if (result && result.action === 'message_sent') {
-          messageSent = true;
-          const successMsg = `✅ Sent "${message}" to "${contact}" on WhatsApp!`;
-          console.log(`[AgentRuntime WhatsApp] 🎉 ${successMsg} (${result.method})`);
-          this.emit('feedback', { message: successMsg, level: 'success' });
-          this.emit('jarvis-notification', { type: 'success', message: successMsg });
-          return { success: true, message: successMsg };
         }
 
         if (attempts % 4 === 0) {

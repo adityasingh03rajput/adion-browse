@@ -25,7 +25,7 @@ async function testWhatsAppStrictRecipient() {
 
   // Test 2: Unmatched Open Chat Safety Guard
   console.log('\nTest 2: Verifying that an open chat with "Mummy" blocks message dispatch to Mummy...');
-  
+
   // Simulate WhatsApp Web DOM state where "Mummy ❤️" is currently open on screen
   const targetContact = 'pidduk';
   const openChatHeader = 'Mummy ❤️';
@@ -80,3 +80,4 @@ testWhatsAppStrictRecipient().catch(err => {
   console.error('Test failed:', err);
   process.exit(1);
 });
+

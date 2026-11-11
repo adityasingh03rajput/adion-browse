@@ -643,19 +643,69 @@ class MCPServer extends EventEmitter {
         const sel = args.selector;
         if (!sel) throw new Error('Missing parameter: selector');
 
-        // Locate coordinates via DOM
+        // Locate coordinates via DOM with leaf-level specificity
         const coords = await contents.executeJavaScript(`
           (() => {
-            const query = ${JSON.stringify(sel)};
-            let el = document.querySelector(query);
-            if (!el) {
-              const all = Array.from(document.querySelectorAll('*'));
-              el = all.find(e => (e.innerText || e.getAttribute('title') || '').toLowerCase().includes(query.toLowerCase()));
+            const query = ${JSON.stringify(sel)}.trim();
+            const qLower = query.toLowerCase();
+
+            function strip(s) {
+              if (!s) return '';
+              return s.replace(/[\\u{1F600}-\\u{1F64F}\\u{1F300}-\\u{1F5FF}\\u{1F680}-\\u{1F6FF}\\u{1F1E0}-\\u{1F1FF}\\u{2600}-\\u{26FF}\\u{2700}-\\u{27BF}\\u{FE00}-\\u{FE0F}]/gu, '')
+                .replace(/[^\\p{L}\\p{N}\\s]/gu, ' ')
+                .replace(/\\s+/g, ' ')
+                .trim()
+                .toLowerCase();
             }
-            if (!el) return null;
-            el.scrollIntoView({ behavior: 'auto', block: 'center' });
-            const r = (el.closest('div[role="button"], div[role="row"]') || el).getBoundingClientRect();
-            return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2), text: (el.innerText || el.getAttribute('title') || '').slice(0, 50) };
+
+            const cleanQ = strip(query);
+            let bestMatch = null;
+            let highestScore = 0;
+
+            const all = Array.from(document.querySelectorAll('*')).filter(el => {
+              const r = el.getBoundingClientRect();
+              return r.width > 2 && r.height > 2 && window.getComputedStyle(el).display !== 'none';
+            });
+
+            for (const el of all) {
+              let score = 0;
+              const text = (el.innerText || el.textContent || '').trim();
+              const cleanText = strip(text);
+              const title = (el.getAttribute('title') || '').trim();
+              const cleanTitle = strip(title);
+              const aria = (el.getAttribute('aria-label') || '').trim();
+              const cleanAria = strip(aria);
+              const testid = (el.getAttribute('data-testid') || '').toLowerCase();
+
+              const isHighlight = testid.includes('highlight') || el.tagName === 'MARK' || (el.className && typeof el.className === 'string' && el.className.includes('highlight'));
+              if (isHighlight && (cleanText === cleanQ || cleanQ.includes(cleanText) || cleanText.includes(cleanQ))) {
+                score += 700;
+              }
+
+              if (cleanTitle === cleanQ || cleanText === cleanQ || cleanAria === cleanQ) score += 1000;
+              else if (cleanTitle.includes(cleanQ) || cleanQ.includes(cleanTitle)) score += 600;
+              else if (cleanText.includes(cleanQ)) score += 450;
+
+              if (cleanTitle.includes('is also in this') || cleanText.includes('is also in this')) score -= 1000;
+              if (score <= 0) continue;
+
+              const diff = Math.abs(cleanText.length - cleanQ.length);
+              if (diff <= 5) score += 500;
+              else if (diff <= 15) score += 250;
+              else if (cleanText.length > 150) score -= 400;
+
+              if (score > highestScore) {
+                highestScore = score;
+                bestMatch = el;
+              }
+            }
+
+            if (!bestMatch) return null;
+            bestMatch.scrollIntoView({ behavior: 'auto', block: 'center' });
+            const clickTarget = bestMatch.closest('div[role=\"button\"], button, a, div[role=\"row\"], div[role=\"listitem\"], [role=\"gridcell\"][tabindex], div[tabindex]') || bestMatch;
+            const innerActionable = clickTarget.querySelector('[role=\"button\"], [role=\"gridcell\"][tabindex=\"0\"], button, a') || clickTarget;
+            const r = innerActionable.getBoundingClientRect();
+            return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2), text: (bestMatch.innerText || bestMatch.getAttribute('title') || '').slice(0, 50) };
           })()
         `);
 
