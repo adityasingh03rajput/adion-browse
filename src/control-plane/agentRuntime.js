@@ -7,6 +7,7 @@ const ModelClient = require('./modelClient');
 const ModelRouter = require('./modelRouter');
 const SessionManager = require('./sessionManager');
 const { buildDOMGroundingScript, detectSemanticCluster } = require('./universalGrounder');
+const { scoreTokenOverlap } = require('./tokenMatch');
 
 /**
  * Asynchronous Agent Runtime
@@ -585,19 +586,28 @@ class AgentRuntime extends EventEmitter {
                 summary: `Rejected ${act.type}: ${invalidReason}`,
                 fingerprint
               });
+              console.warn(`[AgentRuntime Action] Rejected ${act.type}: ${invalidReason}`);
               this.emit('feedback', { message: `Planner action rejected: ${invalidReason}`, level: 'warning' });
               continue;
             }
-            const isDuplicate = this.isRepeatGuardedType(act.type) &&
-              stepHistory.some(s => s.fingerprint === fingerprint && s.status === 'SUCCESS');
+            const priorAttempt = stepHistory.find(s => s.fingerprint === fingerprint &&
+              (s.status === 'SUCCESS' || s.status === 'FAILED'));
+            const isDuplicate = Boolean(priorAttempt) && this.isRepeatGuardedType(act.type);
+            const isFailedDuplicate = Boolean(priorAttempt) && priorAttempt.status === 'FAILED';
             if (isDuplicate) {
               skippedDuplicates++;
-              console.log(`[AgentRuntime GoalLoop] Anti-Loop: skipped repeated ${fingerprint}`);
+              const why = isFailedDuplicate
+                ? 'already failed earlier; skipped instead of repeating the same failing action'
+                : 'already succeeded; skipped';
+              console.log(`[AgentRuntime GoalLoop] Anti-Loop: skipped repeated ${fingerprint} (${why})`);
+              if (isFailedDuplicate) {
+                turnOutcomeMsg = `Action "${fingerprint}" already failed earlier; a different target or approach is required.`;
+              }
               stepHistory.push({
                 iteration,
                 action: act.type,
                 status: 'SKIPPED',
-                summary: `${act.type} ${intent.target || intent.url || intent.text || ''} (already succeeded; skipped)`,
+                summary: `${act.type} ${intent.target || intent.url || intent.text || ''} (${why})`,
                 fingerprint
               });
               continue;
@@ -649,6 +659,12 @@ class AgentRuntime extends EventEmitter {
                 : `Failed: ${execRes?.crossQuestion || execRes?.reason || 'action unfulfilled'}`;
             }
 
+            console.log(`[AgentRuntime Action] ${act.type}` +
+              (intent.target ? ` target="${intent.target}"` : '') +
+              (intent.text ? ` text="${String(intent.text).slice(0, 40)}"` : '') +
+              ` -> ${isSuccess ? 'SUCCESS' : 'FAILED'}` +
+              (isSuccess ? '' : ` (${execRes?.reason || execRes?.error || 'no reason reported'})`));
+
             stepHistory.push({
               iteration,
               action: act.type,
@@ -689,7 +705,9 @@ class AgentRuntime extends EventEmitter {
             }
 
             if (i < actionsInTurn.length - 1) {
-              await new Promise(r => setTimeout(r, 350));
+              // A click can open a panel/menu that renders asynchronously;
+              // give multi-action plans a beat before the next grounding pass.
+              await new Promise(r => setTimeout(r, isSuccess ? 900 : 350));
             }
           }
 
@@ -697,7 +715,7 @@ class AgentRuntime extends EventEmitter {
           // re-planning into the same click again.
           if (actionsInTurn.length > 0 && skippedDuplicates === actionsInTurn.length) {
             goalAccomplished = true;
-            finalFeedback = 'Stopped: the planner repeated an action that had already succeeded. No duplicate action was dispatched.';
+            finalFeedback = 'Stopped: the planner repeated an action that had already run (success or failure). No duplicate action was dispatched.';
             this.emit('feedback', {
               message: '⚠️ Anti-loop guard: repeated action detected and skipped; stopped to avoid an infinite click loop.',
               level: 'warning'
@@ -1355,7 +1373,16 @@ class AgentRuntime extends EventEmitter {
         this.emit('feedback', { message: `Grounding target: "${intent.target}"...`, level: 'info' });
 
         const preClickState = this.vision ? await this.captureInteractionState() : null;
-        const clickRes = await this.autonomousInspectAndClick(activeTab, intent.target);
+        let clickRes = await this.autonomousInspectAndClick(activeTab, intent.target);
+        // Asynchronously rendered UI (panels, menus, result grids) often needs
+        // a beat after the click that opened it. Re-ground before failing.
+        if (!clickRes?.success && clickRes?.reason === 'ELEMENT_NOT_FOUND') {
+          for (let attempt = 1; attempt <= 4 && !clickRes?.success; attempt++) {
+            await new Promise((r) => setTimeout(r, 1000));
+            console.log(`[AgentRuntime Click] Re-grounding "${intent.target}" after async render (attempt ${attempt})`);
+            clickRes = await this.autonomousInspectAndClick(activeTab, intent.target);
+          }
+        }
         if (clickRes && clickRes.success) {
           await new Promise((r) => setTimeout(r, 700));
           const domChanged = preClickState
@@ -1492,7 +1519,11 @@ class AgentRuntime extends EventEmitter {
           submit: intent.submit !== false,
           rawPrompt
         });
-        executionResult = { success: typeRes ? typeRes.success !== false : true, typeRes };
+        executionResult = {
+          success: typeRes ? typeRes.success !== false : true,
+          reason: typeRes && typeRes.success === false ? typeRes.reason : undefined,
+          typeRes
+        };
         break;
       }
 
@@ -1883,8 +1914,9 @@ class AgentRuntime extends EventEmitter {
     const shouldSubmit = options.submit !== false;
 
     // Step 1: Locate target element and type via DOM
-    const domResult = await contents.executeJavaScript(`
+    const pageScript = `
       (() => {
+        try {
         const sel = ${JSON.stringify(targetSelectorOrQuery || '')};
         const txt = ${JSON.stringify(text || '')};
 
@@ -1963,10 +1995,43 @@ class AgentRuntime extends EventEmitter {
 
           // Never type blindly into "the first field on the page" when the
           // planner named a specific target: that silently fills the wrong box.
-          const genericTarget = !sel || /^(input|textarea|select|[contenteditable|[role=.?textbox|[data-lexical|[data-slate)/i.test(sel.trim());
+          const selText = String(sel || '').trim().toLowerCase();
+          const genericTarget = !sel || ['input', 'textarea', 'select', '[contenteditable', '[role=textbox', '[role="textbox"', '[data-lexical', '[data-slate']
+            .some((prefix) => selText.startsWith(prefix));
           if (!targetEl && genericTarget) {
             targetEl = firstEmpty(allEditables);
           }
+        }
+
+        // Semantic fallback: token coverage (order-independent), so a target
+        // like "elements search bar" resolves aria-label "Search elements"
+        // instead of failing on substring equality.
+        if (!targetEl && sel) {
+          const tokenScore = ${scoreTokenOverlap.toString()};
+          const labelOf = (el) => {
+            if (el.id) {
+              try {
+                const forLabel = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+                if (forLabel) return forLabel.innerText || '';
+              } catch (_) {}
+            }
+            const wrapping = el.closest('label');
+            return wrapping ? (wrapping.innerText || '') : '';
+          };
+          let best = null;
+          for (const el of allEditables) {
+            const haystack = [
+              el.getAttribute('aria-label'),
+              el.getAttribute('placeholder'),
+              el.getAttribute('title'),
+              el.name,
+              el.id,
+              labelOf(el)
+            ].filter(Boolean).join(' ');
+            const score = tokenScore(sel, haystack);
+            if (!best || score > best.score) best = { el, score };
+          }
+          if (best && best.score >= 0.6) targetEl = best.el;
         }
 
         if (!targetEl) {
@@ -2023,8 +2088,30 @@ class AgentRuntime extends EventEmitter {
           verified: String(isContentEditable ? (targetEl.innerText || '') : (targetEl.value || '')).includes(String(txt).trim()),
           hasSubmitBtn: Boolean(submitBtn && !submitBtn.disabled)
         };
+        } catch (err) {
+          return { found: false, error: String((err && err.stack) || err) };
+        }
       })()
-    `).catch(err => ({ found: false, error: err.message }));
+    `;
+    try { new Function(pageScript); } catch (syntaxErr) {
+      console.log(`[AgentRuntime Type] Generated page script syntax error: ${syntaxErr.message}`);
+    }
+    const runDomLookup = () => contents.executeJavaScript(pageScript).catch(err => ({ found: false, error: err.message }));
+
+    // Async UIs (side panels, drawers, lazy shape libraries) mount their
+    // fields after the triggering click. Poll briefly for the field instead
+    // of failing on the first snapshot.
+    let domResult = null;
+    const lookupDeadline = Date.now() + 8000;
+    do {
+      domResult = await runDomLookup();
+      if (domResult && domResult.found) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    } while (Date.now() < lookupDeadline);
+    if (!domResult || !domResult.found) {
+      const why = domResult?.error ? `page error: ${domResult.error}` : `reason: ${domResult?.reason || 'not found'}`;
+      console.log(`[AgentRuntime Type] Field never appeared for "${targetSelectorOrQuery}" after 8s (${why})`);
+    }
 
     if (!domResult || !domResult.found) {
       const warnMsg = `Could not locate an active text input matching: "${targetSelectorOrQuery || 'input'}"`;
@@ -2284,7 +2371,7 @@ class AgentRuntime extends EventEmitter {
   }
 
   isRepeatGuardedType(type) {
-    return ['CLICK_SELECTOR', 'NAVIGATE', 'NEW_TAB', 'SWITCH_TAB', 'WHATSAPP_CHAT_SEND', 'WHATSAPP_SEND']
+    return ['CLICK_SELECTOR', 'INPUT_TEXT', 'NAVIGATE', 'NEW_TAB', 'SWITCH_TAB', 'WHATSAPP_CHAT_SEND', 'WHATSAPP_SEND']
       .includes(String(type || '').toUpperCase());
   }
 
