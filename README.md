@@ -31,7 +31,12 @@
 - **Optional Standby Toggle**: Defaults to standby mode; toggled dynamically on/off via the Jarvis GUI or browser Settings without restarting.
 - **Claude Web & Desktop Integration**: Built-in port forwarding and public tunnel manager (`npm run mcp:tunnel`) for direct Claude integration.
 
-### 4. 🧠 Multi-Model Provider Registry & Autonomous Operator
+### 4. 🔎 Ask Jarvis Web-Research Fallback (AnySearch)
+- **Context-aware retrieval**: When the user asks Ask Jarvis an informational/current question and the shared page context is absent or the model signals it lacks evidence, Jarvis can search the web and retry with the results.
+- **Opt-in and bounded**: Disabled by default. When enabled in Settings, only the current query is sent to AnySearch's hosted MCP endpoint; local page text and conversation history are not sent to AnySearch. Retrieved results are treated as untrusted context.
+- **Optional API key**: Set `ANYSEARCH_API_KEY` in the ignored `.env` file for account-level limits; anonymous requests are supported with lower limits.
+
+### 5. 🧠 Multi-Model Provider Registry & Autonomous Operator
 - **Multi-Provider Support**: Supports dynamic switching between:
   - **OpenAI**: `gpt-4o`, `gpt-4o-mini`
   - **Anthropic**: `claude-3-5-sonnet`, `claude-3-5-haiku`
@@ -40,12 +45,12 @@
   - **Custom / Local**: OpenAI-compatible local endpoints (`Ollama`, `vLLM`, `DeepSeek`)
 - **Exponential Backoff & Failover**: Automatic retry with model rotation upon encountering rate limits (429) or service degradation (503).
 
-### 5. 🛡️ Adion Shields & Privacy Engine
+### 6. 🛡️ Adion Shields & Privacy Engine
 - **EasyList & Ghostery Engine**: Integrated `@ghostery/adblocker-electron` engine for network-level tracker, banner, and script blocking.
 - **Zero-Knowledge Privacy Mesh**: ZKP identity commitments for anonymous sync and private ad replacement rewards (**ADION** tokens).
 - **Episodic Session Memory**: Persistent session interaction logs stored locally at `.data/session_interactions.json` without cloud telemetry.
 
-### 6. 🛠️ Process Resilience & Developer Experience
+### 7. 🛠️ Process Resilience & Developer Experience
 - **Process Supervisor**: `scripts/supervisor.js` with unbuffered real-time stdout/stderr (`stdio: 'inherit'`) and persistent logging tee (`.data/browser.log`).
 - **Detached Developer Tools**: `F12`, `Ctrl+Shift+I`, or the `<>` toolbar button opens a detached DevTools window that works whether focus is inside a webpage or the browser toolbar.
 - **Real-Time Telemetry Dashboard**: Access `adion://dashboard` for network analytics, latency graphs, and shield metrics.
@@ -67,7 +72,12 @@ cd adion-browse
 
 # Install dependencies
 npm install
+
+# Optional: add an AnySearch API key to .env for higher service limits
+# ANYSEARCH_API_KEY=your-key
 ```
+
+Ask Jarvis web research is disabled by default. Enable it in **Settings** to allow eligible questions to use the hosted AnySearch service; anonymous access is also supported with lower limits.
 
 ### Running the Browser
 ```bash
@@ -91,10 +101,10 @@ npm run mcp:tunnel
 
 ## 🧪 Testing & Verification
 
-Adion Browse includes 7 automated verification suites covering resilience, session memory, query preprocessing, MCP protocol, optional toggles, 3rd-party model providers, and toolbar interactions:
+Adion Browse includes 9 automated verification suites covering resilience, session memory, query preprocessing, MCP protocol, AnySearch web-context fallback, optional toggles, 3rd-party model providers, and UI interactions:
 
 ```bash
-# Run all 7 JavaScript test suites
+# Run all 9 JavaScript test suites
 npm test
 
 # Run Python token reduction benchmark (Playwright vs Adion MCP)
@@ -120,6 +130,8 @@ Adion Browse/
 │   │   ├── sttEngine.js       # Whisper-large-v3-turbo, software AGC & audio normalization
 │   │   ├── queryPreprocessor.js # <0.5ms zero-latency linguistic cleaner & fast-path router
 │   │   ├── modelClient.js     # Autonomous multi-step function calling & backoff coordinator
+│   │   ├── anySearchClient.js # Optional AnySearch Streamable HTTP MCP client for Ask Jarvis
+│   │   ├── anySearchPolicy.js # Query/context gating for external research fallback
 │   │   ├── protocol.js        # Typed action contracts, IPC event types & agent states
 │   │   ├── sessionManager.js  # Local session memory & prompt fidelity logger
 │   │   ├── cdpBridge.js       # Chrome DevTools Protocol link for clicks, scrolls & frames
@@ -149,7 +161,7 @@ Adion Browse/
 │   │   └── newtab.html        # Privacy dashboard with live stats & search
 │   └── dashboard/
 │       └── dashboard.html     # Live Telemetry & Network Diagnostics (adion://dashboard)
-├── tests/                     # 8 automated test suites
+├── tests/                     # 9 automated test suites
 ├── bench_tokens.py            # Token reduction benchmark vs Playwright
 └── run-adion.bat              # One-click Windows launcher
 ```

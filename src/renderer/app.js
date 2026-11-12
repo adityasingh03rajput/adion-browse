@@ -41,6 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingShieldsDefault = document.getElementById('settingShieldsDefault');
   const settingUpgradeHttps = document.getElementById('settingUpgradeHttps');
   const settingMcpServer = document.getElementById('settingMcpServer');
+  const settingAnySearch = document.getElementById('settingAnySearch');
   const settingDiagnosticLogging = document.getElementById('settingDiagnosticLogging');
 
   // AI Text Task Commander Elements
@@ -584,6 +585,7 @@ document.addEventListener('DOMContentLoaded', () => {
     settingShieldsDefault.checked = settings.shieldsEnabled !== false;
     settingUpgradeHttps.checked = settings.upgradeHttps !== false;
     if (settingMcpServer) settingMcpServer.checked = Boolean(settings.mcpServerEnabled);
+    if (settingAnySearch) settingAnySearch.checked = Boolean(settings.anySearchEnabled);
     if (settingDiagnosticLogging) settingDiagnosticLogging.checked = settings.diagnosticLogging !== false;
     settingsModal.classList.add('show');
     updateOverlayState();
@@ -616,6 +618,17 @@ document.addEventListener('DOMContentLoaded', () => {
         updateMcpUI(res.running, res.port);
         showJarvisToast(res.running ? `MCP server started on port ${res.port}` : 'MCP server stopped', res.running ? 'success' : 'alert');
       }
+    });
+  }
+
+  if (settingAnySearch) {
+    settingAnySearch.addEventListener('change', async () => {
+      const enabled = settingAnySearch.checked;
+      await window.adionAPI.updateSetting('anySearchEnabled', enabled);
+      showJarvisToast(
+        enabled ? 'Ask Jarvis web research enabled. Search queries may be sent to AnySearch.' : 'Ask Jarvis web research disabled.',
+        enabled ? 'success' : 'info'
+      );
     });
   }
 
@@ -880,10 +893,11 @@ document.addEventListener('DOMContentLoaded', () => {
     showJarvisToast(`Copilot: Coordinating "${task.slice(0, 35)}..."`, 'success');
 
     try {
-      if (window.adionAPI && window.adionAPI.agent && typeof window.adionAPI.agent.sendCommand === 'function') {
-        await window.adionAPI.agent.sendCommand(task);
-      } else if (window.adionAPI && window.adionAPI.session && typeof window.adionAPI.session.sendChat === 'function') {
+      // The session route tags this request as jarvis-chat so the optional web-research fallback is scoped to Ask Jarvis.
+      if (window.adionAPI && window.adionAPI.session && typeof window.adionAPI.session.sendChat === 'function') {
         await window.adionAPI.session.sendChat(task);
+      } else if (window.adionAPI && window.adionAPI.agent && typeof window.adionAPI.agent.sendCommand === 'function') {
+        await window.adionAPI.agent.sendCommand(task);
       }
       loadSessionHistory();
     } catch (err) {

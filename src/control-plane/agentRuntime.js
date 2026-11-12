@@ -7,6 +7,16 @@ const ModelClient = require('./modelClient');
 const ModelRouter = require('./modelRouter');
 const SessionManager = require('./sessionManager');
 const QueryPreprocessor = require('./queryPreprocessor');
+const AnySearchClient = require('./anySearchClient');
+const config = require('./config');
+const {
+  buildSearchQuery,
+  isExplicitWebResearchRequest,
+  isPotentialWebResearchRequest,
+  shouldSearchForContext,
+  shouldSearchAfterUncertainty,
+  isInsufficientContextThought
+} = require('./anySearchPolicy');
 
 /**
  * Asynchronous Agent Runtime
@@ -26,6 +36,8 @@ class AgentRuntime extends EventEmitter {
     this.stt = new STTEngine();
     this.model = new ModelClient();
     this.router = new ModelRouter();
+    this.anySearchClient = new AnySearchClient({ apiKey: config.anySearchApiKey });
+    this.isAnySearchEnabled = () => false; // Enabled by ControlPlane only after the user opts in.
     this.state = AgentState.IDLE;
     this.currentTask = null;
     this.actionHistory = [];
@@ -260,6 +272,35 @@ class AgentRuntime extends EventEmitter {
     }
   }
 
+  isWebResearchEnabled() {
+    try {
+      return typeof this.isAnySearchEnabled === 'function' && this.isAnySearchEnabled() === true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async searchWebForContext(input) {
+    const query = buildSearchQuery(input);
+    if (!query || !this.anySearchClient) return '';
+
+    this.emit('feedback', {
+      message: 'Looking up a few web sources to give Jarvis more context…',
+      level: 'info'
+    });
+
+    try {
+      return await this.anySearchClient.search(query, 5);
+    } catch (err) {
+      console.warn('[AgentRuntime] AnySearch lookup notice:', err.message);
+      this.emit('feedback', {
+        message: 'Web lookup was unavailable; Jarvis will continue with the context it already has.',
+        level: 'warning'
+      });
+      return '';
+    }
+  }
+
   /**
    * Process incoming voice or natural language text command
    * Uses QueryPreprocessor for <0.5ms fast-path intent routing, eliminating query latency.
@@ -272,6 +313,10 @@ class AgentRuntime extends EventEmitter {
     const prep = this.preprocessor.preprocess(exactPrompt);
     const text = prep.normalized;
     if (!text) return;
+
+    const jarvisResearchEnabled = source === 'jarvis-chat' && this.isWebResearchEnabled();
+    const researchCandidate = jarvisResearchEnabled && isPotentialWebResearchRequest(text);
+    const explicitWebSearch = jarvisResearchEnabled && isExplicitWebResearchRequest(text);
 
     // Hands-free voice stop command
     if (/(stop listening|turn off (mic|microphone|voice)|exit voice|stop voice|cancel voice|shut down voice)/i.test(text)) {
@@ -293,14 +338,16 @@ class AgentRuntime extends EventEmitter {
 
     try {
       activeTab = this.tabManager ? this.tabManager.getActiveTab() : null;
-      pageContext = activeTab ? { url: activeTab.url, title: activeTab.title } : {};
+      pageContext = activeTab
+        ? { url: activeTab.url, title: activeTab.title, isShared: this.isPageShared !== false }
+        : { isShared: this.isPageShared !== false };
       if (this.lastDOMSelector) {
         pageContext.lastDOMSelector = this.lastDOMSelector;
       }
 
       // TIER 1: ZERO-LATENCY FAST-PATH ROUTER (<0.5ms execution)
       // Resolves DOM styles, audio sliders, navigation, and bookmarks immediately without remote LLM latency
-      const fastIntent = this.preprocessor.extractFastIntent(prep, pageContext);
+      const fastIntent = explicitWebSearch ? null : this.preprocessor.extractFastIntent(prep, pageContext);
       if (fastIntent) {
         console.log(`[AgentRuntime FastPath] Executed in ${prep.durationMs}ms:`, fastIntent.thought || fastIntent.type);
 
@@ -359,7 +406,7 @@ class AgentRuntime extends EventEmitter {
 
       // TIER 2: QUERY PLAN LRU CACHE LOOKUP (<0.2ms)
       const cachedPlan = this.preprocessor.getCachedPlan(activeTab?.url, prep.normalized);
-      if (cachedPlan && Array.isArray(cachedPlan.actions) && cachedPlan.actions.length > 0) {
+      if (!researchCandidate && cachedPlan && Array.isArray(cachedPlan.actions) && cachedPlan.actions.length > 0) {
         console.log(`[AgentRuntime Cache] Cache hit for "${prep.normalized}"! Executing plan:`, cachedPlan.thought);
         this.emit('feedback', { message: `AI Plan (Cached): ${cachedPlan.thought}`, level: 'success' });
 
@@ -397,6 +444,18 @@ class AgentRuntime extends EventEmitter {
         } catch (_) {}
       }
 
+      // Fetch external search context only for opted-in Ask Jarvis information requests.
+      // Only the current user query is sent; page text and conversation history stay local to this call.
+      let webSearchContext = '';
+      let didAnySearch = false;
+      if (researchCandidate && shouldSearchForContext(text, pageContext)) {
+        webSearchContext = await this.searchWebForContext(text);
+        if (webSearchContext) {
+          pageContext = { ...pageContext, webSearchContext };
+          didAnySearch = true;
+        }
+      }
+
       // Retrieve recent conversation history from SessionManager so agent never forgets previous chat
       const recentInteractions = this.sessionManager ? (this.sessionManager.getHistory().interactions || []).slice(-8) : [];
       const conversationHistory = recentInteractions.map(item => ({
@@ -410,6 +469,33 @@ class AgentRuntime extends EventEmitter {
         plan = await this.model.planActions(text, pageContext, conversationHistory);
       } catch (err) {
         console.warn('[AgentRuntime] Model planning notice:', err.message);
+      }
+
+      // If Jarvis explicitly signals that an informational answer lacks evidence,
+      // retrieve web context once and retry the same plan with those results.
+      const modelNeedsContext = !plan || (
+        Array.isArray(plan.actions) && plan.actions.length === 0 && isInsufficientContextThought(plan.thought)
+      );
+      if (researchCandidate && !didAnySearch && modelNeedsContext && shouldSearchAfterUncertainty(text)) {
+        webSearchContext = await this.searchWebForContext(text);
+        if (webSearchContext) {
+          pageContext = { ...pageContext, webSearchContext };
+          didAnySearch = true;
+          try {
+            plan = await this.model.planActions(text, pageContext, conversationHistory);
+          } catch (err) {
+            console.warn('[AgentRuntime] Model re-planning with web context notice:', err.message);
+            plan = null;
+          }
+        }
+      }
+
+      // Still provide the raw, bounded search result if no language model is available to synthesize it.
+      if (!plan && webSearchContext) {
+        plan = {
+          thought: `I found these AnySearch results, but couldn't summarize them because the language model is unavailable:\n\n${webSearchContext.slice(0, 3000)}`,
+          actions: []
+        };
       }
 
       if (plan && Array.isArray(plan.actions)) {
@@ -431,7 +517,7 @@ class AgentRuntime extends EventEmitter {
         }
 
         executedPlan = plan;
-        this.preprocessor.cachePlan(activeTab?.url, prep.normalized, plan);
+        if (!researchCandidate) this.preprocessor.cachePlan(activeTab?.url, prep.normalized, plan);
         this.emit('feedback', { message: `AI Plan: ${plan.thought || 'Executing actions'}`, level: 'success' });
         console.log(`[AgentRuntime Plan] Executing ${plan.actions.length} action(s):`, plan.thought);
 

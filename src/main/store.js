@@ -38,6 +38,7 @@ class Store {
         theme: 'dark',
         showBookmarksBar: true,
         mcpServerEnabled: true, // Enabled for Claude Web and external agents
+        anySearchEnabled: false, // Explicit opt-in: Ask Jarvis may send search queries to AnySearch
         diagnosticLogging: true, // Continuous structured telemetry and diagnostic monitoring
         logLevel: 'structured'   // 'structured' | 'verbose' | 'minimal'
       },

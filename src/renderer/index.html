@@ -327,6 +327,16 @@
           </div>
         </div>
         <div class="settings-group">
+          <label class="settings-label">Ask Jarvis Web Research (AnySearch)</label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="settingAnySearch">
+            <span>Allow web lookup when Jarvis needs more information</span>
+          </label>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+            Off by default. When enabled, eligible questions send only the query to AnySearch's hosted service; page content and chat history are not sent to it. Optional API key: ANYSEARCH_API_KEY in .env.
+          </div>
+        </div>
+        <div class="settings-group">
           <label class="settings-label">System Diagnostics & Monitoring</label>
           <label class="checkbox-row">
             <input type="checkbox" id="settingDiagnosticLogging" checked>

@@ -35,6 +35,7 @@ class ControlPlane {
       this.vision,
       this.vault
     );
+    this.runtime.isAnySearchEnabled = () => store.getSetting('anySearchEnabled') === true;
 
     // Initialize Chromium Model Context Protocol (MCP) Server
     this.mcpServer = new MCPServer({
