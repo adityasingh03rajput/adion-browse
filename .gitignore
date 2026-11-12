@@ -25,3 +25,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+
+# Local scratch scripts and editor/agent backups
+*.bak
+*.v1bak
+/patch*.js
+/*_new.js
+/profile.jpg
