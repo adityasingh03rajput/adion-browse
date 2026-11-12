@@ -506,8 +506,34 @@ function buildDOMGroundingScript(targetQuery, options = {}) {
         bestMatch.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
       } catch (_) {}
 
-      // Resolve actionable container for dual dispatch
-      const clickableContainer = safeClosest(bestMatch, 'div[role="button"], button, a, [role="link"], div[role="row"], div[role="listitem"], [role="gridcell"][tabindex], [tabindex="0"]') || bestMatch;
+      // Resolve actionable container for dual dispatch. A heading, label or plain
+      // text node is NOT clickable on its own: use its interactive ancestor, or
+      // refuse the click so the planner can pick a real control instead of
+      // clicking dead text at coordinates.
+      const clickableAncestor = safeClosest(bestMatch, 'div[role="button"], button, a, [role="link"], div[role="row"], div[role="listitem"], [role="gridcell"][tabindex], [tabindex="0"]');
+      const isInteractiveTarget = (el) => {
+        if (!el || !el.tagName) return false;
+        const tagName = el.tagName;
+        const elRole = safeGetAttr(el, 'role');
+        return tagName === 'BUTTON' || tagName === 'A' || tagName === 'INPUT' ||
+          tagName === 'SELECT' || tagName === 'TEXTAREA' ||
+          elRole === 'button' || elRole === 'link' || elRole === 'tab' ||
+          elRole === 'menuitem' || elRole === 'option' || elRole === 'checkbox' ||
+          el.hasAttribute('tabindex') || el.onclick != null ||
+          window.getComputedStyle(el).cursor === 'pointer';
+      };
+      const actionableTarget = (clickableAncestor && clickableAncestor !== bestMatch)
+        ? clickableAncestor
+        : (isInteractiveTarget(bestMatch) ? bestMatch : null);
+      if (!actionableTarget) {
+        return {
+          found: false,
+          highestScore,
+          reason: 'NON_INTERACTIVE_TARGET',
+          candidate: (safeGetAttr(bestMatch, 'aria-label') || bestMatch.innerText || bestMatch.tagName || '').slice(0, 40)
+        };
+      }
+      const clickableContainer = actionableTarget;
       const innerActionable = (clickableContainer && clickableContainer.querySelector)
         ? (clickableContainer.querySelector('[role="button"], [role="gridcell"][tabindex="0"], button, a') || clickableContainer)
         : clickableContainer;

@@ -81,7 +81,10 @@ async function testMcpServer() {
     captureScreenshot: async () => 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
   };
 
-  const sessionManager = new SessionManager();
+  // Isolated session memory so persisted chat history from other suites cannot leak in
+  const mcpTestDir = path.join(__dirname, '..', '.data', 'test_mcp_session');
+  fs.rmSync(mcpTestDir, { recursive: true, force: true });
+  const sessionManager = new SessionManager(mcpTestDir);
   sessionManager.recordInteraction({
     source: 'voice',
     rawPrompt: 'change the color to yellow of generate test tone button',

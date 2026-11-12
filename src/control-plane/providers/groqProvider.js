@@ -43,19 +43,32 @@ class GroqProvider extends BaseProvider {
     const baseDelayMs = 400;
     let lastError = null;
 
+    // If every candidate is cooling down after rate limits, wait for the
+    // earliest recovery instead of burning through the loop in milliseconds.
+    if (!this._cooldown) this._cooldown = new Map();
+    const available = candidates.filter(m => (this._cooldown.get(m) || 0) <= Date.now());
+    if (available.length === 0) {
+      const earliest = Math.min(...candidates.map(m => this._cooldown.get(m) || Date.now()));
+      const waitMs = Math.max(0, Math.min(earliest - Date.now(), 1500));
+      if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
+      this._cooldown.clear();
+    }
+
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const candidateModel = candidates[attempt % candidates.length];
+      if (this._cooldown && (this._cooldown.get(candidateModel) || 0) > Date.now()) continue;
 
       try {
         const payload = {
           model: candidateModel,
           messages: [
             { role: 'system', content: systemPrompt + '\nRespond strictly with RAW JSON format. No markdown, no prose.' },
+            ...this.coalesceMessages(options.history),
             { role: 'user', content: prompt }
           ],
           response_format: { type: 'json_object' },
           temperature: 0.1,
-          max_tokens: 650
+          max_tokens: 1400
         };
 
         const res = await this.fetchFn(this.apiUrl, {
@@ -87,19 +100,24 @@ class GroqProvider extends BaseProvider {
         }
 
         const status = res ? res.status : 0;
-        const errText = res ? await res.text().catch(() => '') : (lastError?.message || 'Network failure');
+        const errText = (lastError && lastError.message) || ('HTTP ' + status);
         lastError = new Error(`Groq API error ${status} on model ${candidateModel}: ${errText.slice(0, 120)}`);
 
-        // If retryable condition or refusal
-        if ([503, 502, 504, 429, 404, 400, 200].includes(status) || !res) {
+        // Auth failures are fatal for every candidate; a single unsupported or
+        // misconfigured model (400/404) must not abort failover for the rest.
+        if (status === 401 || status === 403) break;
+
+        if ([400, 404, 503, 502, 504, 429].includes(status) || !res) {
           const nextModel = candidates[(attempt + 1) % candidates.length];
           const delay = Math.round(baseDelayMs * Math.pow(1.5, attempt) + Math.random() * 200);
           console.warn(`[GroqProvider Backoff] Retryable condition on ${candidateModel}. Failover to candidate: ${nextModel} in ${delay}ms...`);
+          if (!this._cooldown) this._cooldown = new Map();
+          this._cooldown.set(candidateModel, Date.now() + 60000); // cooldown until backoff passes
           await new Promise(r => setTimeout(r, delay));
           continue;
         }
 
-        break;
+        continue;
       } catch (err) {
         lastError = err;
       }

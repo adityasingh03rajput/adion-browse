@@ -10,15 +10,33 @@ async function runSessionAndJarvisTests() {
   const testDataDir = path.resolve(__dirname, '..', '.data');
   const sessionLogPath = path.join(testDataDir, 'session_interactions.json');
 
-  // Test 1: Session State Initialization & Reset on Startup
-  console.log('Test 1: Initializing empty session memory file on startup...');
-  const sessionManager = new SessionManager(testDataDir);
+  // Test 1: Session memory starts empty and persists across restarts
+  console.log('Test 1: Verifying empty initialization and persistence across restarts...');
+  const persistenceDir = path.join(testDataDir, 'test_session_persistence');
+  fs.rmSync(persistenceDir, { recursive: true, force: true });
 
-  assert.ok(fs.existsSync(sessionLogPath), 'session_interactions.json should exist');
-  const initialContent = JSON.parse(fs.readFileSync(sessionLogPath, 'utf8'));
-  assert.strictEqual(initialContent.totalInteractions, 0, 'Interaction count should be 0 on startup reset');
-  assert.deepStrictEqual(initialContent.interactions, [], 'Interactions array should be empty on startup');
-  console.log('  âœ” Empty JSON log initialized and verified on startup reset.');
+  const firstSession = new SessionManager(persistenceDir);
+  const firstLogPath = path.join(persistenceDir, 'session_interactions.json');
+  assert.ok(fs.existsSync(firstLogPath), 'session_interactions.json should exist');
+  const initialContent = JSON.parse(fs.readFileSync(firstLogPath, 'utf8'));
+  assert.strictEqual(initialContent.totalInteractions, 0, 'A brand-new session should start empty');
+
+  firstSession.recordInteraction({
+    source: 'jarvis-chat',
+    rawPrompt: 'remember this across restarts',
+    modelResponse: { thought: 'Stored in session memory', actions: [] },
+    status: 'success',
+    feedback: 'Stored in session memory'
+  });
+
+  const restartedSession = new SessionManager(persistenceDir);
+  assert.strictEqual(restartedSession.getHistory().totalInteractions, 1, 'Conversation memory must survive a restart');
+  assert.strictEqual(restartedSession.getHistory().interactions[0].prompt.raw, 'remember this across restarts');
+  fs.rmSync(persistenceDir, { recursive: true, force: true });
+  console.log('  ✔ Empty JSON log initialized; conversation memory restored after restart.');
+
+  const sessionManager = new SessionManager(testDataDir);
+  sessionManager.clearSession();
 
   // Test 2: Prompt Fidelity & Exact Phrasing Preservation
   console.log('\nTest 2: Preserving exact prompt phrasing and recording interaction...');

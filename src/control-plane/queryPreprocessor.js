@@ -45,13 +45,79 @@ class QueryPreprocessor {
       .replace(/^(um+|uh+|okay\s+fine\s*,?\s*|ok\s+fine\s*,?\s*|okay\s*,?\s*|ok\s*,?\s*|alright\s*,?\s*|so\s*,?\s*|well\s*,?\s*)/i, '')
       .trim();
 
+    // Hindi politeness/attention fillers (kripaya..., are..., suno...).
+    cleaned = cleaned.replace(/^(\u0915\u0943\u092a\u092f\u093e|\u0915\u0943\u092a\u094d\u092f\u093e|\u092a\u094d\u0932\u0940\u091c|\u0905\u0930\u0947|\u0938\u0941\u0928\u094b|\u0938\u0941\u0928\u093f\u090f)\s+/i, '');
     // 2. Phonetic & acoustic homophone normalization
     cleaned = cleaned
       .replace(/\b(hie|hei|hy|heyy|heya|hai|hiya)\b/gi, 'hey')
       .replace(/\bbase\s+frequency\b/gi, 'bass frequency')
       .replace(/\bbase\s+boost\b/gi, 'bass boost')
       .replace(/\bcolour\b/gi, 'color')
-      .replace(/\bdecibels?\b/gi, 'dB');
+      .replace(/\bdecibels?\b/gi, 'dB')
+      // Hinglish open/close/show verbs (e.g. "instagram kholo" -> "open instagram")
+      .replace(/\b(kholo|khol|kholna|kholiye|kholega|kholde|kholdo)\b/gi, 'open')
+      .replace(/\b(band\s*karo|bandh?\s*karo)\b/gi, 'close')
+      .replace(/\b(dikhao|dikha|dekho|dikhaiye)\b/gi, 'show')
+      .replace(/\b(search\s*karo|khojo|dhundo)\b/gi, 'search')
+      // HINDI_DEVANAGARI: same verbs in native script (Whisper auto-detect output).
+      // NOTE: \b never matches non-Latin text, so Devanagari patterns use explicit
+      // delimiter classes instead of \b.
+      .replace(/(^|[\s\u0964,.!?;:"'()\[\]])(\u0916\u094b\u0932\u094b|\u0916\u094b\u0932\u0928\u093e|\u0916\u094b\u0932\u093f\u090f|\u0916\u094b\u0932\u093f\u092f\u0947|\u0916\u094b\u0932 \u0926\u094b|\u0916\u094b\u0932|\u0916\u094b\u0932\u0947)(?=[\s\u0964,.!?;:"'()\[\]]|$)/gi, '$1open')
+      .replace(/(^|[\s\u0964,.!?;:"'()\[\]])(\u092c\u0902\u0926 \u0915\u0930\u094b|\u092c\u0902\u0926\u0915\u0930\u094b|\u092c\u0902\u0926|\u0930\u094b\u0915\u094b|\u0930\u094b\u0915)(?=[\s\u0964,.!?;:"'()\[\]]|$)/gi, '$1close')
+      .replace(/(^|[\s\u0964,.!?;:"'()\[\]])(\u0926\u093f\u0916\u093e\u0913|\u0926\u093f\u0916\u093e\u0907\u090f|\u0926\u093f\u0916\u093e\u0907\u092f\u0947|\u0926\u093f\u0916\u0932\u093e\u0913|\u0926\u093f\u0916\u093e|\u092c\u0924\u093e\u0913|\u0926\u0947\u0916\u094b|\u0926\u0947\u0916)(?=[\s\u0964,.!?;:"'()\[\]]|$)/gi, '$1show')
+      .replace(/(^|[\s\u0964,.!?;:"'()\[\]])(\u0916\u094b\u091c\u094b|\u0916\u094b\u091c\u0928\u093e|\u0916\u094b\u091c\u093f\u090f|\u0916\u094b\u091c|\u0922\u0942\u0902\u0922\u094b|\u0922\u0942\u0902\u0922\u0928\u093e|\u0922\u0942\u0902\u0922|\u0938\u0930\u094d\u091a \u0915\u0930\u094b|\u0938\u0930\u094d\u091a|\u0924\u0932\u093e\u0936|\u0924\u0932\u093e\u0936\u094b)(?=[\s\u0964,.!?;:"'()\[\]]|$)/gi, '$1search')
+      .replace(/(^|[\s\u0964,.!?;:"'()\[\]])(\u0926\u092c\u093e\u0913|\u0926\u092c\u093e|\u0915\u094d\u0932\u093f\u0915 \u0915\u0930\u094b|\u0915\u094d\u0932\u093f\u0915|\u091b\u0941\u0913|\u091b\u0942)(?=[\s\u0964,.!?;:"'()\[\]]|$)/gi, '$1click')
+      .replace(/(^|[\s\u0964,.!?;:"'()\[\]])(\u0932\u093f\u0916\u094b|\u0932\u093f\u0916\u0928\u093e|\u0932\u093f\u0916\u093f\u090f|\u0932\u093f\u0916|\u091f\u093e\u0907\u092a \u0915\u0930\u094b|\u091f\u093e\u0907\u092a|\u092d\u0930\u094b|\u092d\u0930\u0928\u093e)(?=[\s\u0964,.!?;:"'()\[\]]|$)/gi, '$1type')
+      .replace(/(^|[\s\u0964,.!?;:"'()\[\]])(\u0938\u094d\u0915\u094d\u0930\u0949\u0932|\u0938\u094d\u0915\u094d\u0930\u094b\u0932)(?=[\s\u0964,.!?;:"'()\[\]]|$)/gi, '$1scroll')
+      .replace(/(^|[\s\u0964,.!?;:"'()\[\]])(\u0935\u093e\u092a\u0938|\u0935\u093e\u092a\u093f\u0938|\u092a\u0940\u091b\u0947)(?=[\s\u0964,.!?;:"'()\[\]]|$)/gi, '$1back')
+      .replace(/(^|[\s\u0964,.!?;:"'()\[\]])(\u0930\u093f\u092b\u094d\u0930\u0947\u0936|\u0930\u093f\u0932\u094b\u0921|\u0924\u093e\u091c\u093c\u093e \u0915\u0930\u094b|\u0924\u093e\u091c\u093e \u0915\u0930\u094b)(?=[\s\u0964,.!?;:"'()\[\]]|$)/gi, '$1reload')
+      // Hindi send + dative: "Rahul ko hello bhejo" -> "send hello to Rahul".
+      .replace(/(^|[\s\u0964,.!?;:"'()\[\]])(\u092d\u0947\u091c\u094b|\u092d\u0947\u091c\u0928\u093e|\u092d\u0947\u091c\u093f\u090f|\u092d\u0947\u091c\u093f\u092f\u0947|\u092d\u0947\u091c|bhejo|bhej|bhejiye|bhejna)(?=[\s\u0964,.!?;:"'()\[\]]|$)/gi, '$1send')
+      .replace(/(^|[\s\u0964,.!?;:"'()\[\]])(\u0915\u094b)(?=[\s\u0964,.!?;:"'()\[\]]|$)/g, '$1to')
+      .replace(/\bko\b/gi, 'to');
+    // HINDI_SEND_SOV: verb-final send ("Rahul to hello send") -> verb-first.
+    {
+      const __sendSov = cleaned.match(/^(.+?)\s+to\s+(.+?)\s+send$/i);
+      if (__sendSov) cleaned = 'send ' + __sendSov[2].trim() + ' to ' + __sendSov[1].trim();
+    }
+    // Strip trailing danda early: SOV swap needs a verb-final string.
+    cleaned = cleaned.replace(/\u0964+$/, '').trim();
+    // THEME_VOICE (v10): whole-utterance theme commands -> canonical "theme set X".
+    // Requires a dark/light word or a toggle word plus a theme/mode word, so bare
+    // "dark"/"light" still web-searches. Devanagari-safe (no \b on non-Latin).
+    {
+      const __c = cleaned;
+      const __mentionsTheme = /(theme|mode|\u092e\u094b\u0921|\u0925\u0940\u092e)/.test(__c);
+      const __hasDL = /(dark|light|\u0921\u093e\u0930\u094d\u0915|\u0932\u093e\u0907\u091f)/.test(__c);
+      const __isToggle = /(toggle|\u091f\u0949\u0917\u0932|\u092c\u0926\u0932)/.test(__c);
+      if ((__mentionsTheme && (__hasDL || __isToggle)) || (__isToggle && __hasDL)) {
+        let __want = null;
+        if (__hasDL) {
+          const __neg = /(off|\u092c\u0902\u0926|disable)/.test(__c);
+          const __light = /(light|\u0932\u093e\u0907\u091f)/.test(__c);
+          const __dark = /(dark|\u0921\u093e\u0930\u094d\u0915)/.test(__c);
+          if (__light && !__dark) __want = __neg ? "dark" : "light";
+          else if (__dark && !__light) __want = __neg ? "light" : "dark";
+        } else if (__isToggle) __want = "toggle";
+        if (__want) cleaned = __want === "toggle" ? "theme toggle" : "theme set " + __want;
+      }
+    }
+    // SOV_SWAP_V2: Hindi/Hinglish is SOV ("instagram kholo", "tab band karo", "photo dikhao").
+    // After verb normalization we may have "<thing> open|close|show" — swap to English VSO.
+    // (Runs for ANY thing, not just single-word sites, so follow-ups like "messages kholo" work too.)
+    {
+      const __sov = cleaned.match(/^(.+?)\s+(open|close|show)$/i);
+      if (__sov && !/^(open|close|show)\b/i.test(cleaned)) cleaned = __sov[2].toLowerCase() + ' ' + __sov[1].trim();
+    }
+    // Extra Hindi verbs (general, not site-specific)
+    cleaned = cleaned
+      .replace(/\b(chalao|chala|lagao)\b/gi, 'open')
+      .replace(/\b(wapas|waapis|peeche|piche)\b/gi, 'back')
+      .replace(/\b(dhoondo|khoj)\b/gi, 'search')
+      .replace(/\b(bharo|likho|type\s*karo)\b/gi, 'type');
+    // HINGLISH_SITE_FIRST: "<site> open" -> "open <site>" (e.g. "instagram open" -> "open instagram")
+    const __siteFirst = cleaned.match(/^([a-zA-Z0-9][a-zA-Z0-9.\-]*)(\s+open)$/i);
+    if (__siteFirst) cleaned = 'open ' + __siteFirst[1];
 
     // 3. Normalize verbal numbers ("zero to ten" -> "0 to 10")
     for (const [w, n] of Object.entries(this.wordToNum)) {
@@ -60,7 +126,7 @@ class QueryPreprocessor {
     }
 
     // 4. Strip trailing punctuation question marks, periods, exclamation points
-    cleaned = cleaned.replace(/[\?\!\.,]+$/, '').trim();
+    cleaned = cleaned.replace(/[\?\!\.,\u0964]+$/, '').trim();
 
     const endTime = process.hrtime.bigint();
     const durationMs = Number(endTime - startTime) / 1e6;
@@ -81,7 +147,7 @@ class QueryPreprocessor {
     const lower = preprocessed.lower;
 
     // 1. Compound Command Decomposition: e.g. "shut down this and now search for youtube.com"
-    const compoundSplitter = /\s+(?:and\s+now|and\s+then|and\s+also|then)\s+/i;
+    const compoundSplitter = /\s+(?:and\s+now|and\s+then|and\s+also|then|\u0914\u0930|\u092b\u093f\u0930|\u0924\u0925\u093e|\u0909\u0938\u0915\u0947\s+\u092c\u093e\u0926)\s+/i; // + Hindi: aur/phir/tatha/uske baad
     if (compoundSplitter.test(text)) {
       const parts = text.split(compoundSplitter).map(p => p.trim()).filter(Boolean);
       if (parts.length > 1) {
@@ -225,9 +291,16 @@ class QueryPreprocessor {
           thought: `Navigate to https://${target}`
         };
       }
+      // WORKFLOW_GUARD_SEARCH: "search messages" while on a site is site-internal.
+      // Defer section-like single words to the LLM when already on a site.
+      {
+        const __curS = String((pageContext && pageContext.url) || '');
+        const __onSiteS = /^https?:\/\//.test(__curS) && !__curS.startsWith('adion://');
+        if (__onSiteS && /^(messages?|dms?|inbox|chats?|profile|settings?|history|feed|reels|explore|contacts?|orders?|\u0938\u0902\u0926\u0947\u0936|\u0916\u094b\u091c|\u0938\u0930\u094d\u091a|\u092a\u094d\u0930\u094b\u092b\u093c\u093e\u0907\u0932|\u0938\u0947\u091f\u093f\u0902\u0917\u094d\u0938|\u0907\u0924\u093f\u0939\u093e\u0938|\u0939\u094b\u092e)$/i.test(target)) return null;
+      }
       return {
         type: ActionType.NAVIGATE,
-        url: `https://search.brave.com/search?q=${encodeURIComponent(target)}`,
+          url: `https://search.brave.com/search?q=${encodeURIComponent(target)}`,
         thought: `Search for "${target}"`
       };
     }
@@ -258,6 +331,36 @@ class QueryPreprocessor {
       }
     }
 
+    // 3.8 SITE_FOLLOWUPS: resolve follow-ups against the current/last site instead of
+    // blindly Brave-searching ("open messages" on instagram = DMs, not a web search).
+    (() => {})(); // noop to keep structure
+    {
+      const __siteUrl = String((pageContext && pageContext.url) || '').toLowerCase();
+      const __recent = String((pageContext && pageContext.recentUsers) || '').toLowerCase();
+      const __onInsta = __siteUrl.includes('instagram.com') || /\binstagram\b/.test(__recent);
+      const __onWA = __siteUrl.includes('whatsapp.com') || /\bwhatsapp\b/.test(__recent);
+      const __onYT = __siteUrl.includes('youtube.com') || /\byoutube\b/.test(__recent);
+      const __onX = __siteUrl.includes('x.com') || __siteUrl.includes('twitter.com');
+      // NOTE: cannot return from inside a block, so set a marker consumed below.
+      globalThis.__siteFollowup = null;
+      if (__onInsta && /^(?:open|go\s+to|show|view)\s+(?:my\s+|the\s+)?(messages?|dms?|direct(?:\s+messages?)?|inbox|chats?)\s*$/.test(lower)) {
+        globalThis.__siteFollowup = { type: ActionType.NAVIGATE, url: 'https://www.instagram.com/direct/inbox/', thought: 'Open Instagram messages (DM inbox) in context of Instagram' };
+      } else if (__onInsta && /^(?:open\s+)?(home|feed|reels|explore|notifications?|profile)\s*$/.test(lower)) {
+        const __m = lower.match(/^(?:open\s+)?(home|feed|reels|explore|notifications?|profile)\s*$/);
+        const __dest = { home: 'https://www.instagram.com/', feed: 'https://www.instagram.com/', reels: 'https://www.instagram.com/reels/', explore: 'https://www.instagram.com/explore/', notification: 'https://www.instagram.com/', notifications: 'https://www.instagram.com/', profile: 'https://www.instagram.com/' }[__m[1]] || 'https://www.instagram.com/';
+        globalThis.__siteFollowup = { type: ActionType.NAVIGATE, url: __dest, thought: 'Open Instagram ' + __m[1] };
+      } else if (__onWA && /^(?:open\s+)?(messages?|chats?|unread)\s*$/.test(lower)) {
+        globalThis.__siteFollowup = { type: 'WHATSAPP_UNREAD_CLICK', thought: 'Open unread chats on WhatsApp Web (site context)' };
+      } else if (__onYT && /^(?:open\s+)?(subscriptions?|history|library|trending)\s*$/.test(lower)) {
+        const __m = lower.match(/^(?:open\s+)?(subscriptions?|history|library|trending)\s*$/);
+        const __dest = { subscription: 'https://www.youtube.com/feed/subscriptions', subscriptions: 'https://www.youtube.com/feed/subscriptions', history: 'https://www.youtube.com/feed/history', library: 'https://www.youtube.com/feed/library', trending: 'https://www.youtube.com/feed/trending' }[__m[1]];
+        if (__dest) globalThis.__siteFollowup = { type: ActionType.NAVIGATE, url: __dest, thought: 'Open YouTube ' + __m[1] };
+      } else if (__onX && /^(?:open\s+)?(messages?|dms?|inbox)\s*$/.test(lower)) {
+        globalThis.__siteFollowup = { type: ActionType.NAVIGATE, url: 'https://x.com/messages', thought: 'Open X messages' };
+      }
+    }
+    if (globalThis.__siteFollowup) return globalThis.__siteFollowup;
+
     // 4. Standard URL / Domain Navigation: "navigate to example.com", "open github.com"
     const navMatch = lower.match(/(?:navigate\s+to|go\s+to|open)\s+(?:the\s+)?([a-z0-9\.\-_:\/]+)(?:\s+(?:website|page|site|homepage))?$/i);
     if (navMatch && !/(console|network|tab|history|bookmark)/i.test(navMatch[1])) {
@@ -280,12 +383,30 @@ class QueryPreprocessor {
             url = 'https://www.google.com';
           } else if (target === 'reddit' || target === 'reddit.com') {
             url = 'https://reddit.com';
+          } else if (target === 'instagram' || target === 'instagram.com' || target === 'www.instagram.com') {
+            url = 'https://www.instagram.com';
+          } else if (target === 'facebook' || target === 'facebook.com' || target === 'fb.com') {
+            url = 'https://www.facebook.com';
+          } else if (target === 'messenger' || target === 'messenger.com') {
+            url = 'https://www.messenger.com';
+          } else if (target === 'canva' || target === 'canva.com') {
+            url = 'https://www.canva.com';
+          } else if (target === 'netflix' || target === 'netflix.com') {
+            url = 'https://www.netflix.com';
           } else if (target === 'twitter' || target === 'x' || target === 'x.com' || target === 'twitter.com') {
             url = 'https://x.com';
           } else if (/^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}/.test(url)) {
             url = `https://${url}`;
           } else {
-            url = `https://search.brave.com/search?q=${encodeURIComponent(target)}`;
+// WORKFLOW_GUARD_NAV: on a real site, a bare section word ("messages", "inbox", "profile",
+            // "settings", "history", ...) is a FOLLOW-UP to the current workflow — never a web search.
+            // Known sites were already resolved by SITE_FOLLOWUPS above; anything else defers to the
+            // LLM (which has full conversation history + live DOM) instead of leaving the site.
+            const __curNav = String((pageContext && pageContext.url) || '');
+            const __onSiteNav = /^https?:\/\//.test(__curNav) && !__curNav.startsWith('adion://');
+            const __isSectionNav = /^(messages?|dms?|direct|inbox|chats?|profile|settings?|history|home|feed|reels|explore|notifications?|subscriptions?|library|trending|dashboard|orders?|cart|checkout|help|support|contacts?|bookmarks?|downloads?|\u0938\u0902\u0926\u0947\u0936|\u092e\u0948\u0938\u0947\u091c|sandesh|\u0916\u094b\u091c|khoj|\u0938\u0930\u094d\u091a|\u092a\u094d\u0930\u094b\u092b\u093c\u093e\u0907\u0932|\u092a\u094d\u0930\u094b\u092b\u093e\u0907\u0932|\u0938\u0947\u091f\u093f\u0902\u0917\u094d\u0938|\u0907\u0924\u093f\u0939\u093e\u0938|\u0939\u093f\u0938\u094d\u091f\u094d\u0930\u0940|\u0939\u094b\u092e|\u092e\u0926\u0926|\u0911\u0930\u094d\u0921\u0930|\u0915\u093e\u0930\u094d\u091f|\u0938\u0942\u091a\u0928\u093e\u090f\u0902)$/i.test(target);
+            if (__onSiteNav && __isSectionNav && !globalThis.__siteFollowup) return null;
+                        url = `https://search.brave.com/search?q=${encodeURIComponent(target)}`;
           }
         }
         return {

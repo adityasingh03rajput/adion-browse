@@ -35,9 +35,13 @@ class AnthropicProvider extends BaseProvider {
 
     const payload = {
       model: modelToUse,
-      max_tokens: 1024,
+      max_tokens: 1600,
       system: systemPrompt + '\nYou MUST respond strictly with raw JSON matching the required schema. Do NOT include markdown code blocks or explanations.',
       messages: [
+        ...this.coalesceMessages(options.history).map((turn) => ({
+          role: turn.role === 'assistant' ? 'assistant' : 'user',
+          content: turn.content
+        })),
         {
           role: 'user',
           content: prompt + '\n\nOutput strictly valid JSON only.'

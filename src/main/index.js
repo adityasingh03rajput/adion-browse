@@ -121,7 +121,7 @@ async function createWindow() {
       preload: path.join(__dirname, '../preload/preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false
+      sandbox: true
     }
   });
 
@@ -149,20 +149,37 @@ async function createWindow() {
     callback({ requestHeaders });
   });
 
-  // Grant audio/microphone capture permissions for the AI Voice Control Plane
+  // Microphone access belongs to the browser's own chrome renderer (Voice HUD),
+  // never to arbitrary web content. Websites must not inherit this grant.
+  const MEDIA_PERMISSIONS = ['media', 'microphone', 'audio-capture'];
+  const isOwnChrome = (webContents) => Boolean(
+    mainWindow && !mainWindow.isDestroyed() && webContents && webContents === mainWindow.webContents
+  );
+
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    if (permission === 'media' || permission === 'microphone' || permission === 'audio-capture') {
-      return callback(true);
+    const allowed = isOwnChrome(webContents) && MEDIA_PERMISSIONS.includes(permission);
+    if (!allowed) {
+      console.warn(`[Permissions] Denied "${permission}" for non-browser content`);
     }
-    callback(false);
+    callback(allowed);
   });
 
-  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
-    return permission === 'media' || permission === 'microphone' || permission === 'audio-capture';
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    return isOwnChrome(webContents) && MEDIA_PERMISSIONS.includes(permission);
   });
 
   // Initialize Tab Manager
   tabManager = new TabManager(mainWindow);
+
+  // Resolve per-site shield policy against the tab's top-level page, not the
+  // subresource host (a tracker is served from a third-party domain).
+  shield.setSiteResolver((webContentsId) => {
+    if (!tabManager) return '';
+    for (const tab of tabManager.tabs.values()) {
+      if (tab.webContentsId === webContentsId) return tab.url || '';
+    }
+    return '';
+  });
 
   // Initialize Decoupled AI Voice & Autonomous Control Plane
   controlPlane = new ControlPlane(mainWindow, tabManager);

@@ -67,15 +67,76 @@ class Store {
   }
 
   loadData() {
+    const defaults = this.getDefaults();
+    if (!fs.existsSync(this.filePath)) return defaults;
+
     try {
-      if (fs.existsSync(this.filePath)) {
-        const content = fs.readFileSync(this.filePath, 'utf-8');
-        return Object.assign(this.getDefaults(), JSON.parse(content));
+      const content = fs.readFileSync(this.filePath, 'utf-8');
+      const parsed = JSON.parse(content);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('profile root is not an object');
       }
+      return this.mergeWithDefaults(defaults, parsed);
     } catch (e) {
-      console.error('Failed to load store, using defaults:', e);
+      // Never silently throw a damaged profile away: keep a copy for recovery.
+      console.error('[Store] Failed to load profile:', e.message);
+      try {
+        const backup = `${this.filePath}.corrupt-${Date.now()}`;
+        fs.copyFileSync(this.filePath, backup);
+        console.error('[Store] Corrupt profile preserved at:', backup);
+      } catch (_) {}
+      return defaults;
     }
-    return this.getDefaults();
+  }
+
+  /**
+   * Merge a saved profile over the defaults so newly added settings survive an
+   * upgrade, and reject values with the wrong shape/type instead of trusting
+   * whatever is on disk.
+   */
+  mergeWithDefaults(defaults, saved) {
+    const merged = { ...defaults };
+
+    // settings: known keys only, same primitive type
+    const settings = {};
+    for (const [key, fallback] of Object.entries(defaults.settings)) {
+      const value = saved.settings && typeof saved.settings === 'object' ? saved.settings[key] : undefined;
+      settings[key] = typeof value === typeof fallback ? value : fallback;
+    }
+    merged.settings = settings;
+
+    // stats: non-negative finite numbers only
+    const stats = {};
+    for (const [key, fallback] of Object.entries(defaults.stats)) {
+      const value = Number(saved.stats && saved.stats[key]);
+      stats[key] = Number.isFinite(value) && value >= 0 ? value : fallback;
+    }
+    merged.stats = stats;
+
+    // siteShields: sanitize each per-site record
+    const siteShields = {};
+    if (saved.siteShields && typeof saved.siteShields === 'object' && !Array.isArray(saved.siteShields)) {
+      for (const [domain, cfg] of Object.entries(saved.siteShields)) {
+        if (!domain || !cfg || typeof cfg !== 'object') continue;
+        siteShields[domain] = {
+          enabled: cfg.enabled !== false,
+          blockScripts: cfg.blockScripts === true
+        };
+      }
+    }
+    merged.siteShields = siteShields;
+
+    // Collections: accept only arrays of well-formed entries
+    const urls = (list, predicate) => Array.isArray(list) ? list.filter(predicate).slice(0, 500) : [];
+    merged.bookmarks = saved.bookmarks === undefined
+      ? defaults.bookmarks
+      : urls(saved.bookmarks, b => b && typeof b === 'object' && typeof b.url === 'string' && b.url.length > 0);
+    merged.history = urls(saved.history, h => h && typeof h === 'object' && typeof h.url === 'string' && h.url.length > 0);
+    merged.shortcuts = saved.shortcuts === undefined
+      ? defaults.shortcuts
+      : urls(saved.shortcuts, s => s && typeof s === 'object' && typeof s.url === 'string');
+
+    return merged;
   }
 
   save(immediate = false) {
@@ -200,7 +261,14 @@ class Store {
   }
 
   addHistory(item) {
-    if (!item.url || item.url.startsWith('file://') || item.url.startsWith('about:')) return;
+    if (!item || !item.url || item.url.startsWith('file://') || item.url.startsWith('about:')) return;
+    this.init();
+    if (!Array.isArray(this.data.history)) this.data.history = [];
+
+    // SPA route changes fire did-navigate-in-page repeatedly; do not spam history.
+    const previous = this.data.history[0];
+    if (previous && previous.url === item.url && Date.now() - (previous.visitedAt || 0) < 2000) return;
+
     // Keep last 500 items
     this.data.history.unshift({
       id: Date.now().toString(),

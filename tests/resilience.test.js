@@ -6,34 +6,14 @@ const ModelClient = require('../src/control-plane/modelClient');
 async function runTests() {
   console.log('=== TEST SUITE: RESILIENCE, BACKOFF & SLIDER TARGETING ===\n');
 
-  // 1. Test AgentRuntime parseIntent with speech variants
-  console.log('Test 1: Parsing Audio Parameter / Slider intents...');
+  // 1. Commands must be planned by the AI; no local fast path may intercept them
+  console.log('Test 1: Verifying no local fast-path interception...');
   const runtime = new AgentRuntime();
-
-  const t1 = await runtime.parseIntent('change the base frequency boost from zero to 10 decibels');
-  console.log('t1 result:', t1);
-  assert.strictEqual(t1.type, ActionType.MODIFY_DOM);
-  assert.strictEqual(t1.action, 'setValue');
-  assert.strictEqual(t1.value, '10');
-  assert.ok(t1.selector.includes('Bass Frequency Boost'));
-  console.log('  âœ” "change the base frequency boost from zero to 10 decibels" correctly parsed as slider value 10.');
-
-  const t2 = await runtime.parseIntent('set bass boost to 10 db');
-  assert.strictEqual(t2.type, ActionType.MODIFY_DOM);
-  assert.strictEqual(t2.action, 'setValue');
-  assert.strictEqual(t2.value, '10');
-  console.log('  âœ” "set bass boost to 10 db" correctly parsed.');
-
-  const t3 = await runtime.parseIntent('change base frequency boost to 12');
-  assert.strictEqual(t3.type, ActionType.MODIFY_DOM);
-  assert.strictEqual(t3.value, '12');
-  console.log('  âœ” "change base frequency boost to 12" correctly parsed.');
-
-  const t4 = await runtime.parseIntent('change text of audioTitle to Audio Control Room');
-  assert.strictEqual(t4.type, ActionType.MODIFY_DOM);
-  assert.strictEqual(t4.action, 'setText');
-  assert.strictEqual(t4.value, 'Audio Control Room');
-  console.log('  âœ” Static text change intent correctly parsed.');
+  assert.strictEqual(typeof runtime.parseIntent, 'undefined', 'runtime must not expose a rule-based intent parser');
+  assert.strictEqual(runtime.preprocessor, undefined, 'runtime must not pre-parse commands');
+  assert.strictEqual(runtime.workflow, undefined, 'runtime must not resolve commands through dialogue state');
+  assert.strictEqual(runtime.intentParser, undefined, 'runtime must not expose a site registry parser');
+  console.log('  ✔ Commands can only reach the AI planner; no fast path exists.');
 
   // 2. Test ModelClient Exponential Backoff
   console.log('\nTest 2: Verifying ModelClient Exponential Backoff and retry mechanism...');

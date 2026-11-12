@@ -46,10 +46,16 @@ class AdionShieldEngine {
         }
       }
 
-      // Check per-domain shield status
+      // Check per-site shield status against the TOP-LEVEL page: a tracker is
+      // fetched from a third-party host, so keying policy off the request host
+      // silently ignored the user's per-site choice.
       try {
         const parsed = new URL(url);
-        const domain = parsed.hostname;
+        let domain = parsed.hostname;
+        try {
+          const topUrl = this.siteResolver ? this.siteResolver(details.webContentsId) : '';
+          if (topUrl) domain = new URL(topUrl).hostname;
+        } catch (_) {}
         const siteConfig = store.getSiteShield(domain);
 
         // If scripts are blocked for this domain and resource is script
@@ -116,6 +122,14 @@ class AdionShieldEngine {
 
   onBlocked(callback) {
     this.onBlockedCallback = callback;
+  }
+
+  /**
+   * Provide a webContentsId -> top-level page URL resolver so shield policy is
+   * evaluated for the site the user is actually on.
+   */
+  setSiteResolver(fn) {
+    this.siteResolver = typeof fn === 'function' ? fn : null;
   }
 }
 

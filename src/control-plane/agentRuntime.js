@@ -6,7 +6,6 @@ const STTEngine = require('./sttEngine');
 const ModelClient = require('./modelClient');
 const ModelRouter = require('./modelRouter');
 const SessionManager = require('./sessionManager');
-const QueryPreprocessor = require('./queryPreprocessor');
 const { buildDOMGroundingScript, detectSemanticCluster } = require('./universalGrounder');
 
 /**
@@ -24,7 +23,6 @@ class AgentRuntime extends EventEmitter {
     this.vault = securityVault;
     this.sessionManager = sessionManager || new SessionManager();
     this.terminalBridge = terminalBridge;
-    this.preprocessor = new QueryPreprocessor();
     this.stt = new STTEngine();
     this.model = new ModelClient();
     this.router = new ModelRouter();
@@ -49,7 +47,10 @@ class AgentRuntime extends EventEmitter {
       peakEnergy: 0,
       speechDetected: false,
       consecutiveSilenceFrames: 0,
-      isSegmenting: false
+      isSegmenting: false,
+      noiseFloor: 0.003,
+      pendingSpeechFrames: 0,
+      strayQuietFrames: 0
     };
   }
 
@@ -81,7 +82,10 @@ class AgentRuntime extends EventEmitter {
       speechDetected: false,
       speechFramesCount: 0,
       consecutiveSilenceFrames: 0,
-      isSegmenting: false
+      isSegmenting: false,
+      noiseFloor: 0.003,
+      pendingSpeechFrames: 0,
+      strayQuietFrames: 0
     };
     this.setState(AgentState.LISTENING);
     console.log('[AgentRuntime Audio] Continuous voice stream session initialized');
@@ -104,7 +108,10 @@ class AgentRuntime extends EventEmitter {
       speechDetected: false,
       speechFramesCount: 0,
       consecutiveSilenceFrames: 0,
-      isSegmenting: false
+      isSegmenting: false,
+      noiseFloor: 0.003,
+      pendingSpeechFrames: 0,
+      strayQuietFrames: 0
     };
     this.setState(AgentState.LISTENING);
     console.log('[AgentRuntime Audio] Voice session re-armed: ready for next speech command');
@@ -151,8 +158,19 @@ class AgentRuntime extends EventEmitter {
       this.audioSession.peakEnergy = rms;
     }
 
-    // Voice Activity Detection (VAD) threshold
-    const isSpeechActive = rms > 0.012;
+    // Voice Activity Detection (VAD): adaptive noise floor + hysteresis.
+    // Room noise drifts (fan, AC, mic gain); a fixed 0.012 threshold sits inside
+    // the noise band (silence ~0.002, blips ~0.013) and false-triggers on it.
+    const S = this.audioSession;
+    if (typeof S.noiseFloor !== 'number') S.noiseFloor = 0.003;
+    if (rms < 0.02) {
+      // Slow EMA of the quiet floor; clamp keeps it sane in dead silence.
+      S.noiseFloor = Math.max(0.0008, S.noiseFloor + (rms - S.noiseFloor) * 0.02);
+    }
+    // Attack threshold: absolute floor 0.025 (above noise blips ~0.014, below
+    // real speech ~0.04+) with room-noise scaling, capped so quiet speech survives.
+    const vadThreshold = Math.min(0.04, Math.max(0.025, S.noiseFloor * 6));
+    const isSpeechActive = rms > vadThreshold;
 
     // Log audio frame telemetry to stdout with exact Speech: true / Speech: false from git history
     if (this.audioSession.chunkCount % 5 === 1 || isSpeechActive) {
@@ -161,12 +179,16 @@ class AgentRuntime extends EventEmitter {
 
     // VAD Auto-Segmentation & Endpointing State Machine
     if (isSpeechActive) {
-      if (!this.audioSession.speechDetected) {
+      // Attack debounce: one hot frame is a click/pop, not speech. Buffering is
+      // unaffected (chunks accumulate regardless), so nothing is clipped.
+      S.pendingSpeechFrames = (S.pendingSpeechFrames || 0) + 1;
+      S.speechFramesCount = (S.speechFramesCount || 0) + 1;
+      S.consecutiveSilenceFrames = 0;
+      S.strayQuietFrames = 0;
+      if (!S.speechDetected && S.pendingSpeechFrames >= 2) {
+        S.speechDetected = true;
         console.log(`[AgentRuntime VAD] Voice activity initiated (RMS: ${rms.toFixed(4)})`);
       }
-      this.audioSession.speechDetected = true;
-      this.audioSession.speechFramesCount = (this.audioSession.speechFramesCount || 0) + 1;
-      this.audioSession.consecutiveSilenceFrames = 0;
     } else if (this.audioSession.speechDetected && !this.audioSession.isSegmenting) {
       this.audioSession.consecutiveSilenceFrames++;
       // Natural speech pause: 9 silence frames (~1.15s of post-speech pause)
@@ -181,6 +203,13 @@ class AgentRuntime extends EventEmitter {
         console.log(`[AgentRuntime VAD] Utterance concluded after pause (${this.audioSession.totalBytes} bytes accumulated, ${this.audioSession.speechFramesCount} speech frames)`);
         this.audioSession.isSegmenting = true;
         this.triggerAutoEndpoint();
+      }
+    } else if (!S.speechDetected && !S.isSegmenting) {
+      S.pendingSpeechFrames = 0;
+      S.strayQuietFrames = (S.strayQuietFrames || 0) + 1;
+      if (S.strayQuietFrames >= 9) {
+        S.speechFramesCount = 0;
+        S.strayQuietFrames = 0;
       }
     }
 
@@ -330,15 +359,13 @@ class AgentRuntime extends EventEmitter {
 
   /**
    * Process incoming voice or natural language text command
-   * Uses QueryPreprocessor for <0.5ms fast-path intent routing, eliminating query latency.
+   * Every command is planned by the AI model; there is no local fast path.
    */
   async processCommand(rawInput, source = 'voice') {
     if (!rawInput || typeof rawInput !== 'string') return;
     const exactPrompt = String(rawInput); // Strict prompt fidelity preservation
     
-    // 0. High-Speed Query Preprocessing (<0.5ms)
-    const prep = this.preprocessor.preprocess(exactPrompt);
-    const text = prep.normalized;
+    const text = exactPrompt.trim();
     if (!text) return;
 
     // Hands-free voice stop command
@@ -404,7 +431,7 @@ class AgentRuntime extends EventEmitter {
       }
 
       // 2. Retrieve recent conversation history from SessionManager so agent retains conversational memory
-      const recentInteractions = this.sessionManager ? (this.sessionManager.getHistory().interactions || []).slice(-10) : [];
+      const recentInteractions = this.sessionManager ? (this.sessionManager.getHistory().interactions || []).slice(-40) : [];
       const conversationHistory = recentInteractions.map(item => ({
         user: item.prompt?.raw || item.prompt?.transcription || item.rawPrompt || item.transcription || '',
         agent: item.response?.thought || item.response?.feedback || item.feedback || (item.modelResponse && item.modelResponse.thought) || '',
@@ -414,40 +441,6 @@ class AgentRuntime extends EventEmitter {
       // Pass lastReferencedFile in pageContext for zero-latency coreference resolution
       if (this.lastReferencedFile) {
         pageContext.lastReferencedFile = this.lastReferencedFile;
-      }
-
-      // Fast-Path Intent Execution (<0.5ms): Deterministic commands, slash commands, file operations
-      const fastIntent = this.preprocessor.extractFastIntent(prep, pageContext);
-      if (fastIntent) {
-        console.log(`[AgentRuntime FastPath] Executed deterministic intent in ${prep.durationMs}ms:`, fastIntent.thought || fastIntent.type);
-        const actionsToRun = Array.isArray(fastIntent.actions) && fastIntent.actions.length > 0
-          ? fastIntent.actions
-          : [fastIntent];
-
-        for (let i = 0; i < actionsToRun.length; i++) {
-          const act = actionsToRun[i];
-          const intent = { type: act.type, ...(act.params || {}), ...act, raw: exactPrompt };
-          await this.executeIntent(intent);
-          if (act.targetFile) {
-            this.lastReferencedFile = act.targetFile;
-          }
-          if (i < actionsToRun.length - 1) {
-            await new Promise(r => setTimeout(r, 250));
-          }
-        }
-
-        const completionThought = fastIntent.thought || 'Command executed successfully';
-        this.sessionManager.recordInteraction({
-          source: source,
-          rawPrompt: exactPrompt,
-          transcription: text,
-          pageContext: pageContext,
-          modelResponse: { thought: completionThought, actions: actionsToRun },
-          status: 'success',
-          feedback: completionThought
-        });
-        this.emit('jarvis-notification', { type: 'success', message: completionThought });
-        return;
       }
 
       // 3. TIER 1: AI-FIRST AUTONOMOUS GOAL EXECUTION & RE-PLANNING LOOP
@@ -463,7 +456,10 @@ class AgentRuntime extends EventEmitter {
 
       if (this.model) {
         try {
-          initialPlan = await this.model.planActions(plannedText, pageContext, conversationHistory);
+          initialPlan = await Promise.race([
+            this.model.planActions(plannedText, pageContext, conversationHistory),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('initial-plan timeout 25s')), 25000)),
+          ]);
         } catch (err) {
           console.warn('[AgentRuntime] Initial AI Model planning error:', err.message);
         }
@@ -527,6 +523,7 @@ class AgentRuntime extends EventEmitter {
         }
 
         let currentPlan = initialPlan;
+        let stalledIterations = 0;
 
         while (iteration < maxGoalIterations && !goalAccomplished) {
           iteration++;
@@ -555,11 +552,56 @@ class AgentRuntime extends EventEmitter {
 
           let actionsInTurn = Array.isArray(currentPlan.actions) ? currentPlan.actions : [];
           let allSubActionsSucceeded = true;
+          let skippedDuplicates = 0;
           let turnOutcomeMsg = '';
 
           for (let i = 0; i < actionsInTurn.length; i++) {
             const act = actionsInTurn[i];
-            const intent = { type: act.type, ...(act.params || {}), raw: exactPrompt };
+            // Tolerate both planner shapes: { type, params: {...} } and
+            // { type, ...fields }. Flat fields must not be dropped, otherwise a
+            // flat NAVIGATE/target executes with undefined parameters.
+            const flatParams = {};
+            if (act && typeof act === 'object') {
+              for (const [key, value] of Object.entries(act)) {
+                if (key !== 'type' && key !== 'params') flatParams[key] = value;
+              }
+            }
+            const intent = { type: act.type, ...flatParams, ...(act.params || {}), raw: exactPrompt };
+
+            // Anti-Loop Guard (general): never dispatch an identical click/navigation
+            // twice in the same goal run. Repeating it is what made the agent click
+            // the same button or heading on every iteration.
+            const fingerprint = this.fingerprintAction(act, intent);
+
+            // Reject incomplete actions before touching the page or the shell.
+            const invalidReason = this.validateIntent(intent);
+            if (invalidReason) {
+              allSubActionsSucceeded = false;
+              turnOutcomeMsg = invalidReason;
+              stepHistory.push({
+                iteration,
+                action: act.type,
+                status: 'FAILED',
+                summary: `Rejected ${act.type}: ${invalidReason}`,
+                fingerprint
+              });
+              this.emit('feedback', { message: `Planner action rejected: ${invalidReason}`, level: 'warning' });
+              continue;
+            }
+            const isDuplicate = this.isRepeatGuardedType(act.type) &&
+              stepHistory.some(s => s.fingerprint === fingerprint && s.status === 'SUCCESS');
+            if (isDuplicate) {
+              skippedDuplicates++;
+              console.log(`[AgentRuntime GoalLoop] Anti-Loop: skipped repeated ${fingerprint}`);
+              stepHistory.push({
+                iteration,
+                action: act.type,
+                status: 'SKIPPED',
+                summary: `${act.type} ${intent.target || intent.url || intent.text || ''} (already succeeded; skipped)`,
+                fingerprint
+              });
+              continue;
+            }
 
             // Anti-Loop Guard: If we already navigated to the target site/domain in a previous step,
             // skip redundant NAVIGATE so the agent focuses on interacting with the page
@@ -568,13 +610,14 @@ class AgentRuntime extends EventEmitter {
               const alreadyNavigated = stepHistory.some(s => s.action === ActionType.NAVIGATE && s.status === 'SUCCESS');
               const curTab = this.tabManager ? this.tabManager.getActiveTab() : null;
               const curUrl = (curTab?.url || '').toLowerCase();
-              if (alreadyNavigated && (curUrl.includes(dest) || (curTab?.title && !curUrl.startsWith('adion://newtab')))) {
+              if (alreadyNavigated && dest && (curUrl.includes(dest) || curUrl.replace(/\/$/, '').endsWith(dest.replace(/\/$/, '')))) {
                 console.log(`[AgentRuntime GoalLoop] Already on target site (${curTab.title || curTab.url}); skipping redundant NAVIGATE to: ${intent.url}`);
                 stepHistory.push({
                   iteration,
                   action: act.type,
                   status: 'SUCCESS',
-                  summary: `NAVIGATE ${intent.url} (Already on site)`
+                  summary: `NAVIGATE ${intent.url} (Already on site)`,
+                  fingerprint
                 });
                 // Update corresponding task status if pending
                 if (activeTasks && activeTasks.length > 0) {
@@ -585,13 +628,20 @@ class AgentRuntime extends EventEmitter {
               }
             }
 
+            // Fill multi-field forms without submitting after every field:
+            // only the final INPUT_TEXT in a plan may auto-submit.
+            if (intent.type === ActionType.INPUT_TEXT && intent.submit === undefined &&
+                actionsInTurn.slice(i + 1).some(a => a && a.type === ActionType.INPUT_TEXT)) {
+              intent.submit = false;
+            }
+
             const execRes = await this.executeIntent(intent);
             const isSuccess = execRes ? execRes.success !== false : true;
 
             let subSummary = '';
             if (act.type === ActionType.TERMINAL_EXEC || act.type === 'TERMINAL_EXEC') {
               const cmdText = intent.command || act.params?.command || act.command || '';
-              const outText = ((execRes?.stdout || execRes?.stderr || '').trim() || '(no output/empty)').slice(0, 300);
+              const outText = ([execRes?.stdout, execRes?.stderr].filter(Boolean).join('\n').trim() || '(no output/empty)').slice(0, 1500);
               subSummary = `TERMINAL_EXEC \`${cmdText}\` (exit: ${execRes?.exitCode !== undefined ? execRes.exitCode : 0}) => ${outText}`;
             } else {
               subSummary = isSuccess 
@@ -603,7 +653,8 @@ class AgentRuntime extends EventEmitter {
               iteration,
               action: act.type,
               status: isSuccess ? 'SUCCESS' : 'FAILED',
-              summary: subSummary
+              summary: subSummary,
+              fingerprint
             });
 
             // Update subtask progress
@@ -630,36 +681,11 @@ class AgentRuntime extends EventEmitter {
                 finalFeedback = execRes.crossQuestion;
                 break;
               }
-            } else if (act.type === ActionType.CLICK_SELECTOR) {
-              // Post-Click Goal Completion Detection:
-              // If the user's goal was to click an element (e.g. "signup", "sign in", "login", "register", "submit")
-              // and that element was just clicked successfully, BUT ONLY IF there are no pending required inputs
-              // or if login credentials were required and verified:
-              const rawLower = exactPrompt.toLowerCase();
-              const targetLower = (intent.target || '').toLowerCase();
-              const hasPendingInputs = actionsInTurn.slice(i + 1).some(a => a.type === ActionType.INPUT_TEXT);
-              const mentionsCredentials = rawLower.includes('password') || rawLower.includes('pass') || rawLower.includes('with ');
-
-              // If credentials were mentioned in user prompt, only mark goal accomplished if credentials were typed or if target wasn't just a generic click
-              const isGoalTarget = !hasPendingInputs && !mentionsCredentials && (
-                (targetLower && rawLower.includes(targetLower)) ||
-                (rawLower.includes('sign') && (targetLower.includes('sign') || targetLower.includes('log'))) ||
-                (rawLower.includes('log') && targetLower.includes('log')) ||
-                (rawLower.includes('register') && targetLower.includes('register')) ||
-                rawLower.includes('click')
-              );
-
-              if (isGoalTarget) {
-                console.log(`[AgentRuntime GoalLoop] Primary target "${intent.target}" clicked successfully; goal accomplished!`);
-                goalAccomplished = true;
-                finalFeedback = `Successfully clicked "${intent.target}". Page transitioned to destination portal.`;
-                // Mark all remaining tasks as completed
-                if (activeTasks && activeTasks.length > 0) {
-                  activeTasks.forEach(t => { t.status = 'completed'; });
-                  this.emit('task-breakdown', { prompt: exactPrompt, tasks: activeTasks });
-                }
-                break;
-              }
+            } else if (act.type === ActionType.CLICK_SELECTOR && !execRes?.visualGrounding) {
+              // No click-based goal inference: a click that opens a dialog or a
+              // panel is not proof the user's goal is complete. Only the planner
+              // may set goalAccomplished, based on the observed page state.
+              console.log(`[AgentRuntime GoalLoop] Click succeeded on "${intent.target}"; waiting for planner verification before completing the goal.`);
             }
 
             if (i < actionsInTurn.length - 1) {
@@ -667,6 +693,31 @@ class AgentRuntime extends EventEmitter {
             }
           }
 
+          // Every action was a repeat of an earlier success: stop instead of
+          // re-planning into the same click again.
+          if (actionsInTurn.length > 0 && skippedDuplicates === actionsInTurn.length) {
+            goalAccomplished = true;
+            finalFeedback = 'Stopped: the planner repeated an action that had already succeeded. No duplicate action was dispatched.';
+            this.emit('feedback', {
+              message: '⚠️ Anti-loop guard: repeated action detected and skipped; stopped to avoid an infinite click loop.',
+              level: 'warning'
+            });
+          }
+
+          if (goalAccomplished) break;
+
+          // Stall detection: consecutive steps that execute nothing are a dead
+          // end, not a reason to keep spending model calls and iterations.
+          const turnHadSuccess = stepHistory.some(s => s.iteration === iteration && s.status === 'SUCCESS');
+          if (!goalAccomplished && !turnHadSuccess) stalledIterations += 1;
+          else stalledIterations = 0;
+          if (stalledIterations >= 3) {
+            goalAccomplished = true;
+            finalFeedback = `Stopped after ${stalledIterations} consecutive steps that could not execute any action. Last result: ${turnOutcomeMsg || finalFeedback || 'no progress'}.`;
+            this.emit('feedback', { message: '⚠️ ' + finalFeedback, level: 'warning' });
+          }
+
+          console.log(`[AgentRuntime GoalLoop] iter end #${iteration}: goal=${goalAccomplished} steps=${stepHistory.length} tasks=${(activeTasks||[]).map(t=>t.status).join(',')}`);
           finalFeedback = currentPlan.thought || turnOutcomeMsg || 'Task step executed.';
 
           // Check if the model explicitly marked the overall goal as accomplished
@@ -697,7 +748,7 @@ class AgentRuntime extends EventEmitter {
           const augmentedHistory = [...conversationHistory];
           augmentedHistory.push({
             user: `Goal: "${exactPrompt}"`,
-            agent: `Progress so far:\n` + stepHistory.map(s => `- [Step ${s.iteration}] ${s.summary} (${s.status})`).join('\n') +
+            agent: `Progress so far:\n` + stepHistory.slice(-8).map(s => `- [Step ${s.iteration}] ${s.summary} (${s.status})`).join('\n') +
                    (isComputerUse
                      ? `\n[Operating Environment: Host PC / Local Terminal (${livePageContext.terminal?.cwd || process.cwd()})]\nCRITICAL INSTRUCTION: Analyze the output of the previous step. If additional terminal commands are required to fulfill the user's PC task, output {"type": "TERMINAL_EXEC", "params": {"command": "..."}}. When the task is complete, return "goalAccomplished": true, "actions": [], and summarize results.`
                      : `\nCurrent Active Page: "${livePageContext.title || livePageContext.url}" (URL: ${livePageContext.url}) with buttons: [${(livePageContext.buttons || []).slice(0, 10).join(', ')}]\n` +
@@ -715,7 +766,10 @@ class AgentRuntime extends EventEmitter {
                 : `Inspected page "${livePageContext.title || livePageContext.url}". Evaluating next step for goal...`, 
               level: 'info' 
             });
-            const nextPlan = await this.model.planActions(plannedText, livePageContext, augmentedHistory);
+            const nextPlan = await Promise.race([
+              this.model.planActions(plannedText, livePageContext, augmentedHistory),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('replan timeout 15s')), 15000))
+            ]);
             if (nextPlan && (Array.isArray(nextPlan.actions) || nextPlan.thought)) {
               if (!Array.isArray(nextPlan.actions)) nextPlan.actions = [];
               if (nextPlan.actions.length === 0 || (nextPlan.goalAccomplished === true && nextPlan.actions.length === 0)) {
@@ -781,9 +835,6 @@ class AgentRuntime extends EventEmitter {
           }
         }
 
-        // Cache resolved plan
-        this.preprocessor.cachePlan(activeTab?.url, prep.normalized, executedPlan || initialPlan);
-
         // Record interaction in session memory log
         this.sessionManager.recordInteraction({
           source: source,
@@ -802,132 +853,21 @@ class AgentRuntime extends EventEmitter {
         return;
       }
 
-      // TIER 2: OFFLINE / EDGE FALLBACK ONLY
-      // If AI model is completely offline or unavailable, fallback to local heuristics
-      console.warn(`[AgentRuntime Fallback] AI model produced no plan; evaluating offline edge fallback for: "${text}"`);
-      const fallbackFastIntent = this.preprocessor.extractFastIntent(prep, pageContext);
-      if (fallbackFastIntent) {
-        console.log(`[AgentRuntime FastPath Fallback] Executed in ${prep.durationMs}ms:`, fallbackFastIntent.thought || fallbackFastIntent.type);
-
-        if (fallbackFastIntent.type === 'CONVERSATIONAL_ACKNOWLEDGE') {
-          const feedbackMsg = fallbackFastIntent.thought || 'Standing by: ready for your browser commands.';
-          if (!this.continuousVoice) {
-            this.setState(AgentState.IDLE);
-          }
-          this.emit('feedback', { message: feedbackMsg, level: 'info' });
-          this.emit('jarvis-notification', { type: 'info', message: feedbackMsg });
-          this.sessionManager.recordInteraction({
-            source: source,
-            rawPrompt: exactPrompt,
-            transcription: text,
-            pageContext: pageContext,
-            modelResponse: { thought: feedbackMsg, actions: [] },
-            status: 'success',
-            feedback: feedbackMsg
-          });
-          return;
-        }
-
-        const actionsToRun = Array.isArray(fallbackFastIntent.actions) && fallbackFastIntent.actions.length > 0
-          ? fallbackFastIntent.actions
-          : [fallbackFastIntent];
-
-        for (let i = 0; i < actionsToRun.length; i++) {
-          const act = actionsToRun[i];
-          const intent = { type: act.type, ...(act.params || {}), ...act, raw: exactPrompt };
-          await this.executeIntent(intent);
-          if (i < actionsToRun.length - 1) {
-            await new Promise(r => setTimeout(r, 250));
-          }
-        }
-
-        // Cache resolved plan
-        this.preprocessor.cachePlan(activeTab?.url, prep.normalized, { thought: fallbackFastIntent.thought, actions: actionsToRun });
-
-        // Record interaction in session memory log
-        this.sessionManager.recordInteraction({
-          source: source,
-          rawPrompt: exactPrompt,
-          transcription: text,
-          pageContext: pageContext,
-          modelResponse: { thought: fastIntent.thought, actions: actionsToRun },
-          status: 'success',
-          feedback: fastIntent.thought || 'Task completed successfully'
-        });
-
-        this.emit('jarvis-notification', {
-          type: 'success',
-          message: fastIntent.thought || `Task executed: ${text}`
-        });
-        return;
-      }
-
-      // TIER 3: CACHED PLAN FALLBACK
-      const cachedPlan = this.preprocessor.getCachedPlan(activeTab?.url, prep.normalized);
-      if (cachedPlan && Array.isArray(cachedPlan.actions) && cachedPlan.actions.length > 0) {
-        console.log(`[AgentRuntime Cache Fallback] Cache hit for "${prep.normalized}"! Executing plan:`, cachedPlan.thought);
-        this.emit('feedback', { message: `AI Plan (Cached): ${cachedPlan.thought}`, level: 'success' });
-
-        for (let i = 0; i < cachedPlan.actions.length; i++) {
-          const act = cachedPlan.actions[i];
-          const intent = { type: act.type, ...(act.params || {}), raw: exactPrompt };
-          await this.executeIntent(intent);
-        }
-
-        this.sessionManager.recordInteraction({
-          source: source,
-          rawPrompt: exactPrompt,
-          transcription: text,
-          pageContext: pageContext,
-          modelResponse: cachedPlan,
-          status: 'success',
-          feedback: cachedPlan.thought
-        });
-
-        this.emit('jarvis-notification', {
-          type: 'success',
-          message: cachedPlan.thought
-        });
-        return;
-      }
-
-      // 4. Local Edge Rule Parser fallback
-      const intent = await this.parseIntent(text);
-
-      if (!intent) {
-        this.setState(AgentState.IDLE);
-        const warningMsg = 'Command evaluated: no immediate browser action matched current page context.';
-        this.emit('feedback', { message: warningMsg, level: 'warning' });
-        this.emit('jarvis-notification', { type: 'info', message: warningMsg });
-        this.sessionManager.recordInteraction({
-          source: source,
-          rawPrompt: exactPrompt,
-          transcription: text,
-          pageContext: pageContext,
-          modelResponse: null,
-          status: 'info',
-          feedback: warningMsg
-        });
-        return;
-      }
-
-      // 3. Execute parsed intent
-      intent.raw = exactPrompt;
-      await this.executeIntent(intent);
-
+      // No fast-path, cache, or regex fallback: if the AI planner produced no
+      // plan, report it plainly instead of guessing an action.
+      this.setState(AgentState.IDLE);
+      const noPlanMsg = 'The AI planner produced no plan for this command, so nothing was executed.';
+      console.warn('[AgentRuntime] No plan from model; command not executed:', exactPrompt);
+      this.emit('feedback', { message: noPlanMsg, level: 'warning' });
+      this.emit('jarvis-notification', { type: 'alert', message: noPlanMsg });
       this.sessionManager.recordInteraction({
         source: source,
         rawPrompt: exactPrompt,
         transcription: text,
         pageContext: pageContext,
-        modelResponse: { thought: `Executed ${intent.type}`, actions: [intent] },
-        status: 'success',
-        feedback: 'Executed successfully'
-      });
-
-      this.emit('jarvis-notification', {
-        type: 'success',
-        message: `Command executed: ${text.slice(0, 45)}`
+        modelResponse: null,
+        status: 'failed',
+        feedback: noPlanMsg
       });
     } catch (err) {
       console.warn('[AgentRuntime] Handled fault:', err.message);
@@ -952,10 +892,6 @@ class AgentRuntime extends EventEmitter {
     }
   }
 
-  /**
-   * Generates comprehensive, generalized user-facing error messages for system faults
-   * Prevents premature failure logging on specific element targets.
-   */
   getGeneralizedErrorMessage(err) {
     const raw = (typeof err === 'string' ? err : err?.message || '').toLowerCase();
     if (raw.includes('not found') || raw.includes('element') || raw.includes('selector')) {
@@ -978,257 +914,37 @@ class AgentRuntime extends EventEmitter {
    * Evaluates natural language commands using fast acoustic-semantic rule sets and regex patterns.
    * Can be augmented with local small LLM (e.g. Phi-3 / Qwen-2.5 / llama.cpp) or Grok/Mercury APIs.
    */
-  async parseIntent(text) {
-    const lower = text.toLowerCase().trim();
-
-    // Scroll operations
-    if (/(scroll down|page down|move down)/i.test(lower)) {
-      return { type: ActionType.SCROLL, direction: 'down', amount: 450 };
-    }
-    if (/(scroll up|page up|move up)/i.test(lower)) {
-      return { type: ActionType.SCROLL, direction: 'up', amount: -450 };
-    }
-    if (/(scroll to top|go to top|top of page)/i.test(lower)) {
-      return { type: ActionType.SCROLL, direction: 'top' };
-    }
-    if (/(scroll to bottom|go to bottom)/i.test(lower)) {
-      return { type: ActionType.SCROLL, direction: 'bottom' };
-    }
-
-    // Navigation controls
-    if (/(go back|navigate back|previous page)/i.test(lower)) {
-      return { type: ActionType.GO_BACK };
-    }
-    if (/(go forward|forward page)/i.test(lower)) {
-      return { type: ActionType.GO_FORWARD };
-    }
-    if (/(reload|refresh|reload page)/i.test(lower)) {
-      return { type: ActionType.RELOAD };
-    }
-
-    // Tab Management
-    if (/(close this tab|close tab|shut tab)/i.test(lower)) {
-      return { type: ActionType.CLOSE_TAB };
-    }
-
-    // Dashboard & Live Telemetry Overlay
-    if (/(dashboard|site metrics|network diagnostics|live requested data|live telemetry)/i.test(lower)) {
-      return { type: ActionType.OPEN_DASHBOARD };
-    }
-    if (/(overlay gui|show overlay|live metrics overlay|telemetry overlay|test query)/i.test(lower)) {
-      return { type: ActionType.SHOW_METRICS_OVERLAY };
-    }
-
-    // Dynamic DOM Manipulation across ANY loaded web page or local file
-    // 0. Audio Parameter & Slider Controls (e.g. "change base frequency boost from zero to 10 decibels", "set bass boost to 10 dB", "change slider to 10")
-    const sliderMatch = lower.match(/(?:change|set|adjust|increase|decrease)\s+(?:the\s+)?(?:(bass|base|treble|frequency|boost|noise|threshold|vad|volume)\s*)*(?:frequency\s+)?(?:boost|slider|parameter|gain)?\s*(?:from\s+[a-z0-9\.\-]+\s+)?(?:to\s+|into\s+)?(-?\d+(?:\.\d+)?|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\b)\s*(?:decibels?|db|rms|%|hz)?$/i);
-    if (sliderMatch && !/(color|background|theme|mode)/i.test(lower)) {
-      const param = sliderMatch[1] ? sliderMatch[1].toLowerCase() : 'bass';
-      const rawTarget = sliderMatch[2];
-      const wordMap = { 'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'twelve': 12 };
-      const numericVal = wordMap[rawTarget] !== undefined ? wordMap[rawTarget] : rawTarget;
-
-      let selector = 'Bass Frequency Boost';
-      if (param.includes('vad') || param.includes('threshold')) selector = 'Voice Activity Threshold';
-      else if (param.includes('noise')) selector = 'Noise Suppression';
-
-      return {
-        type: ActionType.MODIFY_DOM,
-        selector: selector,
-        action: 'setValue',
-        value: String(numericVal)
-      };
-    }
-
-    // 1. Text changing: e.g. "change text of button to Submit", "change title to Hello World"
-    const textMatch = text.match(/(?:change|set)\s+(?:the\s+)?text\s+of\s+(?:the\s+)?(.+?)\s+to\s+["']?(.+?)["']?$/i);
-    if (textMatch) {
-      return {
-        type: ActionType.MODIFY_DOM,
-        selector: textMatch[1].trim(),
-        action: 'setText',
-        value: textMatch[2].trim()
-      };
-    }
-
-    // 1b. Broader natural text editing: e.g. "change title to Hello", "edit header text to Welcome", "change X to Y"
-    const generalTextMatch = text.match(/(?:change|edit|update|set)\s+(?:the\s+)?(.+?)\s+(?:text\s+)?(?:from\s+.+?\s+)?to\s+["']?(.+?)["']?$/i);
-    if (generalTextMatch && !isKnownColor.test(generalTextMatch[2].trim()) && !/(http|www|tab|page|window|browser|volume|zoom|url)/i.test(generalTextMatch[1])) {
-      return {
-        type: ActionType.MODIFY_DOM,
-        selector: generalTextMatch[1].trim(),
-        action: 'setText',
-        value: generalTextMatch[2].trim().replace(/^["']|["']$/g, '')
-      };
-    }
-
-    // 2. Hide / Remove elements: e.g. "hide sidebar", "remove banner", "hide header"
-    const hideMatch = lower.match(/(?:hide|remove|delete)\s+(?:the\s+)?([a-z0-9\s\-_#\.]+)/i);
-    if (hideMatch && !/(tab|history|bookmarks|cache|cookies|data)/i.test(hideMatch[1])) {
-      const target = hideMatch[1].trim();
-      const isRemove = lower.startsWith('remove') || lower.startsWith('delete');
-      return {
-        type: ActionType.MODIFY_DOM,
-        selector: target,
-        action: isRemove ? 'remove' : 'hide',
-        value: ''
-      };
-    }
-
-    // 3. Color / Background styling: e.g. "change color of search button to yellow", "make header green", "turn title red"
-    const isKnownColor = /^(yellow|red|green|blue|orange|purple|pink|cyan|white|black|gold|crimson|lime|emerald|teal|gray|grey|indigo|violet|magenta|brown|navy|olive|#([0-9a-f]{3}|[0-9a-f]{6}))$/i;
-    const colorMatch = lower.match(/(?:change|set|make|turn)\s+(?:the\s+)?(?:(background(?:\s+color)?|color|text\s+color)\s+)?(?:of\s+)?(?:the\s+)?(.+?)\s+(?:to\s+|into\s+)?([#a-z0-9]+)$/i);
-    if (colorMatch) {
-      const type = colorMatch[1] ? colorMatch[1].toLowerCase() : '';
-      const target = colorMatch[2].trim();
-      const color = colorMatch[3].trim();
-      if (isKnownColor.test(color) && !/(http|www|tab|page|window|browser|volume|zoom|url)/i.test(target)) {
-        const isTextOnly = type.includes('text');
-        const styleVal = isTextOnly ? `color: ${color};` : `background: ${color};`;
-        return {
-          type: ActionType.MODIFY_DOM,
-          selector: target,
-          action: 'setStyle',
-          value: styleVal
-        };
-      }
-    }
-
-    // 4. Dark / Light mode: e.g. "make page dark", "dark mode", "make background black"
-    if (/(?:make\s+(?:the\s+)?(?:page|background|theme)\s+(dark|black)|turn\s+on\s+dark\s+mode|dark\s+theme)/i.test(lower)) {
-      return {
-        type: ActionType.MODIFY_DOM,
-        selector: 'body',
-        action: 'setStyle',
-        value: 'background: #121212 !important; color: #e0e0e0 !important;'
-      };
-    }
-    if (/(?:make\s+(?:the\s+)?(?:page|background|theme)\s+(light|white)|turn\s+on\s+light\s+mode|light\s+theme)/i.test(lower)) {
-      return {
-        type: ActionType.MODIFY_DOM,
-        selector: 'body',
-        action: 'setStyle',
-        value: 'background: #ffffff !important; color: #111111 !important;'
-      };
-    }
-
-    // 5. Explicit DOM modification command: e.g. "modify dom #search action setStyle value color: red"
-    const domModMatch = lower.match(/(?:modify dom|change dom|edit dom|update dom)\s+(?:selector\s+)?([#\.\w\-_]+)?\s*(?:action\s+)?(\w+)?\s*(?:value\s+)?(["'].+?["']|.+)?/i);
-    if (domModMatch) {
-      return {
-        type: ActionType.MODIFY_DOM,
-        selector: domModMatch[1] || 'body',
-        action: domModMatch[2] || 'setText',
-        value: (domModMatch[3] || '').replace(/^["']|["']$/g, '')
-      };
-    }
-    if (/(inspect element|inspect dom)/i.test(lower)) {
-      const inspectMatch = lower.match(/(?:inspect element|inspect dom)\s+([#\.\w\-_]+)/i);
-      return {
-        type: ActionType.INSPECT_ELEMENT,
-        selector: inspectMatch ? inspectMatch[1] : 'body'
-      };
-    }
-
-    // Developer Tools Panel Switching & Focus
-    const devtoolsPanelMatch = lower.match(/(?:switch to|open|show|inspect)\s+(console|elements|network|sources|debugger|application|storage|performance|security)\s*(?:tab|panel|view)?\s*(?:in|on)?\s*(?:devtools|developer tools)?/i) ||
-      lower.match(/(?:devtools|developer tools)\s+(console|elements|network|sources|application|performance)/i);
-    if (devtoolsPanelMatch) {
-      const panel = devtoolsPanelMatch[1].toLowerCase();
-      return { type: ActionType.DEVTOOLS_SWITCH_PANEL, panel };
-    }
-
-    if (/(focus devtools|focus developer tools|focus console)/i.test(lower)) {
-      return { type: ActionType.FOCUS_DEVTOOLS };
-    }
-    if (/(focus page|focus web|focus content)/i.test(lower)) {
-      return { type: ActionType.FOCUS_PAGE };
-    }
-
-    // Switch Tab by title or number (e.g. "switch tab to Wikipedia", "switch to tab 2", "go to tab 1")
-    const switchTabMatch = lower.match(/(?:switch\s+(?:tab\s+to|to\s+tab|to)|go\s+to\s+tab|select\s+tab)\s+([a-z0-9\s\.\-_]+?)(?:\s+tab)?$/i);
-    if (switchTabMatch && !/(next|previous|new|close|devtools|console|settings)/i.test(switchTabMatch[1])) {
-      const target = switchTabMatch[1].trim();
-      if (target) {
-        return { type: ActionType.SWITCH_TAB, target };
-      }
-    }
-
-    // Browser Chrome Controls
-    if (/(developer tools|devtools|dev tools|code button|developer button|inspect)/i.test(lower)) {
-      return { type: ActionType.TOGGLE_DEVTOOLS };
-    }
-    if (/(open settings|show settings|settings button|gear icon)/i.test(lower)) {
-      return { type: ActionType.OPEN_SETTINGS };
-    }
-    if (/(bookmark this page|add bookmark|bookmark page|save bookmark|star page|bookmark current)/i.test(lower)) {
-      return { type: ActionType.TOGGLE_BOOKMARK };
-    }
-    if (/(open bookmarks|show bookmarks|view bookmarks|bookmarks menu|bookmarks list)/i.test(lower)) {
-      return { type: ActionType.OPEN_BOOKMARKS };
-    }
-    if (/(open history|show history|history)/i.test(lower)) {
-      return { type: ActionType.OPEN_HISTORY };
-    }
-
-    const openMatch = lower.match(/(open|launch|navigate to|go to)\s+(https?:\/\/[^\s]+|[a-z0-9\-]+\.[a-z]{2,}[^\s]*|youtube|google|reddit|github|wikipedia|twitter|x\.com|audio\.html|audio|dashboard|metrics)/i);
-    if (openMatch) {
-      let target = openMatch[2].toLowerCase();
-      if (target === 'audio.html' || target === 'audio') target = 'audio.html';
-      else if (target === 'dashboard' || target === 'metrics') target = 'adion://dashboard';
-      else if (target === 'youtube') target = 'https://www.youtube.com';
-      else if (target === 'google') target = 'https://www.google.com';
-      else if (target === 'reddit') target = 'https://www.reddit.com';
-      else if (target === 'github') target = 'https://www.github.com';
-      else if (target === 'wikipedia') target = 'https://www.wikipedia.org';
-      else if (target === 'x.com' || target === 'twitter') target = 'https://x.com';
-      return { type: ActionType.NAVIGATE, url: target };
-    }
-    if (/(new tab|open new tab|create tab)/i.test(lower)) {
-      return { type: ActionType.NEW_TAB, url: 'adion://newtab' };
-    }
-
-    // Search intent
-    const searchMatch = lower.match(/(search for|search|look up|google|find)\s+(.+)/i);
-    if (searchMatch && !lower.startsWith('find image')) {
-      const query = searchMatch[2];
-      return { type: ActionType.NAVIGATE, query };
-    }
-
-    // Click / Element targeting
-    const clickMatch = lower.match(/(click on|click|tap on|tap|press)\s+(.+)/i);
-    if (clickMatch) {
-      const targetQuery = clickMatch[2].replace(/button|link|icon|input/gi, '').trim();
-      return { type: ActionType.CLICK_SELECTOR, target: targetQuery || clickMatch[2] };
-    }
-
-    // Video Thumbnail Grounding & Playback via Qwen-VL / Vision Router
-    const videoMatch = lower.match(/(?:play|watch|click\s+on|select|identify\s+and\s+play)\s+(?:the\s+)?(?:video\s+)?(?:about\s+|with\s+thumbnail\s+|from\s+thumbnail\s+)?(.+)/i);
-    if (videoMatch && /(youtube|video|thumbnail|first video|second video|clip|trailer|song|music)/i.test(lower)) {
-      const q = videoMatch[1].replace(/\b(from\s+thumbnail|with\s+thumbnail|video|on\s+youtube|youtube|about)\b/gi, '').replace(/\s+/g, ' ').trim();
-      return {
-        type: ActionType.PLAY_VIDEO_FROM_THUMBNAIL,
-        query: q || videoMatch[1]
-      };
-    }
-
-    // Screenshot capture
-    if (/(screenshot|capture screen|capture page|take snapshot)/i.test(lower)) {
-      return { type: ActionType.CAPTURE_VIEWPORT };
-    }
-
-    // Semantic Image Search / Filter
-    const imageMatch = lower.match(/(find images? of|show images? of|download images? of)\s+(.+)/i);
-    if (imageMatch) {
-      return { type: ActionType.ANALYZE_IMAGES, criteria: imageMatch[2] };
-    }
-
-    return null;
-  }
 
   /**
-   * Execute parsed intent against Chromium TabManager & CDP Bridge
+   * Preflight validation for planner actions. Reject structurally incomplete
+   * actions with a precise reason instead of navigating to "undefined" or
+   * throwing midway through a turn.
+   * Returns null when valid, otherwise the reason it cannot run.
    */
+  validateIntent(intent = {}) {
+    const type = String(intent.type || '').toUpperCase();
+    const has = (value) => value !== undefined && value !== null && String(value).trim() !== '';
+
+    switch (type) {
+      case ActionType.NAVIGATE:
+        return has(intent.url) || has(intent.query) ? null : 'NAVIGATE requires url or query';
+      case ActionType.CLICK_SELECTOR:
+        return has(intent.target || intent.selector) ? null : 'CLICK_SELECTOR requires target';
+      case ActionType.INPUT_TEXT:
+        return has(intent.selector || intent.target) && intent.text !== undefined
+          ? null
+          : 'INPUT_TEXT requires selector and text';
+      case ActionType.SWITCH_TAB:
+        return has(intent.target || intent.index) ? null : 'SWITCH_TAB requires target or index';
+      case ActionType.MODIFY_DOM:
+        return has(intent.selector || intent.target) ? null : 'MODIFY_DOM requires selector';
+      case ActionType.TERMINAL_EXEC:
+        return has(intent.command || intent.cmd) ? null : 'TERMINAL_EXEC requires command';
+      default:
+        return null;
+    }
+  }
+
   async executeIntent(intent) {
     this.setState(AgentState.EXECUTING_ACTION, { action: intent });
     this.emit('action-started', intent);
@@ -1408,9 +1124,12 @@ class AgentRuntime extends EventEmitter {
           const contents = activeTab?.view?.webContents;
           if (contents) {
             await new Promise((resolve) => {
-              const timer = setTimeout(resolve, 3000);
-              contents.once('did-finish-load', () => { clearTimeout(timer); resolve(); });
-              contents.once('dom-ready', () => { clearTimeout(timer); resolve(); });
+              const __onLoad = () => __done();
+              const __onDom = () => __done();
+              const __done = () => { try { contents.removeListener('did-finish-load', __onLoad); } catch (_) {} try { contents.removeListener('dom-ready', __onDom); } catch (_) {} clearTimeout(timer); resolve(); };
+              const timer = setTimeout(__done, 3000);
+              contents.once('did-finish-load', __onLoad);
+              contents.once('dom-ready', __onDom);
             });
             await new Promise(r => setTimeout(r, 450));
           }
@@ -1635,10 +1354,32 @@ class AgentRuntime extends EventEmitter {
         this.setState(AgentState.GROUNDING_UI, { target: intent.target });
         this.emit('feedback', { message: `Grounding target: "${intent.target}"...`, level: 'info' });
 
+        const preClickState = this.vision ? await this.captureInteractionState() : null;
         const clickRes = await this.autonomousInspectAndClick(activeTab, intent.target);
         if (clickRes && clickRes.success) {
-          this.emit('feedback', { message: `Clicked "${clickRes.label || intent.target}" at (${clickRes.x}, ${clickRes.y})`, level: 'success' });
-          executionResult = { success: true, label: clickRes.label || intent.target, x: clickRes.x, y: clickRes.y };
+          await new Promise((r) => setTimeout(r, 700));
+          const domChanged = preClickState
+            ? this.interactionStateChanged(preClickState, await this.captureInteractionState())
+            : true;
+
+          if (domChanged) {
+            this.emit('feedback', { message: `Clicked "${clickRes.label || intent.target}" at (${clickRes.x}, ${clickRes.y})`, level: 'success' });
+            executionResult = { success: true, label: clickRes.label || intent.target, x: clickRes.x, y: clickRes.y };
+          } else {
+            // The DOM element was clicked but nothing changed: escalate to the
+            // vision model and only accept it if the page visibly responds.
+            this.emit('feedback', {
+              message: `Click on "${clickRes.label || intent.target}" produced no visible change; switching to vision grounding...`,
+              level: 'warning'
+            });
+            const visionRes = await this.attemptVisionClick(intent.target, false);
+            if (visionRes.success) {
+              executionResult = visionRes;
+            } else {
+              this.emit('feedback', { message: `Vision grounding could not land a change for "${intent.target}".`, level: 'warning' });
+              executionResult = { success: false, reason: visionRes.reason || 'CLICK_NO_VISIBLE_CHANGE' };
+            }
+          }
         } else {
           // If cross-questioning is recommended (e.g. Sign Up vs Sign In conflict, or multiple candidates)
           if (clickRes && clickRes.crossQuestion) {
@@ -1646,17 +1387,12 @@ class AgentRuntime extends EventEmitter {
             executionResult = { success: false, crossQuestion: clickRes.crossQuestion };
             break;
           }
-          // Fallback to Vision Grounder if active
-          const match = this.vision ? await this.vision.groundElement(intent.target) : null;
-          if (match && (match.found || match.success)) {
-            await this.cdp.highlightElement(match.x, match.y, match.width, match.height, `Target: ${intent.target}`);
-            await new Promise((r) => setTimeout(r, 150));
-            await this.cdp.dispatchClick(match.x, match.y);
-            this.emit('feedback', { message: `Clicked "${match.label || match.text || intent.target}" at (${match.x}, ${match.y})`, level: 'success' });
-            executionResult = { success: true, label: match.label || match.text || intent.target, x: match.x, y: match.y };
+          const visionRes = await this.attemptVisionClick(intent.target, clickRes?.reason === 'NON_INTERACTIVE_TARGET');
+          if (visionRes.success) {
+            executionResult = visionRes;
           } else {
             this.emit('feedback', { message: `Could not locate element matching: "${intent.target}"`, level: 'warning' });
-            executionResult = { success: false, reason: clickRes?.reason || `Could not locate element matching: "${intent.target}"` };
+            executionResult = { success: false, reason: visionRes.reason || clickRes?.reason || `Could not locate element matching: "${intent.target}"` };
           }
         }
         break;
@@ -1966,6 +1702,175 @@ class AgentRuntime extends EventEmitter {
   }
 
   /**
+   * Vision-model click with mandatory visible-change verification.
+   * Returns a result shaped like executeIntent's executionResult.
+   */
+  async attemptVisionClick(targetQuery, isNonInteractive = false) {
+    if (!this.vision) return { success: false, reason: 'vision-unavailable' };
+
+    const shot = await this.capturePageBase64();
+    let match = null;
+    try {
+      match = typeof this.vision.groundElementVisually === 'function'
+        ? await this.vision.groundElementVisually(
+            targetQuery,
+            shot && shot.png,
+            shot && { width: shot.width, height: shot.height },
+            shot && { width: shot.imageWidth, height: shot.imageHeight }
+          )
+        : await this.vision.groundElement(targetQuery);
+    } catch (err) {
+      return { success: false, reason: `vision-error: ${err.message}` };
+    }
+
+    if (!match || match.success === false || match.found === false) {
+      console.warn('[AgentRuntime Vision] Visual grounding unavailable:', match?.reason || 'not-found');
+      return { success: false, reason: match?.reason || 'vision-not-found' };
+    }
+
+    const targetTokens = String(targetQuery || '').toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length > 2);
+    const matchLabel = String(match.label || match.text || '').toLowerCase();
+    const genericLabel = !matchLabel || matchLabel.length < 3 ||
+      /^(icon|button|control|element|ui|unknown|toolbar)$/i.test(matchLabel.trim());
+    const relevant = targetTokens.length === 0 ||
+      targetTokens.some(t => matchLabel.includes(t)) ||
+      (genericLabel && Number(match.confidence ?? 0) >= 0.7);
+    const minConfidence = isNonInteractive ? 0.6 : 0.35;
+    if (!relevant || Number(match.confidence ?? 1) < minConfidence) {
+      return { success: false, reason: 'vision-low-confidence', label: match.label, confidence: match.confidence };
+    }
+
+    const tab = this.tabManager ? this.tabManager.getActiveTab() : null;
+    const contents = tab && tab.view ? tab.view.webContents : null;
+    if (!contents) return { success: false, reason: 'no-active-tab' };
+
+    const beforeState = await this.captureInteractionState();
+    try {
+      contents.sendInputEvent({ type: 'mouseMove', x: match.x, y: match.y });
+      await new Promise((r) => setTimeout(r, 25));
+      contents.sendInputEvent({ type: 'mouseDown', x: match.x, y: match.y, button: 'left', clickCount: 1 });
+      await new Promise((r) => setTimeout(r, 50));
+      contents.sendInputEvent({ type: 'mouseUp', x: match.x, y: match.y, button: 'left', clickCount: 1 });
+    } catch (_) {}
+    if (this.cdp && this.cdp.isAttached) {
+      try {
+        await this.cdp.highlightElement(match.x, match.y, match.width || 40, match.height || 40, `Target: ${targetQuery}`);
+      } catch (_) {}
+    }
+
+    await new Promise((r) => setTimeout(r, 900));
+    const landed = this.interactionStateChanged(beforeState, await this.captureInteractionState());
+    if (!landed) {
+      this.emit('feedback', {
+        message: `Visual click at (${match.x}, ${match.y}) produced no visible page change; not reporting success.`,
+        level: 'warning'
+      });
+      return { success: false, reason: 'VISUAL_CLICK_NO_EFFECT', label: match.label, x: match.x, y: match.y };
+    }
+
+    this.emit('feedback', {
+      message: `Visually grounded "${match.label || targetQuery}" via ${match.model || 'vision model'} at (${match.x}, ${match.y}) (page changed)`,
+      level: 'success'
+    });
+    return {
+      success: true,
+      label: match.label || targetQuery,
+      x: match.x,
+      y: match.y,
+      visualGrounding: true,
+      visionModel: match.model,
+      confidence: match.confidence,
+      verifiedChange: true
+    };
+  }
+
+  /**
+   * Capture the page without requiring CDP, so vision grounding still works
+   * when the debugger is detached.
+   */
+  async capturePageBase64() {
+    try {
+      const tab = this.tabManager ? this.tabManager.getActiveTab() : null;
+      const contents = tab && tab.view ? tab.view.webContents : null;
+      if (!contents || typeof contents.capturePage !== 'function') return null;
+      const image = await contents.capturePage();
+      if (!image || image.isEmpty()) return null;
+      const css = await contents.executeJavaScript('({ width: window.innerWidth, height: window.innerHeight })').catch(() => null);
+      const original = image.getSize();
+      const scaled = original.width > 900 ? image.resize({ width: 900 }) : image;
+      const size = scaled.getSize();
+      return {
+        png: scaled.toJPEG(65).toString('base64'),
+        width: Math.round(css && css.width ? css.width : size.width),
+        height: Math.round(css && css.height ? css.height : size.height),
+        imageWidth: size.width,
+        imageHeight: size.height
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * Compact DOM + downscaled visual fingerprint. Used to prove that a
+   * vision-grounded click actually changed what the user sees (canvas editors
+   * expose no DOM for their content).
+   */
+  async captureInteractionState() {
+    const tab = this.tabManager ? this.tabManager.getActiveTab() : null;
+    if (!tab || !tab.view) return null;
+    const contents = tab.view.webContents;
+    try {
+      const dom = await contents.executeJavaScript(`({ url: location.href, title: document.title, textLen: (document.body && document.body.innerText ? document.body.innerText.length : 0), nodes: document.querySelectorAll('*').length })`);
+      let visual = null;
+      const captured = await this.capturePageBase64();
+      const shot = captured ? captured.png : null;
+      if (shot) {
+        visual = await contents.executeJavaScript(`
+          (async () => {
+            try {
+              const img = new Image();
+              img.src = 'data:image/jpeg;base64,${shot}';
+              await img.decode();
+              const c = document.createElement('canvas');
+              c.width = 32; c.height = 32;
+              const ctx = c.getContext('2d');
+              ctx.drawImage(img, 0, 0, 32, 32);
+              const d = ctx.getImageData(0, 0, 32, 32).data;
+              const out = [];
+              for (let i = 0; i < d.length; i += 4) out.push(Math.round((d[i] + d[i+1] + d[i+2]) / 3 / 16));
+              return out;
+            } catch (_) { return null; }
+          })()
+        `);
+      }
+      return { dom, visual };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * True only when URL, DOM content, or at least 2% of the visual grid changed.
+   */
+  interactionStateChanged(before, after) {
+    if (!before || !after) return false;
+    const b = before.dom || {};
+    const a = after.dom || {};
+    if (b.url !== a.url) return true;
+    if (Math.abs((b.textLen || 0) - (a.textLen || 0)) > 0) return true;
+    if (Math.abs((b.nodes || 0) - (a.nodes || 0)) > 0) return true;
+    if (Array.isArray(before.visual) && Array.isArray(after.visual) && before.visual.length === after.visual.length && before.visual.length > 0) {
+      let changed = 0;
+      for (let i = 0; i < before.visual.length; i++) {
+        if (Math.abs(before.visual[i] - after.visual[i]) >= 2) changed++;
+      }
+      if (changed / before.visual.length >= 0.02) return true;
+    }
+    return false;
+  }
+
+  /**
    * Generalized Autonomous Typing & Input Dispatcher across ANY website
    * Handles standard inputs, textareas, contenteditable elements, Lexical, Draft.js, ProseMirror, and Shadow DOM.
    * Dispatches dual-tier DOM events and native Chromium hardware keystrokes (sendInputEvent) for React 18+ compatibility.
@@ -1983,10 +1888,34 @@ class AgentRuntime extends EventEmitter {
         const sel = ${JSON.stringify(targetSelectorOrQuery || '')};
         const txt = ${JSON.stringify(text || '')};
 
-        // 1. Find best element
+        // 1. Find best element. A selector may name the field, or it may name a
+        // form/container: resolve the editable control inside it.
+        const editableSelector = 'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]), textarea, [contenteditable="true"], [role="textbox"], [data-lexical-editor="true"], [data-slate-editor="true"]';
+        const isTextInput = (el) => Boolean(el && (
+          el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' ||
+          el.isContentEditable || el.getAttribute('contenteditable') === 'true' ||
+          el.getAttribute('role') === 'textbox'
+        ));
+        const isVisible = (el) => {
+          if (!el) return false;
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          return rect.width > 4 && rect.height > 4 && style.display !== 'none' && style.visibility !== 'hidden';
+        };
+        const allEditables = Array.from(document.querySelectorAll(editableSelector)).filter(isVisible);
+        // Sequential INPUT_TEXT actions fill successive fields: prefer the first
+        // empty control inside the matched container.
+        const firstEmpty = (list) => list.find(el => !String(el.value || el.innerText || '').trim()) || list[0] || null;
+
         let targetEl = null;
         if (sel) {
           try { targetEl = document.querySelector(sel); } catch(_) {}
+        }
+
+        // Selector matched a container rather than an editable: descend to a field.
+        if (targetEl && !isTextInput(targetEl)) {
+          const inner = Array.from(targetEl.querySelectorAll(editableSelector)).filter(isVisible);
+          targetEl = inner.length ? firstEmpty(inner) : null;
         }
 
         // 2. If selector not found directly, or if selector was a description/fuzzy name
@@ -2032,13 +1961,16 @@ class AgentRuntime extends EventEmitter {
             });
           }
 
-          if (!targetEl && editables.length > 0) {
-            targetEl = editables[0];
+          // Never type blindly into "the first field on the page" when the
+          // planner named a specific target: that silently fills the wrong box.
+          const genericTarget = !sel || /^(input|textarea|select|[contenteditable|[role=.?textbox|[data-lexical|[data-slate)/i.test(sel.trim());
+          if (!targetEl && genericTarget) {
+            targetEl = firstEmpty(allEditables);
           }
         }
 
         if (!targetEl) {
-          return { found: false };
+          return { found: false, reason: 'NO_EDITABLE_TARGET', editablesSeen: allEditables.length };
         }
 
         // Focus & select
@@ -2085,7 +2017,10 @@ class AgentRuntime extends EventEmitter {
         return {
           found: true,
           tag: targetEl.tagName,
+          field: (targetEl.getAttribute('aria-label') || targetEl.getAttribute('placeholder') || targetEl.name || targetEl.id || '').slice(0, 60),
           isContentEditable,
+          typedValue: (isContentEditable ? (targetEl.innerText || '') : (targetEl.value || '')),
+          verified: String(isContentEditable ? (targetEl.innerText || '') : (targetEl.value || '')).includes(String(txt).trim()),
           hasSubmitBtn: Boolean(submitBtn && !submitBtn.disabled)
         };
       })()
@@ -2095,6 +2030,14 @@ class AgentRuntime extends EventEmitter {
       const warnMsg = `Could not locate an active text input matching: "${targetSelectorOrQuery || 'input'}"`;
       this.emit('feedback', { message: warnMsg, level: 'warning' });
       return { success: false, reason: warnMsg };
+    }
+
+    // Verified text entry: if the field did not accept the value (controlled React
+    // input, read-only field, wrong element), report the truth instead of success.
+    if (domResult.verified === false) {
+      const warnMsg = `Text entry into "${targetSelectorOrQuery || 'input'}" was not accepted by the field (value is still "${domResult.typedValue || ''}").`;
+      this.emit('feedback', { message: warnMsg, level: 'warning' });
+      return { success: false, verified: false, reason: warnMsg, typedValue: domResult.typedValue || '' };
     }
 
     // Active Dual Tracking: Render Chrome Inspect Overlay on target input
@@ -2117,9 +2060,10 @@ class AgentRuntime extends EventEmitter {
       }
     }
 
-    const feedbackMsg = shouldSubmit ? `Typed "${text}" and submitted` : `Typed "${text}"`;
+    const fieldLabel = domResult.field ? ` into "${domResult.field}"` : '';
+    const feedbackMsg = shouldSubmit ? `Typed "${text}"${fieldLabel} and submitted` : `Typed "${text}"${fieldLabel}`;
     this.emit('feedback', { message: feedbackMsg, level: 'success' });
-    return { success: true, verified: true };
+    return { success: true, verified: domResult.verified !== false, typedValue: domResult.typedValue, field: domResult.field };
   }
 
   /**
@@ -2328,6 +2272,22 @@ class AgentRuntime extends EventEmitter {
    * - Dispatches real OS-level Chromium hardware mouse events via webContents.sendInputEvent
    * - Dispatches CDP Input.dispatchMouseEvent for absolute framework/React 18+ event registration
    */
+  /**
+   * Stable identity for a planned action, used to stop the goal loop from
+   * repeating a click/navigation that already succeeded in this turn.
+   */
+  fingerprintAction(act = {}, intent = {}) {
+    const type = String(act.type || intent.type || '').toUpperCase();
+    const key = intent.target || intent.selector || intent.url || intent.query ||
+      intent.text || intent.command || intent.value || intent.contact || '';
+    return `${type}|${String(key).toLowerCase().replace(/\s+/g, ' ').trim()}`;
+  }
+
+  isRepeatGuardedType(type) {
+    return ['CLICK_SELECTOR', 'NAVIGATE', 'NEW_TAB', 'SWITCH_TAB', 'WHATSAPP_CHAT_SEND', 'WHATSAPP_SEND']
+      .includes(String(type || '').toUpperCase());
+  }
+
   async autonomousInspectAndClick(tab, targetQuery, options = {}) {
     if (!tab || !tab.view) tab = this.tabManager ? this.tabManager.getActiveTab() : null;
     if (!tab || !tab.view) return { success: false, reason: 'No active tab view' };

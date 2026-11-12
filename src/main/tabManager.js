@@ -107,6 +107,12 @@ class TabManager {
 
     const trimmed = input.trim();
 
+    // Opaque/script-capable schemes must never become a top-level document.
+    if (/^(?:javascript|data|vbscript|blob):/i.test(trimmed)) {
+      console.warn('[TabManager] Blocked unsafe navigation scheme');
+      return this.buildSearchUrl(trimmed);
+    }
+
     // 1. Direct file:// protocol
     if (trimmed.startsWith('file://')) {
       return trimmed;
@@ -135,9 +141,20 @@ class TabManager {
       }
     }
 
-    // 5. Explicit URL with protocol (http://, https://, adion://, chrome://)
-    if (/^[a-zA-Z]+:\/\//.test(trimmed)) {
-      return trimmed;
+    // 5. Explicit URL with a supported protocol. Unknown schemes are never
+    // handed to the OS (they can launch external applications).
+    const schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+.\-]*):/);
+    if (schemeMatch) {
+      const scheme = schemeMatch[1].toLowerCase();
+      const remainder = trimmed.slice(schemeMatch[0].length);
+      // "localhost:3000" and "example.com:8080" are hosts with ports, not schemes.
+      const isHostPort = /^\d+(?:\/|$)/.test(remainder);
+      if (!isHostPort) {
+        if (scheme === 'http' || scheme === 'https' || scheme === 'file') return trimmed;
+        if (scheme === 'about' && /^about:blank$/i.test(trimmed)) return 'about:blank';
+        console.warn('[TabManager] Blocked unhandled navigation scheme:', scheme);
+        return this.buildSearchUrl(trimmed);
+      }
     }
 
     // 6. Domain name (e.g. example.com, localhost:3000, wikipedia.org)
@@ -146,8 +163,13 @@ class TabManager {
     }
 
     // 7. Otherwise, treat as web search
+    return this.buildSearchUrl(trimmed);
+  }
+
+  /** Build the configured search-engine URL for arbitrary text. */
+  buildSearchUrl(text) {
     const engine = store.getSetting('searchEngine') || 'brave';
-    const query = encodeURIComponent(trimmed);
+    const query = encodeURIComponent(String(text || ''));
     switch (engine) {
       case 'duckduckgo':
         return `https://duckduckgo.com/?q=${query}`;
@@ -193,6 +215,7 @@ class TabManager {
     // Setup WebContents handlers
     const wc = view.webContents;
     wc.setMaxListeners(40);
+    if (!wc.__adionHandlersAttached) { wc.__adionHandlersAttached = true; } else { for (const __ev of ["did-start-loading", "did-stop-loading", "page-title-updated", "page-favicon-updated", "did-navigate", "did-navigate-in-page", "before-input-event"]) { try { wc.removeAllListeners(__ev); } catch (_) {} } }
 
     wc.setWindowOpenHandler(({ url }) => {
       this.createTab(url);
@@ -270,7 +293,7 @@ class TabManager {
 
     let domain = '';
     try {
-      if (!isNewTab) {
+      if (!isNewTab && !isDashboard) {
         domain = new URL(url).hostname;
         store.addHistory({ title: tab.title, url: tab.url });
       }

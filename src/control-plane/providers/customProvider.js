@@ -29,13 +29,10 @@ class CustomProvider extends BaseProvider {
     const modelToUse = options.model || this.model || 'default';
     const payload = {
       model: modelToUse,
-      messages: [
-        { role: 'system', content: systemPrompt + '\nRespond strictly with RAW JSON format. No markdown, no prose.' },
-        { role: 'user', content: prompt }
-      ],
+      messages: this.conversationMessages(systemPrompt, prompt, options.history),
       response_format: { type: 'json_object' },
       temperature: 0.1,
-      max_tokens: 800
+      max_tokens: 1400
     };
 
     const headers = { 'Content-Type': 'application/json' };

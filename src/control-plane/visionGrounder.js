@@ -4,9 +4,14 @@
  * visual bounding box calculation, and semantic image analysis.
  */
 
+const config = require('./config');
+
 class VisionGrounder {
   constructor(cdpBridge) {
     this.cdp = cdpBridge;
+    this.groqKey = config.groqApiKey;
+    this.visionModel = config.groqVisionModel;
+    this.lastUsedModel = null;
   }
 
   /**
@@ -40,6 +45,139 @@ class VisionGrounder {
     }
 
     return { success: false, reason: 'Target not located in active viewport' };
+  }
+
+  /**
+   * Locate an element from a real screenshot using the vision model itself.
+   * This is the automatic model switch used when DOM/accessibility grounding
+   * cannot resolve a control (canvas editors, icon-only toolbars, image grids).
+   * Returns { success, x, y, label, confidence, model } or a failure reason.
+   */
+  async groundElementVisually(naturalQuery, screenshotOverride = null, viewportOverride = null, imageSize = null) {
+    if (!naturalQuery) return { success: false, reason: 'empty-query' };
+    if (!this.groqKey) return { success: false, reason: 'vision-model-not-configured' };
+
+    let screenshot = screenshotOverride;
+    let viewport = viewportOverride;
+    let imageWidth = imageSize && imageSize.width;
+    let imageHeight = imageSize && imageSize.height;
+
+    if (!screenshot) {
+      if (!this.cdp || !this.cdp.isAttached) return { success: false, reason: 'cdp-not-attached' };
+      try {
+        screenshot = await this.captureViewportFrame();
+        viewport = await this.cdp.evaluate('({ width: window.innerWidth, height: window.innerHeight })');
+        imageWidth = imageWidth || viewport.width;
+        imageHeight = imageHeight || viewport.height;
+      } catch (err) {
+        return { success: false, reason: `screenshot-failed: ${err.message}` };
+      }
+    }
+    if (!screenshot) return { success: false, reason: 'empty-screenshot' };
+
+    const cssWidth = Math.max(1, Math.round(viewport?.width || 1280));
+    const cssHeight = Math.max(1, Math.round(viewport?.height || 720));
+    imageWidth = Math.max(1, Math.round(imageWidth || cssWidth));
+    imageHeight = Math.max(1, Math.round(imageHeight || cssHeight));
+
+    const prompt = [
+      'You are a UI grounding engine for a web browser.',
+      `The attached image is a ${imageWidth}x${imageHeight} pixel screenshot.`,
+      `Find the single UI element that best matches this description: "${naturalQuery}".`,
+      'Only consider elements that are actually visible.',
+      'Return RAW JSON only, with these fields:',
+      '{"found": true, "label": "exact visible label", "x": <center x in image pixels>, "y": <center y in image pixels>, "confidence": <0 to 1>}',
+      'If the element is not visible, return {"found": false, "reason": "not visible"}.',
+      'Do not add markdown or explanation.'
+    ].join('\n');
+
+    const body = JSON.stringify({
+      model: this.visionModel,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: `data:${screenshotOverride ? 'image/jpeg' : 'image/png'};base64,${screenshot}` } }
+        ]
+      }],
+      temperature: 0,
+      max_tokens: 300
+    });
+
+    let res = null;
+    let lastError = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      try {
+        res = await fetch(config.groqApiUrl, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.groqKey}`
+          },
+          body
+        });
+      } catch (err) {
+        lastError = err;
+        res = null;
+      } finally {
+        clearTimeout(timer);
+      }
+
+      if (res && res.status === 429 && attempt === 0) {
+        const retryBody = await res.text().catch(() => '');
+        const match = retryBody.match(/try again in ([0-9.]+)s/i);
+        const waitMs = Math.min(20000, Math.max(1200, match ? Math.ceil(parseFloat(match[1]) * 1000) + 400 : 4000));
+        console.warn(`[VisionGrounder] Rate limited; retrying in ${waitMs}ms`);
+        await new Promise((r) => setTimeout(r, waitMs));
+        continue;
+      }
+      break;
+    }
+
+    if (!res) return { success: false, reason: `vision-request-failed: ${lastError?.message || 'network'}`, model: this.visionModel };
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      return { success: false, reason: `vision-model-http-${res.status}: ${errBody.slice(0, 120)}`, model: this.visionModel };
+    }
+
+    try {
+      const data = await res.json();
+      const raw = data.choices?.[0]?.message?.content || '';
+      const jsonText = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(jsonText.slice(jsonText.indexOf('{'), jsonText.lastIndexOf('}') + 1));
+
+      if (!parsed || parsed.found === false) {
+        return { success: false, reason: parsed?.reason || 'vision-element-not-found', model: this.visionModel };
+      }
+
+      // The model answers in screenshot pixels; convert to CSS viewport pixels.
+      const scaleX = cssWidth / imageWidth;
+      const scaleY = cssHeight / imageHeight;
+      const x = Math.round(Number(parsed.x) * scaleX);
+      const y = Math.round(Number(parsed.y) * scaleY);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > cssWidth || y > cssHeight) {
+        return { success: false, reason: 'vision-invalid-coordinates', model: this.visionModel };
+      }
+
+      this.lastUsedModel = this.visionModel;
+      return {
+        success: true,
+        found: true,
+        x,
+        y,
+        width: 0,
+        height: 0,
+        label: String(parsed.label || naturalQuery).slice(0, 80),
+        confidence: Number.isFinite(Number(parsed.confidence)) ? Number(parsed.confidence) : 0.5,
+        model: this.visionModel,
+        visual: true
+      };
+    } catch (err) {
+      return { success: false, reason: `vision-grounding-failed: ${err.message}`, model: this.visionModel };
+    }
   }
 
   /**

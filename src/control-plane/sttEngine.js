@@ -131,7 +131,9 @@ class STTEngine {
     formData.append('file', blob, 'speech.wav');
     formData.append('model', config.groqWhisperModel || 'whisper-large-v3-turbo');
     formData.append('response_format', 'json');
-    formData.append('language', 'en');
+    // Bilingual STT: auto-detect speech language (Hindi/Hinglish/English). Forcing
+    // 'en' mistranscribes Hindi commands. Lock via config.groqWhisperLanguage if needed.
+    if (config.groqWhisperLanguage) formData.append('language', config.groqWhisperLanguage);
     formData.append('temperature', '0.0');
 
     const res = await fetch(config.groqWhisperUrl, {

@@ -1,6 +1,8 @@
 const config = require('./config');
 const { ActionType } = require('./protocol');
 const ProviderRegistry = require('./providers/providerRegistry');
+const { buildConversationMessages, coalesceMessages } = require('./conversationWindow');
+const { parsePlanResponse } = require('./actionPlan');
 
 /**
  * Autonomous Model Client & Multi-Step LLM Function Calling Coordinator
@@ -85,6 +87,14 @@ Key Instructions:
 3. Greetings & Courtesies: For greetings (hi, hello, hie, hey, thanks, standing by), return actions: [] with a friendly thought and "goalAccomplished": true. NEVER trigger INPUT_TEXT.
 4. WhatsApp Web: When messaging a contact on WhatsApp, use WHATSAPP_CHAT_SEND. If a secret code or PIN is provided, put it in secretCode and keep message clean.
 5. Site Search: If user says "search X in Y.com", NAVIGATE to the site or search query scoped to that site.
+5b. WORKFLOW CONTINUITY (follow-ups): The user speaks in workflows ("instagram kholo" then "open messages").
+    - ALWAYS resolve a follow-up against Current Active Page + Recent Conversation History FIRST.
+    - If the follow-up names a section (messages/inbox/DMs/profile/settings/history/reels/explore) and the
+      active page is that site, prefer CLICK_SELECTOR on the visible button or a site-scoped NAVIGATE
+      (e.g. instagram DMs -> https://www.instagram.com/direct/inbox/). NEVER emit a generic Brave/web
+      search for it and NEVER leave the site unless the user named a different site.
+    - Pronouns ("it/this/that/open it/click it") and bare nouns ("messages", "inbox") refer to the
+      current workflow — never search the web for the word itself.
 6. Absolute Integrity: Never emit fake completions or fake actions.
 7. Output raw JSON object only. No markdown fences.`;
   }
@@ -95,7 +105,7 @@ Key Instructions:
   async planActions(userInput, pageContext = {}, conversationHistory = []) {
     let elementsInfo = '';
     if (Array.isArray(pageContext.buttons) && pageContext.buttons.length > 0) {
-      elementsInfo += `\n- Visible Interactive Buttons: ${pageContext.buttons.join(', ')}`;
+      elementsInfo += `\n- Visible Interactive Buttons: ${rankButtonsByOverlap(pageContext.buttons, userInput).join(', ')}`;
     }
     if (Array.isArray(pageContext.headings) && pageContext.headings.length > 0) {
       elementsInfo += `\n- Key Page Headings: ${pageContext.headings.join(' | ')}`;
@@ -104,18 +114,16 @@ Key Instructions:
       elementsInfo += `\n- Recently Modified Element: ${pageContext.lastDOMSelector}`;
     }
     if (pageContext.pageText && pageContext.isShared !== false) {
-      elementsInfo += `\n- Shared Page Content (Active Page):\n${pageContext.pageText.slice(0, 3000)}`;
+      elementsInfo += `\n- Shared Page Content (Active Page):\n${pageContext.pageText.slice(0, 1500)}`;
     }
 
-    let historySection = '';
-    if (Array.isArray(conversationHistory) && conversationHistory.length > 0) {
-      historySection = '\nRecent Conversation History:\n' +
-        conversationHistory.map((item, idx) => {
-          const u = item.user || item.rawPrompt || item.transcription || '';
-          const a = item.agent || item.feedback || item.thought || '';
-          return `Turn ${idx + 1}:\n- User: "${u}"\n- Agent: ${a}`;
-        }).join('\n') + '\n';
-    }
+    // Recent Conversation History: sent as real user/assistant turns (bounded by
+    // a character budget) instead of a few truncated text lines, so the planner
+    // keeps the whole recent thread and can resolve follow-ups/pronouns.
+    const historyMessages = buildConversationMessages(conversationHistory, {
+      maxChars: 16000,
+      maxTurns: 40
+    });
 
     let computerUseSection = '';
     if (pageContext.isComputerUse || pageContext.terminal) {
@@ -134,16 +142,22 @@ Key Instructions:
   * When terminal output verifies the task is done, set "goalAccomplished": true, "actions": [], and summarize the results in "thought".\n`;
     }
 
+    let completedPrefixSection = '';
+    if (Array.isArray(pageContext.completedPrefix) && pageContext.completedPrefix.length) {
+      completedPrefixSection = '\nAlready completed this turn (DO NOT repeat):\n' + pageContext.completedPrefix.map((x, i) => `${i + 1}. ${x}`).join('\n') + '\n';
+    }
     const prompt = `
 Current Active Page:
 - URL: ${pageContext.url || 'adion://newtab'}
 - Title: ${pageContext.title || 'New Tab'}${elementsInfo}
-${historySection}${computerUseSection}
+${computerUseSection}${completedPrefixSection}
 User Command: "${userInput}"
 
 Conversational & Goal Execution Instructions:
 - Maintain conversational memory across turns. When the user says "it", "this", "that", "them", "open it", "click it", or asks a follow-up, resolve the reference using the Recent Conversation History and Current Active Page.
 - Never output generic search queries for pronouns like "it". Instead, target the specific item, search result, link, or entity discussed.
+- Do NOT Brave-search a follow-up section (messages/inbox/DMs/profile/settings/history). If Current Active Page is a site, stay on that site: CLICK_SELECTOR the matching button or NAVIGATE to that site's section URL.
+- Hindi/Hinglish/Devanagari commands carry identical meaning (kholo=open, band karo=close, sandesh=messages, khoj=search). Resolve them against the workflow site exactly like English - never web-search the Hindi words themselves.
 - Autonomous Goal Re-planning & Task Breakdown:
   * Break the user's prompt into an ordered list of clear tasks in "tasks" (with id, title, status: "pending" | "in_progress" | "completed").
   * Review Recent Conversation History to see what actions have already succeeded.
@@ -152,16 +166,22 @@ Conversational & Goal Execution Instructions:
   * If WhatsApp contact/chat is ambiguous, search for the contact in WhatsApp's search bar to eliminate confusion.
   * Dynamic Iteration Cap Extension: If the workflow needs more iterations to conclude (e.g. complex forms, waiting for verification), set "extendCapBy": 2 to 5.
   * If the requested action (e.g. clicking "Sign Up") was already performed and verified, the goal is COMPLETE! Set "goalAccomplished": true and "actions": [].
+  * MULTI-FIELD FORMS: when a dialog or form has several inputs (width/height, first/last name, address lines, etc.), emit one INPUT_TEXT action per field, targeting that field's label or placeholder, and only click the submit/Continue/Create control after every required value is entered. Never click a disabled or empty-field submit button and call it done.
+  * DIALOGS: after a click opens a dialog, inspect the dialog and fill its fields before concluding; a click that merely opens a dialog is not goal completion.
 
 JSON Action Plan:
 `;
 
+    console.log(`[ModelClient] prompt chars: ${prompt.length} (buttons/history/page budgeted)`);
     // 1. Try Active Model Provider (OpenAI ChatGPT, Anthropic Claude, Gemini, Custom, or Groq)
     const activeProvider = this.registry ? this.registry.getActiveProvider() : null;
     if (activeProvider && activeProvider.isConfigured()) {
       try {
         console.log(`[ModelClient] Querying active provider: ${activeProvider.displayName} (${activeProvider.model})...`);
-        const result = await activeProvider.plan(prompt, this.systemPrompt);
+        const result = await Promise.race([
+          activeProvider.plan(prompt, this.systemPrompt, { history: historyMessages }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('provider timeout 20s')), 20000)),
+        ]);
         if (result && (Array.isArray(result.actions) || result.thought)) {
           if (!Array.isArray(result.actions)) result.actions = [];
           if (result.actions.length > 0) {
@@ -176,11 +196,11 @@ JSON Action Plan:
       }
     }
 
-    // 2. Direct Groq Cloud Fallback (Ultra-Fast LPU Inference)
-    if (this.groqKey) {
+    // 2. Direct Groq Cloud Fallback (skip when active provider is already groq — avoids double backoff)
+    if (this.groqKey && (!activeProvider || activeProvider.name !== 'groq')) {
       try {
         console.log(`[ModelClient] Querying Groq Cloud (${this.groqModel})...`);
-        const result = await this.queryGroq(prompt);
+        const result = await this.queryGroq(prompt, historyMessages);
         if (result && (Array.isArray(result.actions) || result.thought)) {
           if (!Array.isArray(result.actions)) result.actions = [];
           if (result.actions.length > 0) {
@@ -199,7 +219,7 @@ JSON Action Plan:
     if (this.mercuryKey) {
       try {
         console.log(`[ModelClient] Querying Mercury AI (${this.mercuryModel})...`);
-        const result = await this.queryMercury(prompt);
+        const result = await this.queryMercury(prompt, historyMessages);
         if (result && result.actions && result.actions.length > 0) {
           console.log(`[ModelClient] Mercury generated ${result.actions.length} action(s):`, result.thought);
           return result;
@@ -211,7 +231,7 @@ JSON Action Plan:
 
     // 4. Try Local Model (Ollama / Qwen 2.5 Coder 3B / Llama 3.2 3B)
     try {
-      const localResult = await this.queryLocalModel(prompt);
+      const localResult = await this.queryLocalModel(prompt, historyMessages);
       if (localResult && localResult.actions && localResult.actions.length > 0) {
         console.log('[ModelClient] Local Model generated actions:', localResult.thought);
         return localResult;
@@ -255,7 +275,7 @@ JSON Action Plan:
    * Resilient Groq Cloud query with exponential backoff, jitter, and zero-cost model failover
    * Gracefully handles 503 (Service Unavailable), 429 (Rate Limit), 502/504 (Bad Gateway), 404 (Missing model), and network errors.
    */
-  async queryGroq(prompt) {
+  async queryGroq(prompt, history = []) {
     // Validated zero-cost models available on the active Groq account
     const zeroCostModelCandidates = [
       this.groqModel || 'openai/gpt-oss-120b',
@@ -269,22 +289,38 @@ JSON Action Plan:
     const baseDelayMs = 400;
     let lastError = null;
 
+    // All candidates cooling down after rate limits: wait briefly for the
+    // earliest recovery instead of failing the command instantly.
+    if (!this._cooldown) this._cooldown = new Map();
+    const available = zeroCostModelCandidates.filter(m => (this._cooldown.get(m) || 0) <= Date.now());
+    if (available.length === 0) {
+      const earliest = Math.min(...zeroCostModelCandidates.map(m => this._cooldown.get(m) || Date.now()));
+      const waitMs = Math.max(0, Math.min(earliest - Date.now(), 1500));
+      if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
+      this._cooldown.clear();
+    }
+
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const candidateModel = zeroCostModelCandidates[attempt % zeroCostModelCandidates.length];
+      if (this._cooldown && (this._cooldown.get(candidateModel) || 0) > Date.now()) continue;
 
       try {
         const payload = {
           model: candidateModel,
           messages: [
             { role: 'system', content: this.systemPrompt + '\nRespond strictly with RAW JSON format. No markdown, no prose.' },
+            ...coalesceMessages(history),
             { role: 'user', content: prompt }
           ],
           response_format: { type: 'json_object' },
           temperature: 0.1,
-          max_tokens: 650
+          max_tokens: 1400
         };
 
+        const groqFetchTimeout = new AbortController();
+        const groqFetchTimer = setTimeout(() => groqFetchTimeout.abort(), 12000);
         let res = await fetch(this.groqUrl, {
+          signal: groqFetchTimeout.signal,
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -294,7 +330,7 @@ JSON Action Plan:
         }).catch(err => {
           lastError = err;
           return null;
-        });
+        }).finally(() => clearTimeout(groqFetchTimer));
 
         // If response is valid and HTTP 200 OK
         if (res && res.ok) {
@@ -338,10 +374,17 @@ JSON Action Plan:
           }
         }
 
-        if (!isRetryable && status !== 0) {
-          // If permanent client error other than 404/429 (e.g. 401 unauthorized), break
-          break;
+        if (status === 401 || status === 403) break;
+
+        // A 400 is a model/payload mismatch, not a provider outage: cool that
+        // model down and let the next candidate try instead of ending the turn.
+        if (status === 400) {
+          if (!this._cooldown) this._cooldown = new Map();
+          this._cooldown.set(candidateModel, Date.now() + 60000);
+          continue;
         }
+
+        if (!isRetryable && status !== 0) break;
       } catch (err) {
         lastError = err;
       }
@@ -354,6 +397,8 @@ JSON Action Plan:
 
         const nextModel = zeroCostModelCandidates[(attempt + 1) % zeroCostModelCandidates.length];
         console.warn(`[ModelClient Backoff] Groq retryable condition on ${candidateModel}. Failover to verified model: ${nextModel} in ${Math.round(totalDelay)}ms...`);
+        if (!this._cooldown) this._cooldown = new Map();
+        this._cooldown.set(candidateModel, Date.now() + 60000); // cooldown until backoff passes
         await new Promise(r => setTimeout(r, totalDelay));
       }
     }
@@ -364,7 +409,7 @@ JSON Action Plan:
   /**
    * Query Mercury AI chat completions
    */
-  async queryMercury(prompt) {
+  async queryMercury(prompt, history = []) {
     const res = await fetch(this.mercuryUrl, {
       method: 'POST',
       headers: {
@@ -375,10 +420,11 @@ JSON Action Plan:
         model: this.mercuryModel,
         messages: [
           { role: 'system', content: this.systemPrompt },
+          ...coalesceMessages(history),
           { role: 'user', content: prompt }
         ],
         temperature: 0.1,
-        max_tokens: 600
+        max_tokens: 1400
       })
     });
 
@@ -396,7 +442,7 @@ JSON Action Plan:
   /**
    * Query Local Ollama (Qwen 2.5 Coder 3B / Llama 3.2 3B)
    */
-  async queryLocalModel(prompt) {
+  async queryLocalModel(prompt, history = []) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 1200);
 
@@ -406,7 +452,7 @@ JSON Action Plan:
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'qwen2.5-coder:3b',
-          prompt: `${this.systemPrompt}\n\n${prompt}`,
+          prompt: `${this.systemPrompt}\n\nConversation so far:\n${coalesceMessages(history).map(m => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`).join('\n')}\n\nTask:\n${prompt}`,
           stream: false,
           format: 'json'
         }),
@@ -427,53 +473,20 @@ JSON Action Plan:
    * Extract, sanitize and normalize JSON action schema from model output
    */
   parseJSONResponse(raw) {
-    if (!raw || typeof raw !== 'string') return null;
-
-    let cleaned = raw.trim();
-    if (cleaned.startsWith('```')) {
-      cleaned = cleaned.replace(/^```(json)?\n?/, '').replace(/\n?```$/, '');
-    }
-
-    let parsed = null;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch (e) {
-      const match = cleaned.match(/\{[\s\S]*\}/);
-      if (match) {
-        try { parsed = JSON.parse(match[0]); } catch (err) {}
-      }
-    }
-
-    if (!parsed || !Array.isArray(parsed.actions)) return null;
-
-    // Normalize action shapes
-    const normalizedActions = parsed.actions.map(act => {
-      let rawType = (act.type || act.action || '').toUpperCase();
-      if (rawType === 'TYPE' || rawType === 'INPUT') rawType = 'INPUT_TEXT';
-      if (rawType === 'CLICK' || rawType === 'TAP') rawType = 'CLICK_SELECTOR';
-      if (rawType === 'PRESS' && act.key === 'Enter') rawType = 'SCROLL'; // safe fallback
-
-      const params = act.params || {
-        url: act.url,
-        query: act.query,
-        direction: act.direction,
-        amount: act.amount,
-        target: act.target || act.selector,
-        selector: act.selector,
-        text: act.text
-      };
-
-      return {
-        type: rawType,
-        params
-      };
-    }).filter(act => !!act.type);
-
-    return {
-      thought: parsed.thought || 'Executing browser command',
-      actions: normalizedActions
-    };
+    return parsePlanResponse(raw);
   }
 }
 
 module.exports = ModelClient;
+
+
+/** Rank buttons by token overlap with the user query; cap 8 (prompt budget). */
+function rankButtonsByOverlap(buttons, query) {
+  const qt = new Set(String(query || "").toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2));
+  return (buttons || []).map(b => {
+    const bt = String(b || "").toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2);
+    let score = 0; for (const w of bt) if (qt.has(w)) score += 2;
+    return { b, score: score - String(b || "").length / 200 };
+  }).sort((x, y) => y.score - x.score).slice(0, 8).map(x => x.b);
+}
+function oneLine(s) { return String(s || "").replace(/\s+/g, " ").trim(); }

@@ -2,6 +2,9 @@
  * Adion Browse - Abstract Base AI Model Provider
  */
 
+const { parsePlanResponse } = require('../actionPlan');
+const { coalesceMessages } = require('../conversationWindow');
+
 class BaseProvider {
   constructor(options = {}) {
     this.name = options.name || 'base';
@@ -37,31 +40,40 @@ class BaseProvider {
   }
 
   /**
-   * Robust JSON response parser with markdown fence stripping
+   * Merge consecutive same-role turns so the history stays valid for
+   * providers that require strict user/assistant alternation.
+   */
+  coalesceMessages(messages) {
+    return coalesceMessages(messages);
+  }
+
+  /**
+   * OpenAI-style message list: system, prior conversation turns, current task.
+   */
+  conversationMessages(systemPrompt, prompt, history = []) {
+    return [
+      { role: 'system', content: systemPrompt + '\nRespond strictly with RAW JSON format. No markdown, no prose.' },
+      ...this.coalesceMessages(history),
+      { role: 'user', content: prompt }
+    ];
+  }
+
+  /**
+   * Flatten prior turns into text for single-prompt endpoints
+   * (reasoning models, local completion endpoints).
+   */
+  historyTranscript(history = []) {
+    const turns = this.coalesceMessages(history);
+    if (turns.length === 0) return '(no earlier turns)';
+    return turns.map(turn => `${turn.role === 'assistant' ? 'Assistant' : 'User'}: ${turn.content}`).join('\n');
+  }
+
+  /**
+   * Robust JSON response parser with repair and plan normalization.
    */
   parseJSONResponse(rawContent) {
-    if (!rawContent || typeof rawContent !== 'string') return null;
-
-    let text = rawContent.trim();
-    // Strip markdown fences
-    text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/g, '').trim();
-
-    try {
-      return JSON.parse(text);
-    } catch (_) {
-      // Extract first valid JSON object substring
-      const startIdx = text.indexOf('{');
-      const endIdx = text.lastIndexOf('}');
-      if (startIdx !== -1 && endIdx > startIdx) {
-        try {
-          const candidate = text.substring(startIdx, endIdx + 1);
-          return JSON.parse(candidate);
-        } catch (_) { }
-      }
-    }
-    return null;
+    return parsePlanResponse(rawContent);
   }
 }
 
 module.exports = BaseProvider;
-

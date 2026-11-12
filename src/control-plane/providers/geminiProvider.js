@@ -43,6 +43,10 @@ class GeminiProvider extends BaseProvider {
         ]
       },
       contents: [
+        ...this.coalesceMessages(options.history).map((turn) => ({
+          role: turn.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: turn.content }]
+        })),
         {
           role: 'user',
           parts: [{ text: prompt }]
@@ -51,7 +55,7 @@ class GeminiProvider extends BaseProvider {
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.1,
-        maxOutputTokens: 1024
+        maxOutputTokens: 1600
       }
     };
 

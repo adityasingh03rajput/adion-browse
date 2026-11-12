@@ -1,3 +1,4 @@
+/*__ADION_THEME_BOOT__*/(function(){try{var q=null;try{q=new URLSearchParams(location.search).get("theme");}catch(e){}var t=(q==="light"||q==="dark")?q:null;if(!t){try{t=localStorage.getItem("adion-theme");}catch(e){}}if(t!=="light"&&t!=="dark")t="dark";document.documentElement.dataset.theme=t;try{localStorage.setItem("adion-theme",t);}catch(e){}window.addEventListener("storage",function(e){if(e&&e.key==="adion-theme"&&(e.newValue==="light"||e.newValue==="dark")){document.documentElement.dataset.theme=e.newValue;}});}catch(e){}})();
 // Adion Telemetry & Live Diagnostics Controller
 document.addEventListener('DOMContentLoaded', () => {
   const canvas = document.getElementById('latencyCanvas');

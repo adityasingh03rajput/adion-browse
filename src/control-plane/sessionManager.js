@@ -16,6 +16,7 @@ class SessionManager extends EventEmitter {
     this.dataDir = dataDir || path.resolve(process.cwd(), '.data');
     this.sessionFilePath = path.join(this.dataDir, 'session_interactions.json');
     this.interactions = [];
+    this.maxStoredInteractions = 500;
     this.sessionId = 'sess_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
     this.createdAt = new Date().toISOString();
 
@@ -23,7 +24,8 @@ class SessionManager extends EventEmitter {
   }
 
   /**
-   * Initialize or reset the session file on startup
+   * Restore the persisted session on startup so conversation memory survives
+   * a browser restart. A brand-new session still starts empty.
    */
   initStorage() {
     try {
@@ -31,12 +33,36 @@ class SessionManager extends EventEmitter {
         fs.mkdirSync(this.dataDir, { recursive: true });
       }
 
-      // Overwrite/clear on startup as required by session architecture protocol
-      this.interactions = [];
+      this.interactions = this.loadFromFile();
       this.flushToFile();
-      console.log(`[SessionManager] Initialized empty session memory log at: ${this.sessionFilePath}`);
+      console.log(`[SessionManager] Restored ${this.interactions.length} interaction(s) from ${this.sessionFilePath}`);
     } catch (err) {
       console.error('[SessionManager] Failed to initialize session log file:', err.message);
+    }
+  }
+
+  /**
+   * Read existing interactions from disk, tolerating older or invalid files.
+   */
+  loadFromFile() {
+    if (!fs.existsSync(this.sessionFilePath)) return [];
+    try {
+      const raw = fs.readFileSync(this.sessionFilePath, 'utf8');
+      if (!raw || !raw.trim()) return [];
+      const parsed = JSON.parse(raw);
+      const entries = Array.isArray(parsed)
+        ? parsed
+        : (parsed && Array.isArray(parsed.interactions) ? parsed.interactions : []);
+      if (parsed && !Array.isArray(parsed)) {
+        if (parsed.sessionId) this.sessionId = parsed.sessionId;
+        if (parsed.startedAt) this.createdAt = parsed.startedAt;
+      }
+      return entries
+        .filter(entry => entry && typeof entry === 'object')
+        .slice(-this.maxStoredInteractions);
+    } catch (err) {
+      console.warn('[SessionManager] Could not read session memory, starting fresh:', err.message);
+      return [];
     }
   }
 
@@ -76,6 +102,9 @@ class SessionManager extends EventEmitter {
     };
 
     this.interactions.push(entry);
+    if (this.interactions.length > this.maxStoredInteractions) {
+      this.interactions = this.interactions.slice(-this.maxStoredInteractions);
+    }
     this.flushToFile();
     this.emit('interaction-recorded', entry);
     return entry;

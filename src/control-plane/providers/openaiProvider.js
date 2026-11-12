@@ -44,11 +44,8 @@ class OpenAIProvider extends BaseProvider {
 
     // Reasoning models (o1, o3-mini) do not accept custom system messages or response_format in earlier revisions
     const messages = isReasoningModel ? [
-      { role: 'user', content: `${systemPrompt}\n\nTask:\n${prompt}` }
-    ] : [
-      { role: 'system', content: systemPrompt + '\nRespond strictly with RAW JSON format. No markdown, no prose.' },
-      { role: 'user', content: prompt }
-    ];
+      { role: 'user', content: `${systemPrompt}\n\nConversation so far:\n${this.historyTranscript(options.history)}\n\nTask:\n${prompt}` }
+    ] : this.conversationMessages(systemPrompt, prompt, options.history);
 
     const payload = {
       model: modelToUse,
@@ -58,7 +55,7 @@ class OpenAIProvider extends BaseProvider {
     if (!isReasoningModel) {
       payload.response_format = { type: 'json_object' };
       payload.temperature = 0.1;
-      payload.max_tokens = 800;
+      payload.max_tokens = 1400;
     }
 
     console.log(`[OpenAIProvider] Querying ${modelToUse} at ${this.apiUrl}...`);

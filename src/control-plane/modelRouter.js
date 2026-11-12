@@ -34,8 +34,8 @@ class ModelRouter {
         priority: 1
       },
       {
-        id: 'llama-3.2-11b-vision-preview',
-        displayName: 'Llama 3.2 11B Vision (Groq Free Tier)',
+        id: 'qwen/qwen3.8-27b',
+        displayName: 'Qwen 3.8 27B Vision (Groq Free Tier)',
         provider: 'groq-lpu',
         modalities: ['vision', 'text'],
         costPer1kTokens: 0.00,
@@ -125,6 +125,19 @@ class ModelRouter {
 
     // Route Vision Tasks: Prioritize Qwen-VL (Local) -> Groq Llama-3.2-Vision (Free Tier)
     if (taskType === TaskType.VISION) {
+      // Prefer the cloud vision model that the shared Groq key already covers,
+      // so visual grounding does not depend on a local Ollama install.
+      if (this.groqKey) {
+        this.accounting.lastAssignedModel = `${config.groqVisionModel} (Groq Free Vision)`;
+        return {
+          taskType,
+          modelId: config.groqVisionModel,
+          provider: 'groq-lpu',
+          displayName: `Qwen 3.8 27B Vision (${config.groqVisionModel})`,
+          isZeroCost: true
+        };
+      }
+
       const isOllamaUp = await this.checkOllamaAvailability();
       if (isOllamaUp) {
         this.accounting.lastAssignedModel = 'qwen2.5-vl (Local Zero-Cost)';
@@ -133,18 +146,6 @@ class ModelRouter {
           modelId: 'qwen2.5-vl',
           provider: 'ollama-local',
           displayName: 'Qwen 2.5 VL (Local Multimodal)',
-          isZeroCost: true
-        };
-      }
-
-      // Groq Free Tier Multimodal Vision
-      if (this.groqKey) {
-        this.accounting.lastAssignedModel = 'llama-3.2-11b-vision-preview (Groq Free)';
-        return {
-          taskType,
-          modelId: 'llama-3.2-11b-vision-preview',
-          provider: 'groq-lpu',
-          displayName: 'Llama 3.2 11B Vision (Groq Free Tier)',
           isZeroCost: true
         };
       }
@@ -270,7 +271,7 @@ Respond with RAW JSON strictly in this format:
             'Authorization': `Bearer ${this.groqKey}`
           },
           body: JSON.stringify({
-            model: 'llama-3.2-11b-vision-preview',
+            model: config.groqVisionModel,
             messages: [
               {
                 role: 'user',

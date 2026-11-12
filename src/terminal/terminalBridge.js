@@ -218,7 +218,9 @@ class TerminalBridge extends EventEmitter {
         child = spawn(shellExecutable, shellArgs, {
           cwd: executionCwd,
           env: { ...process.env, PYTHONUNBUFFERED: '1' },
-          windowsHide: true
+          windowsHide: true,
+          // POSIX: own process group so a timeout can kill the whole tree.
+          detached: !this.isWindows
         });
       } catch (spawnErr) {
         const failRes = {
@@ -257,14 +259,11 @@ class TerminalBridge extends EventEmitter {
         });
       }
 
-      // Safety timeout timer
+      // Safety timeout timer: kill the entire process tree, not just the shell,
+      // otherwise npm/build children keep running after the turn ends.
       const timeoutTimer = setTimeout(() => {
         isTimedOut = true;
-        try {
-          if (!child.killed) {
-            child.kill();
-          }
-        } catch (_) {}
+        this.terminateProcessTree(child);
       }, timeoutMs);
 
       child.on('error', (err) => {
@@ -313,6 +312,23 @@ class TerminalBridge extends EventEmitter {
         resolve(res);
       });
     });
+  }
+
+  /**
+   * Terminate a command's whole process tree (Windows: taskkill /T, POSIX:
+   * process-group kill). Falls back to a direct kill if the group is gone.
+   */
+  terminateProcessTree(child) {
+    if (!child || !child.pid) return;
+    if (this.isWindows) {
+      exec(`taskkill /pid ${child.pid} /T /F`, { windowsHide: true }, () => {});
+      return;
+    }
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch (_) {
+      try { child.kill('SIGKILL'); } catch (_) {}
+    }
   }
 
   /**

@@ -15,6 +15,8 @@ const AgentState = {
 };
 
 const ActionType = {
+  THEME_SET: 'theme_set',
+  THEME_TOGGLE: 'theme_toggle',
   // Navigation & Tabs
   NAVIGATE: 'NAVIGATE',
   NEW_TAB: 'NEW_TAB',
