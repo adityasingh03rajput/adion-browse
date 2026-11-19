@@ -1061,6 +1061,333 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  let activeAntigravityCard = null;
+
+  function formatElapsedSec(ms) {
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    if (totalSec < 60) return `${totalSec}s`;
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${m}m ${s}s`;
+  }
+
+  function renderCleanMarkdown(raw) {
+    if (!raw) return '';
+    let text = escapeHTML(String(raw));
+
+    // Fenced code blocks ```lang\ncode\n```
+    text = text.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (match, lang, code) => {
+      return `<pre class="copilot-code-block"><code class="language-${lang}">${code.trim()}</code></pre>`;
+    });
+
+    // Inline code `code`
+    text = text.replace(/`([^`]+)`/g, '<code class="copilot-inline-code">$1</code>');
+
+    // Markdown links [title](url)
+    text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/g, (match, label, url) => {
+      return `<a class="copilot-url-chip" href="${url}" target="_blank" onclick="event.preventDefault(); if (window.adionAPI && window.adionAPI.tabs) window.adionAPI.tabs.createTab('${url}');">${label} ↗</a>`;
+    });
+
+    // Standalone URLs (not preceded by href=" or >)
+    text = text.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (match, prefix, url) => {
+      return `${prefix}<a class="copilot-url-chip" href="${url}" target="_blank" onclick="event.preventDefault(); if (window.adionAPI && window.adionAPI.tabs) window.adionAPI.tabs.createTab('${url}');">${url} ↗</a>`;
+    });
+
+    // Bold **text** or __text__
+    text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    text = text.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+
+    // Italic *text*
+    text = text.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+
+    // Split paragraphs and lists
+    const blocks = text.split(/\n{2,}/);
+    const rendered = blocks.map(block => {
+      block = block.trim();
+      if (!block) return '';
+      if (block.startsWith('<pre class="copilot-code-block"')) {
+        return block;
+      }
+      const lines = block.split('\n');
+      const isBullet = lines.every(l => /^(\*|-|•)\s+/.test(l.trim()));
+      const isNum = lines.every(l => /^\d+\.\s+/.test(l.trim()));
+      if (isBullet) {
+        const items = lines.map(l => `<li>${l.trim().replace(/^(\*|-|•)\s+/, '')}</li>`).join('');
+        return `<ul class="copilot-md-list">${items}</ul>`;
+      }
+      if (isNum) {
+        const items = lines.map(l => `<li>${l.trim().replace(/^\d+\.\s+/, '')}</li>`).join('');
+        return `<ol class="copilot-md-list">${items}</ol>`;
+      }
+      return `<p>${lines.join('<br>')}</p>`;
+    }).filter(Boolean).join('');
+
+    return rendered;
+  }
+
+  function startAntigravityProgress(initialGoal = 'Working') {
+    if (!sidePanelTimeline) return null;
+    if (sidePanelEmptyState) sidePanelEmptyState.style.display = 'none';
+
+    // Finish prior running card if any
+    if (activeAntigravityCard && !activeAntigravityCard.isDone) {
+      finishAntigravityProgress();
+    }
+
+    const cardEl = document.createElement('div');
+    cardEl.className = 'antigravity-progress-card running';
+
+    const cleanGoal = (initialGoal || '').trim();
+    const shortGoal = cleanGoal ? cleanGoal.slice(0, 42) : 'Working';
+    const headerTitle = shortGoal ? `Running ${shortGoal}...` : 'Working...';
+
+    cardEl.innerHTML = `
+      <div class="antigravity-progress-header" title="Toggle execution steps">
+        <div class="antigravity-progress-left">
+          <div class="antigravity-spinner"></div>
+          <div class="antigravity-progress-title">${escapeHTML(headerTitle)}</div>
+        </div>
+        <div class="antigravity-progress-right">
+          <span class="antigravity-progress-time">0s</span>
+          <span class="antigravity-progress-chevron">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </span>
+        </div>
+      </div>
+      <div class="antigravity-progress-body"></div>
+    `;
+
+    const titleEl = cardEl.querySelector('.antigravity-progress-title');
+    const timeEl = cardEl.querySelector('.antigravity-progress-time');
+    const chevronEl = cardEl.querySelector('.antigravity-progress-chevron');
+    const bodyEl = cardEl.querySelector('.antigravity-progress-body');
+    const headerEl = cardEl.querySelector('.antigravity-progress-header');
+
+    headerEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      cardEl.classList.toggle('collapsed');
+    });
+
+    const startTime = Date.now();
+    const timerId = setInterval(() => {
+      if (timeEl) {
+        timeEl.textContent = formatElapsedSec(Date.now() - startTime);
+      }
+    }, 1000);
+
+    activeAntigravityCard = {
+      cardEl,
+      headerEl,
+      titleEl,
+      timeEl,
+      chevronEl,
+      bodyEl,
+      startTime,
+      timer: timerId,
+      stepCount: 0,
+      isDone: false
+    };
+
+    sidePanelTimeline.appendChild(cardEl);
+    if (sidePanelBody) sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
+
+    return activeAntigravityCard;
+  }
+
+  function updateAntigravityStep(stepMsg) {
+    if (!stepMsg || !sidePanelTimeline) return;
+    if (!activeAntigravityCard || activeAntigravityCard.isDone) {
+      startAntigravityProgress();
+    }
+
+    const lower = stepMsg.toLowerCase();
+    let tag = 'STEP';
+    let tagClass = '';
+
+    if (lower.includes('navigating') || lower.includes('navigated') || lower.includes('http://') || lower.includes('https://') || lower.includes('tab')) {
+      tag = 'NAV';
+      tagClass = 'tag-nav';
+    } else if (lower.includes('terminal') || lower.includes('powershell') || lower.includes('cmd') || lower.includes('executed terminal')) {
+      tag = 'TERM';
+      tagClass = 'tag-term';
+    } else if (lower.includes('plan') || lower.includes('goal breakdown') || lower.includes('strategy')) {
+      tag = 'PLAN';
+      tagClass = 'tag-plan';
+    } else if (lower.includes('inspect') || lower.includes('click') || lower.includes('tap') || lower.includes('type') || lower.includes('grounding') || lower.includes('element')) {
+      tag = 'DOM';
+      tagClass = 'tag-dom';
+    }
+
+    // Clean prefix for label
+    let cleanText = stepMsg
+      .replace(/^(?:\[PLAN\]\s*)?(?:📋\s*)?(?:step\s*\d+[\s\:\/\d]*|goal breakdown\:|autonomous agent coordinating\:)\s*/i, '')
+      .trim();
+
+    // If multiple lines (e.g. goal breakdown checklist), add each
+    const lines = cleanText.split('\n').filter(Boolean);
+    lines.forEach(line => {
+      const lineText = line.replace(/^\d+[\.\)]\s*/, '').trim();
+      const stepItem = document.createElement('div');
+      stepItem.className = 'antigravity-step-item';
+      stepItem.innerHTML = `
+        <span class="antigravity-step-tag ${tagClass}">${tag}</span>
+        <span class="antigravity-step-label" title="${escapeHTML(lineText)}">${formatCopilotText(lineText)}</span>
+      `;
+      activeAntigravityCard.bodyEl.appendChild(stepItem);
+      activeAntigravityCard.stepCount++;
+    });
+
+    // Update the running card title to the active action
+    if (activeAntigravityCard.titleEl && cleanText) {
+      const firstLine = lines[0] || cleanText;
+      const concise = firstLine.replace(/^(running|executing|navigating to)\s*/i, '').trim();
+      activeAntigravityCard.titleEl.textContent = `Running ${concise.slice(0, 36)}...`;
+    }
+
+    if (sidePanelBody) sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
+  }
+
+  function finishAntigravityProgress(outcomeSummary = null) {
+    if (!activeAntigravityCard || activeAntigravityCard.isDone) return;
+    
+    clearInterval(activeAntigravityCard.timer);
+    activeAntigravityCard.isDone = true;
+
+    const elapsed = formatElapsedSec(Date.now() - activeAntigravityCard.startTime);
+    activeAntigravityCard.cardEl.classList.remove('running');
+    activeAntigravityCard.cardEl.classList.add('completed');
+
+    // Replace spinner with checkmark
+    const spinner = activeAntigravityCard.cardEl.querySelector('.antigravity-spinner');
+    if (spinner) {
+      spinner.outerHTML = `<span class="antigravity-check-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>`;
+    }
+
+    if (activeAntigravityCard.titleEl) {
+      if (outcomeSummary) {
+        activeAntigravityCard.titleEl.textContent = outcomeSummary.slice(0, 50);
+      } else if (activeAntigravityCard.stepCount > 0) {
+        activeAntigravityCard.titleEl.textContent = `Ran ${activeAntigravityCard.stepCount} step(s)`;
+      } else {
+        activeAntigravityCard.titleEl.textContent = 'Completed';
+      }
+    }
+
+    if (activeAntigravityCard.timeEl) {
+      activeAntigravityCard.timeEl.textContent = elapsed;
+    }
+
+    // Collapse completed progress drawer so it's compact like Antigravity
+    activeAntigravityCard.cardEl.classList.add('collapsed');
+    activeAntigravityCard = null;
+  }
+
+  function isProgressStep(text) {
+    if (!text) return false;
+    const trimmed = text.trim();
+    const lower = trimmed.toLowerCase();
+
+    // Explicit progress and coordination messages
+    if (
+      lower.startsWith('analyzing current page') ||
+      lower.startsWith('autonomous agent coordinating') ||
+      lower.startsWith('coordinating:') ||
+      lower.startsWith('goal breakdown:') ||
+      lower.startsWith('📋 goal breakdown:') ||
+      lower.startsWith('[plan]') ||
+      /^step\s*\d+/i.test(lower) ||
+      /^📋\s*step\s*\d+/i.test(lower) ||
+      /^iter\s*\d+/i.test(lower) ||
+      lower.startsWith('navigating to') ||
+      lower.startsWith('navigated to') ||
+      lower.startsWith('locating ') ||
+      lower.startsWith('searching for ') ||
+      lower.startsWith('scanning ') ||
+      lower.startsWith('inspected ') ||
+      lower.startsWith('clicked ') ||
+      lower.startsWith('tapped ') ||
+      lower.startsWith('typing ') ||
+      lower.startsWith('dispatched ') ||
+      lower.startsWith('driving the desktop') ||
+      lower.startsWith('computer use mode') ||
+      lower.startsWith('terminal command') ||
+      lower.startsWith('executed terminal') ||
+      lower.startsWith('autonomous runway extended') ||
+      lower.startsWith('waiting for continuation') ||
+      lower.startsWith('microphone stream open') ||
+      lower.startsWith('transcribing speech') ||
+      lower.startsWith('👂 listening') ||
+      lower.startsWith('re-sensing page dom') ||
+      lower.startsWith('✓ checkpoint approved') ||
+      lower.startsWith('🖐️ manual takeover') ||
+      lower.startsWith('▶️ control handed back') ||
+      lower.startsWith('🛑 stopped as requested') ||
+      lower.startsWith('⏹️ task stopped')
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function appendCopilotUserMessage(text) {
+    if (!sidePanelTimeline || !text) return;
+    if (sidePanelEmptyState) sidePanelEmptyState.style.display = 'none';
+
+    const msgEl = document.createElement('div');
+    msgEl.className = 'copilot-msg-user';
+    const copyBtnHtml = `<button class="copilot-btn-copy" title="Copy text" onclick="event.stopPropagation(); const targetBody = this.closest('.copilot-msg-user').querySelector('.copilot-user-content'); const textToCopy = targetBody ? targetBody.innerText.trim() : this.closest('.copilot-msg-user').innerText.trim(); navigator.clipboard.writeText(textToCopy); const prev = this.innerHTML; this.innerHTML='<svg width=\\'12\\' height=\\'12\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'#10b981\\' stroke-width=\\'2.5\\'><polyline points=\\'20 6 9 17 4 12\\'></polyline></svg>'; setTimeout(() => { this.innerHTML=prev; }, 1400);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>`;
+
+    msgEl.innerHTML = `
+      <div class="copilot-user-header">
+        <span class="copilot-user-badge">You</span>
+        ${copyBtnHtml}
+      </div>
+      <div class="copilot-user-content">${escapeHTML(text)}</div>
+    `;
+
+    sidePanelTimeline.appendChild(msgEl);
+    if (sidePanelBody) sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
+  }
+
+  function appendCopilotAssistantResponse(text) {
+    if (!sidePanelTimeline || !text) return;
+    if (sidePanelEmptyState) sidePanelEmptyState.style.display = 'none';
+
+    // Finish any active running progress card before outputting assistant response
+    finishAntigravityProgress();
+
+    const msgEl = document.createElement('div');
+    msgEl.className = 'antigravity-assistant-msg';
+    const copyBtnHtml = `<button class="copilot-btn-copy" title="Copy text" onclick="event.stopPropagation(); const content = this.closest('.antigravity-assistant-msg').querySelector('.antigravity-assistant-content'); const textToCopy = content ? content.innerText.trim() : this.closest('.antigravity-assistant-msg').innerText.trim(); navigator.clipboard.writeText(textToCopy); const prev = this.innerHTML; this.innerHTML='<svg width=\\'12\\' height=\\'12\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'#10b981\\' stroke-width=\\'2.5\\'><polyline points=\\'20 6 9 17 4 12\\'></polyline></svg>'; setTimeout(() => { this.innerHTML=prev; }, 1400);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>`;
+
+    msgEl.innerHTML = `
+      <div class="antigravity-assistant-header">
+        <span class="antigravity-assistant-badge">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+          Adion
+        </span>
+        ${copyBtnHtml}
+      </div>
+      <div class="antigravity-assistant-content">${renderCleanMarkdown(text)}</div>
+    `;
+
+    sidePanelTimeline.appendChild(msgEl);
+    if (sidePanelBody) sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
+  }
+
+  function appendCopilotMessage(sender, text, isStep = false) {
+    if (sender === 'user') {
+      appendCopilotUserMessage(text);
+    } else {
+      if (isStep || isProgressStep(text)) {
+        updateAntigravityStep(text);
+      } else {
+        appendCopilotAssistantResponse(text);
+      }
+    }
+  }
+
   function formatCopilotText(rawText) {
     if (!rawText) return '';
     // Highlight quoted targets as emerald badges first (before injecting any HTML tags with attribute quotes)
@@ -1076,24 +1403,28 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.adionAPI && window.adionAPI.session) {
       window.adionAPI.session.getHistory().then(history => {
         const interactions = history.interactions || [];
-        const recent = interactions.slice(-5);
+        const recent = interactions.slice(-10);
         
         // Get timeline container
         const timeline = document.getElementById('sidePanelTimeline');
         if (timeline) {
+          // If a task is actively running, don't wipe the live execution card
+          if (activeAntigravityCard && !activeAntigravityCard.isDone) {
+            return;
+          }
           // Clear and rebuild timeline
           timeline.innerHTML = '';
           
           // Add conversation entries
-          recent.forEach((entry, idx) => {
+          recent.forEach((entry) => {
             const userMsg = entry.prompt?.raw || entry.prompt?.transcription || '';
             const agentMsg = entry.response?.thought || entry.feedback || '';
             
             if (userMsg) {
-              appendCopilotMessage('user', userMsg, true);
+              appendCopilotUserMessage(userMsg);
             }
             if (agentMsg) {
-              appendCopilotMessage('agent', agentMsg, true);
+              appendCopilotAssistantResponse(agentMsg);
             }
           });
         }
@@ -1103,137 +1434,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function appendCopilotMessage(sender, text, isStep = false) {
-    if (!sidePanelTimeline) return;
-    if (sidePanelEmptyState) sidePanelEmptyState.style.display = 'none';
-
-    const msgEl = document.createElement('div');
-    const copyBtnHtml = `<button class="copilot-btn-copy" title="Copy text" onclick="event.stopPropagation(); const targetBody = this.closest('.copilot-msg-user, .copilot-msg-agent').querySelector('.copilot-card-body, .copilot-user-content'); const textToCopy = targetBody ? targetBody.innerText.trim() : this.closest('.copilot-msg-user, .copilot-msg-agent').innerText.trim(); navigator.clipboard.writeText(textToCopy); const prev = this.innerHTML; this.innerHTML='<svg width=\\'12\\' height=\\'12\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'#10b981\\' stroke-width=\\'2.5\\'><polyline points=\\'20 6 9 17 4 12\\'></polyline></svg>'; setTimeout(() => { this.innerHTML=prev; }, 1400);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>`;
-
-    if (sender === 'user') {
-      msgEl.className = 'copilot-msg-user';
-      msgEl.innerHTML = `
-        <div class="copilot-user-header">
-          <span class="copilot-user-badge">You</span>
-          ${copyBtnHtml}
-        </div>
-        <div class="copilot-user-content">${text}</div>
-      `;
-    } else {
-      const lower = (text || '').toLowerCase();
-
-      // Intelligently categorize messages to break monochromacy with distinct color palettes
-      if (lower.startsWith('goal breakdown:') || lower.includes('goal breakdown:')) {
-        msgEl.className = 'copilot-msg-agent copilot-card-tasks';
-        const lines = text.replace(/^(?:\[PLAN\]\s*)?goal breakdown:\s*/i, '').trim().split('\n').filter(Boolean);
-        let checklistHtml = '<div class="copilot-task-checklist">';
-        lines.forEach((line, idx) => {
-          const cleanLine = line.replace(/^\d+[\.\)]\s*/, '').trim();
-          checklistHtml += `
-            <div class="copilot-task-item status-${idx === 0 ? 'in_progress' : 'pending'}">
-              <span class="copilot-task-icon">${idx === 0 ? '•' : '◦'}</span>
-              <span class="copilot-task-text">${formatCopilotText(cleanLine)}</span>
-            </div>
-          `;
-        });
-        checklistHtml += '</div>';
-
-        msgEl.innerHTML = `
-          <div class="copilot-card-header">
-            <span class="copilot-badge badge-indigo">Task Breakdown</span>
-            ${copyBtnHtml}
-          </div>
-          <div class="copilot-card-body">${checklistHtml}</div>
-        `;
-      } else if (lower.includes('would you like me to') || lower.includes('did you mean') || lower.includes('clarification') || lower.includes('i found "') || lower.includes('opposite_intent')) {
-        msgEl.className = 'copilot-msg-agent copilot-card-question';
-        msgEl.innerHTML = `
-          <div class="copilot-card-header">
-            <span class="copilot-badge badge-amber">Clarification Needed</span>
-            ${copyBtnHtml}
-          </div>
-          <div class="copilot-card-body">${formatCopilotText(text)}</div>
-        `;
-      } else if (lower.startsWith('ai plan:') || lower.includes('plan:')) {
-        msgEl.className = 'copilot-msg-agent copilot-card-plan';
-        const planContent = text.replace(/^ai plan:\s*/i, '');
-        msgEl.innerHTML = `
-          <div class="copilot-card-header">
-            <span class="copilot-badge badge-purple">Strategy Plan</span>
-            ${copyBtnHtml}
-          </div>
-          <div class="copilot-card-body">${formatCopilotText(planContent)}</div>
-        `;
-      } else if (lower.includes('navigating to:') || lower.startsWith('navigating') || lower.includes('http://') || lower.includes('https://')) {
-        msgEl.className = 'copilot-msg-agent copilot-card-nav';
-        msgEl.innerHTML = `
-          <div class="copilot-card-header">
-            <span class="copilot-badge badge-cyan">Web Navigation</span>
-            ${copyBtnHtml}
-          </div>
-          <div class="copilot-card-body">${formatCopilotText(text)}</div>
-        `;
-      } else if (lower.includes('closed active tab') || lower.includes('tab closed') || lower.includes('opened tab') || lower.includes('new tab')) {
-        msgEl.className = 'copilot-msg-agent copilot-card-tab';
-        msgEl.innerHTML = `
-          <div class="copilot-card-header">
-            <span class="copilot-badge badge-coral">Tab Manager</span>
-            ${copyBtnHtml}
-          </div>
-          <div class="copilot-card-body">${formatCopilotText(text)}</div>
-        `;
-      } else if (lower.includes('grounding target:') || lower.includes('inspected') || lower.includes('clicked') || lower.includes('typing')) {
-        msgEl.className = 'copilot-msg-agent copilot-card-target';
-        msgEl.innerHTML = `
-          <div class="copilot-card-header">
-            <span class="copilot-badge badge-emerald">Element Grounding</span>
-            ${copyBtnHtml}
-          </div>
-          <div class="copilot-card-body">${formatCopilotText(text)}</div>
-        `;
-      } else if (lower.includes('success') || lower.includes('completed') || lower.includes('verified')) {
-        msgEl.className = 'copilot-msg-agent copilot-card-success';
-        msgEl.innerHTML = `
-          <div class="copilot-card-header">
-            <span class="copilot-badge badge-green">Task Verified</span>
-            ${copyBtnHtml}
-          </div>
-          <div class="copilot-card-body">${formatCopilotText(text)}</div>
-        `;
-      } else if (isStep || lower.includes('coordinating') || lower.includes('analyzing')) {
-        msgEl.className = 'copilot-msg-agent copilot-card-step';
-        msgEl.innerHTML = `
-          <div class="copilot-card-header">
-            <span class="copilot-badge badge-blue"><span class="step-live-dot"></span> Autonomous Step</span>
-            ${copyBtnHtml}
-          </div>
-          <div class="copilot-card-body">${formatCopilotText(text)}</div>
-        `;
-      } else {
-        msgEl.className = 'copilot-msg-agent copilot-card-default';
-        msgEl.innerHTML = `
-          <div class="copilot-card-header" style="justify-content: flex-end; margin-bottom: 2px;">
-            ${copyBtnHtml}
-          </div>
-          <div class="copilot-card-body">${formatCopilotText(text)}</div>
-        `;
-      }
-    }
-
-    sidePanelTimeline.appendChild(msgEl);
-    if (sidePanelBody) {
-      sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
-    }
-  }
-
   async function submitSidePanelTask(specifiedTask = null) {
     const rawVal = specifiedTask !== null ? specifiedTask : (sidePanelInput ? sidePanelInput.value : '');
     const task = (rawVal || '').trim();
     if (!task) return;
 
     if (sidePanelInput) sidePanelInput.value = '';
-    appendCopilotMessage('user', task);
-    appendCopilotMessage('agent', `Analyzing current page context & coordinating: "${task}"...`, true);
+    
+    // User message bubble
+    appendCopilotUserMessage(task);
+    
+    // Start Antigravity-style live execution card
+    startAntigravityProgress(task);
 
     setAdionState('THINKING');
     showAdionToast(`Copilot: Coordinating "${task.slice(0, 35)}..."`, 'success');
@@ -1247,7 +1459,8 @@ document.addEventListener('DOMContentLoaded', () => {
       loadSessionHistory();
     } catch (err) {
       console.error('[Copilot] Error executing task:', err);
-      appendCopilotMessage('agent', `Error: ${err.message || 'Task failed to execute.'}`);
+      finishAntigravityProgress('Error executing task');
+      appendCopilotAssistantResponse(`Error: ${err.message || 'Task failed to execute.'}`);
       showAdionToast(`Copilot error: ${err.message || 'Unknown error'}`, 'alert');
     }
   }
@@ -3616,6 +3829,13 @@ document.addEventListener('DOMContentLoaded', () => {
   if (window.adionAPI && window.adionAPI.agent) {
     window.adionAPI.agent.onStateChange((data) => {
       setAdionState(data.state);
+      if (data.state === 'IDLE' || data.state === 'COMPLETED') {
+        setTimeout(() => {
+          if (activeAntigravityCard && !activeAntigravityCard.isDone) {
+            finishAntigravityProgress();
+          }
+        }, 1200);
+      }
     });
 
     window.adionAPI.agent.onAudioLevel((data) => {
@@ -3627,7 +3847,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const isAlert = data.level === 'warning' || data.level === 'error';
         showAdionToast(data.message, isAlert ? 'alert' : 'success');
         if (sidePanelTimeline) {
-          appendCopilotMessage('agent', data.message, data.level === 'info');
+          if (isProgressStep(data.message)) {
+            updateAntigravityStep(data.message);
+          } else {
+            finishAntigravityProgress();
+            appendCopilotAssistantResponse(data.message);
+          }
         }
       }
     });
@@ -3635,30 +3860,17 @@ document.addEventListener('DOMContentLoaded', () => {
     if (typeof window.adionAPI.agent.onInspectorTelemetry === 'function') {
       window.adionAPI.agent.onInspectorTelemetry((data) => {
         if (!data || !sidePanelTimeline) return;
-        if (sidePanelEmptyState) sidePanelEmptyState.style.display = 'none';
-
-        const card = document.createElement('div');
-        card.className = 'copilot-inspector-card';
-        card.innerHTML = `
-          <div class="copilot-inspector-badge">Live Element Inspector: ${(data.action || 'INSPECT').toUpperCase()}</div>
-          <div class="copilot-inspector-header">
-            <div><span class="copilot-inspector-tag">&lt;${data.tag || 'el'}&gt;</span><span class="copilot-inspector-classes">${data.classes || ''}</span></div>
-            <div class="copilot-inspector-dims">${data.dimensions || ''}</div>
-          </div>
-          <div class="copilot-inspector-acc">
-            <div><strong style="color:#5f6368;">Role:</strong> ${data.role || 'generic'} &nbsp;|&nbsp; <strong style="color:#5f6368;">Focusable:</strong> true</div>
-            <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><strong style="color:#5f6368;">Name:</strong> "${data.name || ''}"</div>
-          </div>
-        `;
-        sidePanelTimeline.appendChild(card);
-        if (sidePanelBody) sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
+        const tag = data.tag || 'el';
+        const name = data.name || data.classes || '';
+        updateAntigravityStep(`Inspected <${tag}> ${name ? `"${name}"` : ''}`.trim());
       });
     }
 
     if (typeof window.adionAPI.agent.onTerminalOutput === 'function') {
       window.adionAPI.agent.onTerminalOutput((data) => {
         if (!data) return;
-        appendTerminalResult(data);
+        const cmd = data.command || 'terminal command';
+        updateAntigravityStep(`Ran terminal: ${cmd}`);
       });
     }
   }
