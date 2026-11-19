@@ -152,6 +152,27 @@ async function findWordCoordinates(imagePath, query) {
 }
 
 /**
+ * Recognize words and text directly from base64 image data using local Windows OCR.
+ */
+async function recognizeWordsInBase64(base64Data) {
+  if (!base64Data) return { text: '', words: [] };
+  const cleanB64 = base64Data.replace(/^data:image\/\w+;base64,/, '');
+  const tempPath = path.join(os.tmpdir(), `adion_ocr_words_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.png`);
+  try {
+    const buffer = Buffer.from(cleanB64, 'base64');
+    fs.writeFileSync(tempPath, buffer);
+    const result = await recognizeWords(tempPath);
+    return result;
+  } catch (err) {
+    return { text: '', words: [], error: err.message };
+  } finally {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch (_) {}
+  }
+}
+
+/**
  * Locate text coordinates directly from base64 image data using local Windows OCR.
  */
 async function findTextInBase64(base64Data, query) {
@@ -174,6 +195,7 @@ async function findTextInBase64(base64Data, query) {
 module.exports = {
   recognizeText,
   recognizeWords,
+  recognizeWordsInBase64,
   findWordCoordinates,
   findTextInBase64
 };

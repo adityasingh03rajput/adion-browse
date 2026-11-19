@@ -290,18 +290,14 @@ function createPcSession(deps = {}) {
           if (seen >= REPEAT_LIMIT) {
             halted = true;
             history.push({ action: name, ok: false, report: 'same action for the third time; it is not working' });
-            report = lastFailure
-              ? `${lastFailure} Repeating "${name}" was not working, so I stopped.`
-              : `I stopped: repeating "${name}" was not moving this along.`;
+            report = `I stopped: repeating "${name}" 3 times without progress is not working.`;
             outcome = 'stuck';
             break;
           }
           if (failed.has(fingerprint)) {
             halted = true;
             history.push({ action: name, ok: false, report: 'that exact action already failed' });
-            report = lastFailure
-              ? `${lastFailure} I did not try that same action again.`
-              : 'I stopped: that action already failed and I did not repeat it.';
+            report = `I stopped: "${name}" already failed in this session and was not repeated.`;
             outcome = 'stuck';
             break;
           }
@@ -340,7 +336,8 @@ function createPcSession(deps = {}) {
               deadFingerprint = '';
               deadRepeats = 0;
             }
-            history.push({ action: name, ok: true, report: clip(result.report, 200), changed });
+            history.push({ action: name, ok: true, report: clip(result.report, 200), text: result.text ? clip(result.text, 200) : undefined, changed });
+            lastFailure = null;
           ctx = await read();
         }
 

@@ -189,10 +189,20 @@ function createPcEngine(options = {}) {
     } catch (error) {
       log(`pc capture failed: ${error.message}`);
     }
+    let ocr = null;
+    if (elements.length < 8 && capture && capture.dataUrl) {
+      try {
+        const { recognizeWordsInBase64 } = require('./ocr');
+        ocr = await recognizeWordsInBase64(capture.dataUrl);
+      } catch (ocrErr) {
+        log(`pc local ocr note: ${ocrErr.message}`);
+      }
+    }
     return {
       fg,
       elements,
       capture,
+      ocr,
       originPhys: capture ? { x: capture.display.bounds.x, y: capture.display.bounds.y } : { x: 0, y: 0 }
     };
   }

@@ -88,6 +88,17 @@ async function groqVision(groq, imagePath, prompt) {
   if (!res.ok) {
     let body = '';
     try { body = (await res.text()).slice(0, 300); } catch (_) {}
+    // If rate limited (HTTP 429) or unavailable, degrade gracefully to local WinRT OCR instead of breaking task
+    try {
+      const ocrText = await recognizeText(imagePath);
+      if (ocrText && ocrText.trim()) {
+        return {
+          ok: true,
+          text: `Screen text detected via local WinRT OCR:\n${ocrText.slice(0, 3000)}`,
+          note: `Vision API HTTP ${res.status} rate limit; gracefully degraded to local OCR`
+        };
+      }
+    } catch (_) {}
     return { ok: false, text: '', note: 'vision HTTP ' + res.status + ': ' + body };
   }
   const j = await res.json();
@@ -189,9 +200,19 @@ function createScreenWatch(deps = {}) {
   }
 
   async function describeScreen(prompt, opts = {}) {
-    if (!groq.key) return { ok: false, file: null, text: '', note: 'no GROQ_API_KEY — set it in .env for vision descriptions' };
     const shot = await screenshot('adion-describe');
     if (!shot.ok) return { ok: false, file: null, text: '', note: shot.note };
+
+    if (!groq.key) {
+      try {
+        const text = await recognizeText(shot.file);
+        if (text && text.trim()) {
+          return { ok: true, file: shot.file, text: `Screen text detected via local WinRT OCR:\n${text.slice(0, 3000)}`, note: 'local WinRT OCR' };
+        }
+      } catch (_) {}
+      return { ok: false, file: null, text: '', note: 'no GROQ_API_KEY and OCR detected no text' };
+    }
+
     const r = await groqVision(groq, shot.file,
       prompt || 'Describe this screenshot: what app is visible, what is the main content, and list the key controls.');
     if (!r.ok && !opts.keepFile) { try { fs.unlinkSync(shot.file); } catch (_) {} }

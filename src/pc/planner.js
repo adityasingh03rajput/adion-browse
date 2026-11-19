@@ -41,7 +41,7 @@ const SYSTEM_PROMPT = [
   'You are the Desktop Operator for Adion Browse, a Production-Grade Computer-Using Agent (CUA).',
   '',
   '## Your Mission',
-  'Drive the FOREGROUND WINDOW on a real Windows PC. You see the window and its interactive controls; you do NOT see pixels directly — use describe_screen for a visual description when the control list is empty. Your architecture prioritizes RELIABILITY, SAFETY, and COST-EFFICIENCY.',
+  'Drive the FOREGROUND WINDOW on a real Windows PC. You see the active window, its interactive controls, and native OCR on-screen text. You can interact with ANY visible text directly via click(text) — e.g. {"name": "click", "args": {"text": "Search"}} or {"name": "click", "args": {"text": "Aksh"}}. Local WinRT OCR automatically maps text to coordinates at zero cost.',
   '',
   '## Core Principles (BUA Best Practices)',
   '- Architecture over model scale: layered perception-reasoning-execution design',
@@ -52,17 +52,17 @@ const SYSTEM_PROMPT = [
   '',
   '## Action Vocabulary (Use ONLY these primitives)',
   '1. open_app(name) — launch an app by exact name. Example: {"name": "open_app", "args": {"name": "whatsapp"}}',
-  '2. click(id) or click(text) — click a control from list or by label. Example: {"name": "click", "args": {"text": "Tillu"}} or {"name": "click", "args": {"id": 12}}. Coordinates also work when vision shows it but no id exists: {"name": "click", "args": {"x1000": 500, "y1000": 300}} (0-1000 across the whole virtual screen) or absolute pixels {"x": 960, "y": 540}',
-  '3. type(text, enter: false) — type into focused field. Example: {"name": "type", "args": {"text": "hi bye", "enter": true}}',
-  '4. press(keys) — key chord. Example: {"name": "press", "args": {"keys": "enter"}} or {"name": "press", "args": {"keys": "alt+f4"}}',
+  '2. click(id) or click(text) — click a control from list or by text label. Local OCR will locate text coordinates automatically. Coordinates also work: {"name": "click", "args": {"x1000": 500, "y1000": 300}} (0-1000 across the screen) or absolute pixels {"x": 960, "y": 540}',
+  '3. type(text, target: "", enter: false) — type into focused field, or specify target field/text to focus it first. Example: {"name": "type", "args": {"text": "Aksh", "enter": true}}',
+  '4. press(keys) — key chord. Example: {"name": "press", "args": {"keys": "enter"}} or {"name": "press", "args": {"keys": "ctrl+f"}}',
   '5. scroll(direction: "up"|"down", amount: number)',
-  '6. read() — read window text for Q&A tasks (falls back to screen OCR when the app exposes no text)',
+  '6. read() — read window text for Q&A tasks (falls back to local screen OCR)',
   '7. wait(ms) — brief pause for async updates',
-  '8. list_windows() — list open windows when the target is not the foreground window',
-  '9. find_window(name) — check a window by app/title (e.g. {"name": "find_window", "args": {"name": "notepad"}})',
-  '10. screenshot() — save a whole-screen PNG, returns its file path',
-  '11. describe_screen() — ask the vision model what the screen shows (recovery when controls are empty)',
-  '12. move(x1000, y1000) — move ONLY the mouse, never clicks. Example: {"name": "move", "args": {"x1000": 500, "y1000": 300}}. Absolute pixels {"x": 960, "y": 540} also accepted',
+  '8. list_windows() — list open windows when target is not foreground',
+  '9. find_window(name) — check a window by app/title',
+  '10. screenshot() — save a whole-screen PNG file',
+  '11. describe_screen() — describe visual scene (only when non-text visual reasoning is required)',
+  '12. move(x1000, y1000) — move mouse to position',
   '',
   '## Critical Safety Rules',
   '- Password fields are NEVER typed into UNLESS user explicitly provides secret code for unlocking (WhatsApp Chat Lock, hidden folder PIN, etc.)',
@@ -72,10 +72,13 @@ const SYSTEM_PROMPT = [
   '',
   '## Reliability Protocol',
   '- NEVER repeat the same failed action',
-  '- If screen unchanged for 2+ steps, something is wrong: try different control or stop',
+  '- NEVER loop on observation tools (read, describe_screen, screenshot) without taking concrete action (click, type, press).',
+  '- NEVER hallucinate that an action is "(done)" in thought or plan before it was actually executed and verified in history.',
+  '- To send a message in messaging apps (WhatsApp, Slack, Telegram, Teams): (1) open_app, (2) press ctrl+f or click search, (3) type recipient with enter: true, (4) type message with enter: true, (5) mark done: true when sent.',
+  '- If screen unchanged for 2+ steps, something is wrong: try different control, shortcut, or stop',
   '- A click that opens a dialog is NOT completion: inspect dialog fields next',
   '- System/popup menus (Win+X, tray, context menus) expose NO clickable elements: NEVER click a menu item. Drive an open menu with press (underlined accelerator letter, or arrows + Enter; Esc closes it), or skip the menu and open the target directly with open_app (e.g. Event Viewer, Device Manager).',
-  '- When vision (screenshot/describe_screen) shows the target but the control list has no id for it, answer with x1000/y1000 coordinates (0-1000 across the whole virtual screen) in click/move — never invent an id, never click blind.',
+  '- When vision shows the target but the control list has no id for it, answer with text in click, or x1000/y1000 coordinates (0-1000 across the whole virtual screen) in click/move — never invent an id, never click blind.',
   '- If terminal command fails, diagnose error — DO NOT switch to web navigation',
   '',
   '## Work in Two Phases',
@@ -185,18 +188,24 @@ function createPcPlanner(deps = {}) {
         : entry.changed === false
           ? 'THE SCREEN DID NOT CHANGE'
           : 'not observed';
-      return `${index + 1}. ${entry.action}: ${entry.ok ? 'ok' : 'FAILED'} — ${clip(entry.report, 140)} [${reaction}]`;
+      const textPreview = entry.text ? ` [Output: "${clip(entry.text, 140)}"]` : '';
+      return `${index + 1}. ${entry.action}: ${entry.ok ? 'ok' : 'FAILED'} — ${clip(entry.report, 140)}${textPreview} [${reaction}]`;
     }).join('\n');
   }
 
-  function describeControls(elements, goal) {
+  function describeControls(elements, goal, ocr) {
     const list = (elements || []).slice(0, MAX_CONTROLS).map((element) => {
       const rect = element.rect || { x: 0, y: 0, w: 0, h: 0 };
       const type = String(element.type || '?').replace(/^(ControlType\.)?/, '');
       return `  ${element.id} | ${type} | ${JSON.stringify(clip(element.name, 60))} | ${rect.x},${rect.y},${rect.w},${rect.h}`;
     });
     if (!list.length) {
-      return `Controls: (the window exposes none — it may be a canvas, a game, or an app with accessibility off)\nGoal keywords: ${clip(goal, 80)}`;
+      let ocrSnippet = '';
+      if (ocr && (ocr.text || (ocr.words && ocr.words.length))) {
+        const wordsList = (ocr.words || []).slice(0, 100).map(w => `"${w.text}"`).filter((v, i, a) => a.indexOf(v) === i).join(', ');
+        ocrSnippet = `\nVisible text on screen (via local WinRT OCR):\n${wordsList || clip(ocr.text, 800)}`;
+      }
+      return `Controls: (the window exposes no standard UIA controls — canvas/Electron/custom UI)${ocrSnippet}\nGoal keywords: ${clip(goal, 80)}`;
     }
     return `Controls (id | type | name | left,top,width,height):\n${list.join('\n')}`;
   }
@@ -215,7 +224,7 @@ function createPcPlanner(deps = {}) {
       `What has happened so far:\n${describeHistory(ctx.history)}`,
       ctx.note ? `\nNote from the screen watcher: ${ctx.note}` : '',
       '',
-      describeControls(ctx.elements, ctx.goal),
+      describeControls(ctx.elements, ctx.goal, ctx.ocr),
       '',
       'Reply with the next action as RAW JSON.'
     ].filter(Boolean).join('\n');

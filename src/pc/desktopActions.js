@@ -321,6 +321,18 @@ function createDesktopActions(deps = {}) {
     async type(args, ctx = {}) {
       const text = String(args.text || '');
       if (!text.trim()) return { ok: false, report: 'nothing to type' };
+
+      // Focus target field first if explicitly provided
+      if (args.id != null || args.target || args.text_target) {
+        try {
+          const target = await resolvePoint({ id: args.id, text: args.target || args.text_target }, ctx);
+          if (target && target.point) {
+            await input.request('mouse.click', { x: target.point.x, y: target.point.y, button: 'left' }, 3000);
+            await sleep(250);
+          }
+        } catch (_) {}
+      }
+
       const field = await focusedField();
       if (field && field.isPassword) {
         return { ok: false, refused: 'password field', report: 'refused: the focused field is a password box' };
