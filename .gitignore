@@ -33,7 +33,9 @@ __pycache__/
 /patch*.js
 /*_new.js
 /profile.jpg
-tool scan/*.png
-tool scan/*.jpg
-tool scan/*.json
+tool scan/
+video/
+*.mp4
+*.webm
+*.mov
 nul
