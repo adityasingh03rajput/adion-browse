@@ -189,8 +189,20 @@ function createPcEngine(options = {}) {
     } catch (error) {
       log(`pc capture failed: ${error.message}`);
     }
+
+    // Windows caption bar & window frame expose 6-12 standard controls (Minimize, Maximize, Close, TitleBar)
+    // even when the client area is custom-drawn (canvas/Electron/WhatsApp/Spotify/Slack).
+    // Count meaningful interactive body elements to know if UIA is sufficient.
+    const nonChromeElements = (elements || []).filter(el => {
+      const name = (el.name || '').trim().toLowerCase();
+      const type = String(el.type || '').toLowerCase();
+      if (/^(close|minimize|maximize|restore|system|title\s*bar)$/i.test(name)) return false;
+      if (type.includes('titlebar') || type.includes('menubar') || type.includes('header')) return false;
+      return true;
+    });
+
     let ocr = null;
-    if (elements.length < 8 && capture && capture.dataUrl) {
+    if (capture && capture.dataUrl && (nonChromeElements.length < 25 || !elements.length)) {
       try {
         const { recognizeWordsInBase64 } = require('./ocr');
         ocr = await recognizeWordsInBase64(capture.dataUrl);

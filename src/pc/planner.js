@@ -195,20 +195,34 @@ function createPcPlanner(deps = {}) {
   }
 
   function describeControls(elements, goal, ocr) {
-    const list = (elements || []).slice(0, MAX_CONTROLS).map((element) => {
+    const isWindowManagement = /\b(close|minimize|maximize|restore)\b/i.test(String(goal || ''));
+    const filtered = (elements || []).filter(el => {
+      const name = (el.name || '').trim().toLowerCase();
+      if (!isWindowManagement && /^(close|minimize|maximize|restore|system|title\s*bar)$/i.test(name)) {
+        return false;
+      }
+      return true;
+    });
+
+    const list = filtered.slice(0, MAX_CONTROLS).map((element) => {
       const rect = element.rect || { x: 0, y: 0, w: 0, h: 0 };
       const type = String(element.type || '?').replace(/^(ControlType\.)?/, '');
       return `  ${element.id} | ${type} | ${JSON.stringify(clip(element.name, 60))} | ${rect.x},${rect.y},${rect.w},${rect.h}`;
     });
-    if (!list.length) {
-      let ocrSnippet = '';
-      if (ocr && (ocr.text || (ocr.words && ocr.words.length))) {
-        const wordsList = (ocr.words || []).slice(0, 100).map(w => `"${w.text}"`).filter((v, i, a) => a.indexOf(v) === i).join(', ');
-        ocrSnippet = `\nVisible text on screen (via local WinRT OCR):\n${wordsList || clip(ocr.text, 800)}`;
-      }
-      return `Controls: (the window exposes no standard UIA controls — canvas/Electron/custom UI)${ocrSnippet}\nGoal keywords: ${clip(goal, 80)}`;
+
+    let ocrSnippet = '';
+    if (ocr && (ocr.text || (ocr.words && ocr.words.length))) {
+      const wordsList = (ocr.words || [])
+        .slice(0, 100)
+        .map(w => `"${w.text}" (${w.x},${w.y})`)
+        .join(', ');
+      ocrSnippet = `\nVisible text on screen with coordinates (via local WinRT OCR):\n${wordsList || clip(ocr.text, 900)}`;
     }
-    return `Controls (id | type | name | left,top,width,height):\n${list.join('\n')}`;
+
+    if (!list.length) {
+      return `Controls: (the window exposes no standard UIA body controls — canvas/Electron/custom UI)${ocrSnippet}\nGoal keywords: ${clip(goal, 80)}`;
+    }
+    return `Controls (id | type | name | left,top,width,height):\n${list.join('\n')}${ocrSnippet}`;
   }
 
   function buildPrompt(ctx) {

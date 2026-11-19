@@ -1493,6 +1493,14 @@ class AgentRuntime extends EventEmitter {
                 goalAccomplished = true;
                 finalFeedback = `Navigated to ${intent.url || 'target page'}.`;
               }
+            } else if (act.type === ActionType.NEW_TAB && isSuccess && i === actionsInTurn.length - 1) {
+              const hasSubsequentAction = /\b(and|then|after|find|search|look|click|read|summarize|tell|extract|type|fill|buy|check|press)\b/i.test(exactPrompt);
+              const allTasksDone = activeTasks && activeTasks.length > 0 && activeTasks.every(t => t.status === 'completed');
+              const isPureNewTab = /^(?:(?:open|create|launch|new)\s+(?:a\s+)?tab(?:\s+for|\s+with|\s+to)?\s*[\w\s\-\.\/:#?&=]*)$/i.test(exactPrompt.trim()) && !hasSubsequentAction;
+              if (currentPlan.goalAccomplished || isPureNewTab || (allTasksDone && !hasSubsequentAction)) {
+                goalAccomplished = true;
+                finalFeedback = `Opened new tab: ${intent.url || 'target page'}.`;
+              }
             } else if (act.type === ActionType.TERMINAL_EXEC && isSuccess && i === actionsInTurn.length - 1) {
               const hasSubsequentAction = /\b(and|then|after|verify|check|run|exec)\b/i.test(exactPrompt);
               const allTasksDone = activeTasks && activeTasks.length > 0 && activeTasks.every(t => t.status === 'completed');
@@ -1708,9 +1716,39 @@ class AgentRuntime extends EventEmitter {
           }
         }
 
+        let completionMsg = '';
+        if (goalAborted) {
+          completionMsg = finalFeedback || 'Task stopped before completion.';
+        } else if (executedPlan && executedPlan.thought && executedPlan.thought.length > 15) {
+          let cleanSummary = executedPlan.thought;
+          // If thought is third-person planner reasoning monologue, convert to human-facing summary
+          if (/^(?:the\s+user\s+wants|the\s+user\s+requested|user\s+wants|user\s+requested|i\s+will\s+navigate|i\s+will|i\s+need\s+to|we\s+need\s+to)\b/i.test(cleanSummary)) {
+            const navSteps = stepHistory.filter(s => s.action === 'NAVIGATE' || s.action === 'NEW_TAB');
+            if (navSteps.length > 1) {
+              const urls = navSteps.map(s => (s.summary || '').replace(/^(?:NAVIGATE|NEW_TAB)\s*/i, '').trim()).filter(Boolean);
+              cleanSummary = `I've opened the requested sites across ${urls.length} tabs:\n` + urls.map(u => `• ${u}`).join('\n');
+            } else if (navSteps.length === 1) {
+              const url = (navSteps[0].summary || '').replace(/^(?:NAVIGATE|NEW_TAB)\s*/i, '').trim();
+              cleanSummary = `Navigated to ${url}.`;
+            } else {
+              cleanSummary = stepHistory.length > 0
+                ? `Completed ${stepHistory.length} action(s) for: "${exactPrompt}".`
+                : `Completed task: ${exactPrompt}`;
+            }
+          }
+          completionMsg = cleanSummary;
+        } else if (finalFeedback) {
+          completionMsg = finalFeedback;
+        } else {
+          completionMsg = stepHistory.length > 1
+            ? `Completed task successfully across ${stepHistory.length} step(s).`
+            : 'Task completed successfully.';
+        }
+
         // Record interaction in session memory log
         if (this.currentTask) {
           this.currentTask.status = goalAborted ? 'FAILED' : 'COMPLETED';
+          this.currentTask.finalOutcome = completionMsg;
           this.setState(goalAborted ? AgentState.IDLE : AgentState.COMPLETED);
           this.emitTaskModeUpdate();
           if (!goalAborted) {
@@ -1725,25 +1763,12 @@ class AgentRuntime extends EventEmitter {
           pageContext: pageContext,
           modelResponse: executedPlan || initialPlan,
           status: goalAborted ? 'aborted' : 'success',
-          feedback: finalFeedback || (executedPlan && executedPlan.thought) || (goalAborted ? 'Task stopped before completion.' : 'Task completed successfully')
+          feedback: completionMsg
         });
         
         // Also record in Jarvis session
         if (this.jarvisSession) {
-          this.jarvisSession.addTurn(exactPrompt, finalFeedback || (executedPlan && executedPlan.thought) || (goalAborted ? 'Task stopped before completion.' : 'Task completed successfully'), pageContext);
-        }
-
-        let completionMsg = '';
-        if (goalAborted) {
-          completionMsg = finalFeedback || 'Task stopped before completion.';
-        } else if (executedPlan && executedPlan.thought && executedPlan.thought.length > 15) {
-          completionMsg = executedPlan.thought;
-        } else if (finalFeedback) {
-          completionMsg = finalFeedback;
-        } else {
-          completionMsg = stepHistory.length > 1
-            ? `Completed task successfully across ${stepHistory.length} step(s).`
-            : 'Task completed successfully.';
+          this.jarvisSession.addTurn(exactPrompt, completionMsg, pageContext);
         }
         this.emit('feedback', { message: completionMsg, level: goalAborted ? 'warning' : 'success', isCompletion: true });
         this.emit('adion-notification', {

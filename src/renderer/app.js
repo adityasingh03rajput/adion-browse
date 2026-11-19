@@ -1370,8 +1370,21 @@ document.addEventListener('DOMContentLoaded', () => {
     if (sidePanelBody) sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
   }
 
+  let lastAssistantMsgText = '';
+  let lastAssistantMsgTime = 0;
+
   function appendCopilotAssistantResponse(text) {
     if (!sidePanelTimeline || !text) return;
+    const clean = String(text).trim();
+    if (!clean) return;
+
+    const now = Date.now();
+    if (clean === lastAssistantMsgText && now - lastAssistantMsgTime < 2500) {
+      return;
+    }
+    lastAssistantMsgText = clean;
+    lastAssistantMsgTime = now;
+
     if (sidePanelEmptyState) sidePanelEmptyState.style.display = 'none';
 
     hideAntigravityWorking();
@@ -3864,12 +3877,13 @@ document.addEventListener('DOMContentLoaded', () => {
   if (window.adionAPI && window.adionAPI.agent) {
     window.adionAPI.agent.onStateChange((data) => {
       setAdionState(data.state);
-      if (data.state === 'IDLE' || data.state === 'COMPLETED') {
+      // Only finalize progress card when task is genuinely completed
+      if (data.state === 'COMPLETED') {
         setTimeout(() => {
           if (activeAntigravityCard && !activeAntigravityCard.isDone) {
             finishAntigravityProgress();
           }
-        }, 1200);
+        }, 800);
       }
     });
 
@@ -3886,15 +3900,22 @@ document.addEventListener('DOMContentLoaded', () => {
             hideAntigravityWorking();
             finishAntigravityProgress();
             appendCopilotAssistantResponse(data.message);
-          } else if (data.isStep || (data.tasks && data.tasks.length > 0)) {
+          } else if (data.isStep || (data.tasks && data.tasks.length > 0) || isProgressStep(data)) {
             hideAntigravityWorking();
             updateAntigravityStep({ tag: data.tasks ? 'PLAN' : 'STEP', text: data.message });
           } else if (activeAntigravityCard && !activeAntigravityCard.isDone) {
             updateAntigravityStep({ tag: isAlert ? 'WARN' : 'INFO', text: data.message });
           } else {
-            hideAntigravityWorking();
-            finishAntigravityProgress();
-            appendCopilotAssistantResponse(data.message);
+            // Unsolicited feedback when no card is active:
+            // Route action logs to step updates to avoid polluting the chat with internal step messages
+            const text = String(data.message || '').trim();
+            if (/^(?:opened new tab|navigated to|clicked|typed|ran terminal|desktop:)/i.test(text)) {
+              updateAntigravityStep({ tag: 'STEP', text });
+            } else {
+              hideAntigravityWorking();
+              finishAntigravityProgress();
+              appendCopilotAssistantResponse(data.message);
+            }
           }
         }
       }
