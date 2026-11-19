@@ -1221,38 +1221,76 @@ document.addEventListener('DOMContentLoaded', () => {
     return activeAntigravityCard;
   }
 
-  function updateAntigravityStep(stepMsg) {
-    if (!stepMsg || !sidePanelTimeline) return;
+  function updateAntigravityStep(stepInput) {
+    if (!stepInput || !sidePanelTimeline) return;
     hideAntigravityWorking();
     if (!activeAntigravityCard || activeAntigravityCard.isDone) {
       startAntigravityProgress();
     }
 
-    const lower = stepMsg.toLowerCase();
     let tag = 'STEP';
     let tagClass = '';
+    let label = '';
 
-    if (lower.includes('navigating') || lower.includes('navigated') || lower.includes('http://') || lower.includes('https://') || lower.includes('tab')) {
-      tag = 'NAV';
-      tagClass = 'tag-nav';
-    } else if (lower.includes('terminal') || lower.includes('powershell') || lower.includes('cmd') || lower.includes('executed terminal') || lower.includes('ran terminal')) {
-      tag = 'TERM';
-      tagClass = 'tag-term';
-    } else if (lower.includes('plan') || lower.includes('goal breakdown') || lower.includes('strategy')) {
-      tag = 'PLAN';
-      tagClass = 'tag-plan';
-    } else if (lower.includes('inspect') || lower.includes('click') || lower.includes('tap') || lower.includes('type') || lower.includes('grounding') || lower.includes('element')) {
-      tag = 'DOM';
-      tagClass = 'tag-dom';
+    if (typeof stepInput === 'object') {
+      if (stepInput.type) {
+        // Strongly-typed Action lifecycle event from agentRuntime
+        const actType = String(stepInput.type).toUpperCase();
+        if (actType === 'NAVIGATE' || actType === 'NEW_TAB' || actType === 'CLOSE_TAB' || actType === 'SWITCH_TAB' || actType === 'RELOAD' || actType === 'GO_BACK' || actType === 'GO_FORWARD') {
+          tag = 'NAV';
+          tagClass = 'tag-nav';
+          if (actType === 'NAVIGATE') label = `Navigated to ${stepInput.url || 'target page'}`;
+          else if (actType === 'NEW_TAB') label = `Opened new tab: ${stepInput.url || 'blank'}`;
+          else if (actType === 'CLOSE_TAB') label = `Closed tab ${stepInput.target || ''}`.trim();
+          else if (actType === 'SWITCH_TAB') label = `Switched to tab ${stepInput.target || ''}`.trim();
+          else label = actType.replace('_', ' ').toLowerCase();
+        } else if (actType === 'TERMINAL_EXEC') {
+          tag = 'TERM';
+          tagClass = 'tag-term';
+          label = `Ran ${stepInput.command || 'terminal command'}`;
+        } else if (actType.startsWith('PC_') || actType === 'OPEN_APP') {
+          tag = 'PC';
+          tagClass = 'tag-dom';
+          label = `Desktop: ${actType.replace('PC_', '').toLowerCase()} ${stepInput.key || stepInput.text || stepInput.app || ''}`.trim();
+        } else if (actType.includes('CLICK') || actType.includes('INPUT') || actType.includes('SCROLL') || actType.includes('DOM') || actType.includes('INSPECT')) {
+          tag = 'DOM';
+          tagClass = 'tag-dom';
+          if (actType === 'INPUT_TEXT') label = `Typed "${(stepInput.text || '').slice(0, 32)}"`;
+          else if (actType.includes('CLICK')) label = `Clicked ${stepInput.target || 'element'}`;
+          else if (actType === 'INSPECT_ELEMENT') label = `Inspected ${stepInput.target || 'element'}`;
+          else label = `${actType.toLowerCase()} ${stepInput.target || ''}`.trim();
+        } else {
+          tag = 'ACT';
+          tagClass = 'tag-plan';
+          label = stepInput.text || stepInput.message || actType;
+        }
+      } else {
+        tag = stepInput.tag || 'STEP';
+        if (tag === 'NAV') tagClass = 'tag-nav';
+        else if (tag === 'DOM') tagClass = 'tag-dom';
+        else if (tag === 'TERM') tagClass = 'tag-term';
+        else if (tag === 'PLAN') tagClass = 'tag-plan';
+        else tagClass = '';
+        label = stepInput.text || stepInput.message || '';
+      }
+    } else {
+      label = String(stepInput).trim();
+      const lower = label.toLowerCase();
+      if (lower.includes('http://') || lower.includes('https://') || lower.includes('tab') || lower.includes('navigat')) {
+        tag = 'NAV'; tagClass = 'tag-nav';
+      } else if (lower.includes('terminal') || lower.includes('powershell') || lower.includes('cmd') || lower.includes('ran terminal')) {
+        tag = 'TERM'; tagClass = 'tag-term';
+      } else if (lower.includes('plan') || lower.includes('goal breakdown') || lower.includes('strategy')) {
+        tag = 'PLAN'; tagClass = 'tag-plan';
+      } else if (lower.includes('click') || lower.includes('tap') || lower.includes('type') || lower.includes('inspect')) {
+        tag = 'DOM'; tagClass = 'tag-dom';
+      }
+      label = label.replace(/^(?:\[PLAN\]\s*)?(?:📋\s*)?(?:step\s*\d+[\s\:\/\d]*|goal breakdown\:|autonomous agent coordinating\:)\s*/i, '').trim();
     }
 
-    // Clean prefix for label
-    let cleanText = stepMsg
-      .replace(/^(?:\[PLAN\]\s*)?(?:📋\s*)?(?:step\s*\d+[\s\:\/\d]*|goal breakdown\:|autonomous agent coordinating\:)\s*/i, '')
-      .trim();
+    if (!label) return;
 
-    // If multiple lines (e.g. goal breakdown checklist), add each
-    const lines = cleanText.split('\n').filter(Boolean);
+    const lines = label.split('\n').filter(Boolean);
     lines.forEach(line => {
       const lineText = line.replace(/^\d+[\.\)]\s*/, '').trim();
       const stepItem = document.createElement('div');
@@ -1265,9 +1303,8 @@ document.addEventListener('DOMContentLoaded', () => {
       activeAntigravityCard.stepCount++;
     });
 
-    // Update the running card title to the active action
-    if (activeAntigravityCard.titleEl && cleanText) {
-      const firstLine = lines[0] || cleanText;
+    if (activeAntigravityCard.titleEl && lines.length > 0) {
+      const firstLine = lines[0];
       const concise = firstLine.replace(/^(running|executing|navigating to)\s*/i, '').trim();
       activeAntigravityCard.titleEl.textContent = `Running ${concise.slice(0, 36)}...`;
     }
@@ -1315,70 +1352,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!dataOrText) return false;
     if (typeof dataOrText === 'object') {
       if (dataOrText.isCompletion) return false;
-      if (dataOrText.isStep) return true;
+      if (dataOrText.isStep || dataOrText.type || dataOrText.tasks) return true;
       dataOrText = dataOrText.message || '';
     }
-    const trimmed = String(dataOrText).trim();
-    const lower = trimmed.toLowerCase();
-
-    // Explicit progress, sub-actions and coordination messages
-    if (
-      lower.startsWith('analyzing current page') ||
-      lower.startsWith('autonomous agent coordinating') ||
-      lower.startsWith('coordinating:') ||
-      lower.startsWith('goal breakdown:') ||
-      lower.startsWith('📋 goal breakdown:') ||
-      lower.startsWith('[plan]') ||
-      /^step\s*\d+/i.test(lower) ||
-      /^📋\s*step\s*\d+/i.test(lower) ||
-      /^iter\s*\d+/i.test(lower) ||
-      lower.startsWith('opened new tab') ||
-      lower.startsWith('opened tab') ||
-      lower.startsWith('opened live telemetry') ||
-      lower.startsWith('opened whatsapp') ||
-      lower.startsWith('opened settings') ||
-      lower.startsWith('opened bookmarks') ||
-      lower.startsWith('opened history') ||
-      lower.startsWith('switched to tab') ||
-      lower.startsWith('switched to active') ||
-      lower.startsWith('switched developer tools') ||
-      lower.startsWith('closed active tab') ||
-      (lower.startsWith('closed ') && lower.includes('tab')) ||
-      lower.startsWith('navigating to') ||
-      lower.startsWith('navigated to') ||
-      lower.startsWith('navigated back') ||
-      lower.startsWith('navigated forward') ||
-      lower.startsWith('locating ') ||
-      lower.startsWith('searching for ') ||
-      lower.startsWith('scanning ') ||
-      lower.startsWith('inspected ') ||
-      lower.startsWith('clicked ') ||
-      lower.startsWith('tapped ') ||
-      lower.startsWith('typing ') ||
-      lower.startsWith('dispatched ') ||
-      lower.startsWith('scrolled ') ||
-      lower.startsWith('scroll ') ||
-      lower.startsWith('driving the desktop') ||
-      lower.startsWith('computer use mode') ||
-      lower.startsWith('terminal command') ||
-      lower.startsWith('executed terminal') ||
-      lower.startsWith('ran terminal') ||
-      lower.startsWith('autonomous runway extended') ||
-      lower.startsWith('waiting for continuation') ||
-      lower.startsWith('microphone stream open') ||
-      lower.startsWith('transcribing speech') ||
-      lower.startsWith('👂 listening') ||
-      lower.startsWith('re-sensing page dom') ||
-      lower.startsWith('✓ checkpoint approved') ||
-      lower.startsWith('🖐️ manual takeover') ||
-      lower.startsWith('▶️ control handed back') ||
-      lower.startsWith('🛑 stopped as requested') ||
-      lower.startsWith('⏹️ task stopped')
-    ) {
-      return true;
-    }
-
-    return false;
+    return Boolean(activeAntigravityCard && !activeAntigravityCard.isDone);
   }
 
   function appendCopilotUserMessage(text) {
@@ -3173,6 +3150,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.adionAPI.agent.onActionStarted((action) => {
       showAgentHud('EXECUTING_ACTION', `Executing: ${action.type}`, isListening);
+      updateAntigravityStep(action);
     });
 
     window.adionAPI.agent.onActionFinished((action) => {
@@ -3636,10 +3614,6 @@ document.addEventListener('DOMContentLoaded', () => {
           const domainMatch = text.match(/(?:open|go to|navigate to|visit)\s+([a-zA-Z0-9][a-zA-Z0-9.\-]*\.[a-zA-Z]{2,})/i);
           if (domainMatch) {
             const domain = domainMatch[1].toLowerCase();
-            if (domain.includes('canva')) return { type: 'NAVIGATE', url: 'https://www.canva.com' };
-            if (domain.includes('github')) return { type: 'NAVIGATE', url: 'https://github.com' };
-            if (domain.includes('youtube')) return { type: 'NAVIGATE', url: 'https://www.youtube.com' };
-            if (domain.includes('google')) return { type: 'NAVIGATE', url: 'https://www.google.com' };
             return { type: 'NAVIGATE', url: `https://${domain}` };
           }
           break;
@@ -3912,9 +3886,11 @@ document.addEventListener('DOMContentLoaded', () => {
             hideAntigravityWorking();
             finishAntigravityProgress();
             appendCopilotAssistantResponse(data.message);
-          } else if (isProgressStep(data)) {
+          } else if (data.isStep || (data.tasks && data.tasks.length > 0)) {
             hideAntigravityWorking();
-            updateAntigravityStep(data.message);
+            updateAntigravityStep({ tag: data.tasks ? 'PLAN' : 'STEP', text: data.message });
+          } else if (activeAntigravityCard && !activeAntigravityCard.isDone) {
+            updateAntigravityStep({ tag: isAlert ? 'WARN' : 'INFO', text: data.message });
           } else {
             hideAntigravityWorking();
             finishAntigravityProgress();
@@ -3923,6 +3899,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
     });
+
+    if (window.adionAPI.taskMode && typeof window.adionAPI.taskMode.onCompleted === 'function') {
+      window.adionAPI.taskMode.onCompleted((task) => {
+        hideAntigravityWorking();
+        finishAntigravityProgress();
+        if (task && task.finalOutcome) {
+          appendCopilotAssistantResponse(task.finalOutcome);
+        }
+      });
+    }
 
     if (typeof window.adionAPI.agent.onInspectorTelemetry === 'function') {
       window.adionAPI.agent.onInspectorTelemetry((data) => {

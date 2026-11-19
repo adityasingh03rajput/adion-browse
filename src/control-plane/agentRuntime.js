@@ -792,7 +792,7 @@ class AgentRuntime extends EventEmitter {
     }
 
     this.setState(AgentState.PARSING_INTENT, { input: exactPrompt });
-    this.emit('feedback', { message: `Autonomous Agent coordinating: "${text}"`, level: 'info' });
+    this.emit('feedback', { message: `Autonomous Agent coordinating: "${text}"`, level: 'info', isStep: true });
 
     // Meta Skills Commands (/skills, /skill list, /skill add, /skill delete, /skill toggle)
     if (this.skillManager) {
@@ -1068,7 +1068,8 @@ class AgentRuntime extends EventEmitter {
           this.emit('feedback', {
             message: `📋 Goal Breakdown:\n${taskSummary}`,
             level: 'info',
-            tasks: activeTasks
+            tasks: activeTasks,
+            isStep: true
           });
         }
 
@@ -1171,7 +1172,8 @@ class AgentRuntime extends EventEmitter {
           console.log(`[AgentRuntime GoalLoop Iteration #${iteration}]`, planThought);
           this.emit('feedback', { 
             message: `Step ${iteration}: ${planThought}`, 
-            level: 'success' 
+            level: 'success',
+            isStep: true
           });
 
           let actionsInTurn = Array.isArray(currentPlan.actions) ? currentPlan.actions : [];
@@ -1713,7 +1715,18 @@ class AgentRuntime extends EventEmitter {
           this.jarvisSession.addTurn(exactPrompt, finalFeedback || (executedPlan && executedPlan.thought) || (goalAborted ? 'Task stopped before completion.' : 'Task completed successfully'), pageContext);
         }
 
-        const completionMsg = finalFeedback || (executedPlan && executedPlan.thought) || (goalAborted ? 'Task stopped before completion.' : 'Task completed successfully.');
+        let completionMsg = '';
+        if (goalAborted) {
+          completionMsg = finalFeedback || 'Task stopped before completion.';
+        } else if (executedPlan && executedPlan.thought && executedPlan.thought.length > 15) {
+          completionMsg = executedPlan.thought;
+        } else if (finalFeedback) {
+          completionMsg = finalFeedback;
+        } else {
+          completionMsg = stepHistory.length > 1
+            ? `Completed task successfully across ${stepHistory.length} step(s).`
+            : 'Task completed successfully.';
+        }
         this.emit('feedback', { message: completionMsg, level: goalAborted ? 'warning' : 'success', isCompletion: true });
         this.emit('adion-notification', {
           type: goalAborted ? 'warning' : 'success',
