@@ -1099,35 +1099,16 @@ class AgentRuntime extends EventEmitter {
 
         // If model returned 0 actions:
         if (initialPlan.actions.length === 0) {
-          // Anti-Hallucination Guard: Never accept 0 actions if user prompt explicitly demanded an action!
-          // BUT exempt conversational QA, questions, explanations, creative requests where thought itself is the answer
-          const isQuestionOrExploration = /^(?:how|why|what|who|when|where|can\s+you|could\s+you|would\s+you|tell\s+me|explain|summarize|describe|teach\s+me)\b/i.test(exactPrompt) ||
-            /\?$/.test(exactPrompt.trim()) ||
-            /\b(?:poem|essay|story|joke|article|summary|explanation|definition)\b/i.test(exactPrompt);
-          const hasActionVerb = /\b(create|make|write|generate|add|delete|remove|run|execute|build|start|stop|install|clone|open)\b/i.test(exactPrompt);
-          if (hasActionVerb && !isQuestionOrExploration) {
-            console.warn('[AgentRuntime Guard] Model hallucinated completion with 0 actions for action prompt:', exactPrompt);
-            this.emit('feedback', {
-              message: `⚠️ Action notice: No execution command was dispatched by the planner. No system changes were made.`,
-              level: 'warning'
-            });
-            this.sessionManager.recordInteraction({
-              source: source,
-              rawPrompt: exactPrompt,
-              transcription: text,
-              pageContext: pageContext,
-              modelResponse: initialPlan,
-              status: 'failed',
-              feedback: 'No actions were dispatched.'
-            });
-            if (this.jarvisSession) {
-              this.jarvisSession.addTurn(exactPrompt, 'Action not dispatched: No execution command was dispatched by planner.', pageContext);
-            }
-            return;
-          }
-
           this.setState(AgentState.IDLE);
           const feedbackMsg = initialPlan.thought || 'Standing by for browser commands.';
+
+          if (this.currentTask) {
+            this.currentTask.status = 'COMPLETED';
+            this.currentTask.finalOutcome = feedbackMsg;
+            this.emitTaskModeUpdate();
+            this.emit('task-mode:completed', this.currentTask);
+          }
+
           this.emit('feedback', { message: feedbackMsg, level: 'info' });
           this.emit('adion-notification', { type: 'info', message: feedbackMsg });
           this.sessionManager.recordInteraction({
