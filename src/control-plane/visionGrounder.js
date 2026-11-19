@@ -104,9 +104,78 @@ class VisionGrounder {
     imageWidth = Math.max(1, Math.round(imageWidth || cssWidth));
     imageHeight = Math.max(1, Math.round(imageHeight || cssHeight));
 
+    // Tier 2: Foveated RoI Cropping & High-Efficiency Image Optimization
+    // Instead of sending uncompressed 1920x1080 PNGs (>2MB, ~1,560 vision tokens),
+    // we use Electron's nativeImage to:
+    // 1. Detect spatial hints in the natural query (e.g. "top right", "sidebar", "toolbar") and crop directly to the RoI.
+    // 2. Clamp maximum dimensions to 1024px, preserving full UI clarity while cutting vision tokens by ~75%.
+    // 3. Compress to high-quality JPEG (85%), dropping network payload from ~2.5MB to <120KB.
+    let finalPayloadBase64 = screenshot;
+    let payloadWidth = imageWidth;
+    let payloadHeight = imageHeight;
+    let cropOffset = { x: 0, y: 0 };
+    let downscaleFactor = 1;
+
+    try {
+      const { nativeImage } = require('electron');
+      if (nativeImage) {
+        const rawBuffer = Buffer.from(screenshot, 'base64');
+        let img = nativeImage.createFromBuffer(rawBuffer);
+        if (!img.isEmpty()) {
+          const imgSize = img.getSize();
+          let currentW = imgSize.width;
+          let currentH = imgSize.height;
+
+          // 1. Spatial RoI detection
+          const qLower = naturalQuery.toLowerCase();
+          let roiRect = null;
+          if (qLower.includes('top right') || qLower.includes('upper right') || qLower.includes('top-right')) {
+            roiRect = { x: Math.round(currentW * 0.45), y: 0, width: Math.round(currentW * 0.55), height: Math.round(currentH * 0.55) };
+          } else if (qLower.includes('top left') || qLower.includes('upper left') || qLower.includes('top-left')) {
+            roiRect = { x: 0, y: 0, width: Math.round(currentW * 0.55), height: Math.round(currentH * 0.55) };
+          } else if (qLower.includes('bottom right')) {
+            roiRect = { x: Math.round(currentW * 0.45), y: Math.round(currentH * 0.45), width: Math.round(currentW * 0.55), height: Math.round(currentH * 0.55) };
+          } else if (qLower.includes('bottom left')) {
+            roiRect = { x: 0, y: Math.round(currentH * 0.45), width: Math.round(currentW * 0.55), height: Math.round(currentH * 0.55) };
+          } else if (qLower.includes('toolbar') || qLower.includes('top bar') || qLower.includes('header') || qLower.includes('navbar')) {
+            roiRect = { x: 0, y: 0, width: currentW, height: Math.min(Math.round(currentH * 0.35), 240) };
+          } else if (qLower.includes('sidebar') || qLower.includes('left panel')) {
+            roiRect = { x: 0, y: 0, width: Math.min(Math.round(currentW * 0.35), 380), height: currentH };
+          }
+
+          if (roiRect) {
+            img = img.crop(roiRect);
+            cropOffset = { x: roiRect.x, y: roiRect.y };
+            currentW = roiRect.width;
+            currentH = roiRect.height;
+            console.log(`[VisionGrounder] 🔍 Foveated RoI cropped to (${roiRect.x}, ${roiRect.y}, ${roiRect.width}x${roiRect.height}) for "${naturalQuery}"`);
+          }
+
+          // 2. Dimension clamping: keep max dimension <= 1024px to fit within single/dual tile vision budget
+          const longest = Math.max(currentW, currentH);
+          if (longest > 1024) {
+            downscaleFactor = 1024 / longest;
+            const newW = Math.round(currentW * downscaleFactor);
+            const newH = Math.round(currentH * downscaleFactor);
+            img = img.resize({ width: newW, height: newH, quality: 'good' });
+            currentW = newW;
+            currentH = newH;
+          }
+
+          // 3. Compress to high-efficiency JPEG
+          const jpegBuf = img.toJPEG(85);
+          finalPayloadBase64 = jpegBuf.toString('base64');
+          payloadWidth = currentW;
+          payloadHeight = currentH;
+        }
+      }
+    } catch (optErr) {
+      console.warn('[VisionGrounder] Foveated image optimization fallback:', optErr.message);
+    }
+
     const prompt = [
       'You are a UI grounding engine for a web browser.',
-      `The attached image is a ${imageWidth}x${imageHeight} pixel screenshot.`,
+      `The attached image is a ${payloadWidth}x${payloadHeight} pixel screenshot.`,
       `Find the single UI element that best matches this description: "${naturalQuery}".`,
       'Only consider elements that are actually visible.',
       'Return RAW JSON only, with these fields:',
@@ -121,7 +190,7 @@ class VisionGrounder {
         role: 'user',
         content: [
           { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: `data:${screenshotOverride ? 'image/jpeg' : 'image/png'};base64,${screenshot}` } }
+          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${finalPayloadBase64}` } }
         ]
       }],
       temperature: 0,
@@ -177,11 +246,17 @@ class VisionGrounder {
         return { success: false, reason: parsed?.reason || 'vision-element-not-found', model: this.visionModel };
       }
 
-      // The model answers in screenshot pixels; convert to CSS viewport pixels.
+      // Remap from payload space (which may be cropped and downscaled) back to original screenshot space
+      const unscaledX = Math.round(Number(parsed.x) / downscaleFactor);
+      const unscaledY = Math.round(Number(parsed.y) / downscaleFactor);
+      const origScreenshotX = unscaledX + cropOffset.x;
+      const origScreenshotY = unscaledY + cropOffset.y;
+
+      // Convert from original screenshot pixels to CSS viewport pixels.
       const scaleX = cssWidth / imageWidth;
       const scaleY = cssHeight / imageHeight;
-      const x = Math.round(Number(parsed.x) * scaleX);
-      const y = Math.round(Number(parsed.y) * scaleY);
+      const x = Math.round(origScreenshotX * scaleX);
+      const y = Math.round(origScreenshotY * scaleY);
       if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > cssWidth || y > cssHeight) {
         return { success: false, reason: 'vision-invalid-coordinates', model: this.visionModel };
       }
