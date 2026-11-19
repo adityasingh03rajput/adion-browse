@@ -1125,9 +1125,36 @@ document.addEventListener('DOMContentLoaded', () => {
     return rendered;
   }
 
-  function startAntigravityProgress(initialGoal = 'Working') {
+  let activeWorkingEl = null;
+
+  function showAntigravityWorking() {
+    if (!sidePanelTimeline) return;
+    hideAntigravityWorking();
+    const workingEl = document.createElement('div');
+    workingEl.className = 'antigravity-working-status';
+    workingEl.id = 'antigravityWorkingStatus';
+    workingEl.textContent = 'Working';
+    sidePanelTimeline.appendChild(workingEl);
+    activeWorkingEl = workingEl;
+    if (sidePanelBody) sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
+  }
+
+  function hideAntigravityWorking() {
+    if (activeWorkingEl && activeWorkingEl.parentNode) {
+      activeWorkingEl.parentNode.removeChild(activeWorkingEl);
+    }
+    const existing = document.getElementById('antigravityWorkingStatus');
+    if (existing && existing.parentNode) {
+      existing.parentNode.removeChild(existing);
+    }
+    activeWorkingEl = null;
+  }
+
+  function startAntigravityProgress(initialGoal = '') {
     if (!sidePanelTimeline) return null;
     if (sidePanelEmptyState) sidePanelEmptyState.style.display = 'none';
+
+    hideAntigravityWorking();
 
     // Finish prior running card if any
     if (activeAntigravityCard && !activeAntigravityCard.isDone) {
@@ -1138,8 +1165,8 @@ document.addEventListener('DOMContentLoaded', () => {
     cardEl.className = 'antigravity-progress-card running';
 
     const cleanGoal = (initialGoal || '').trim();
-    const shortGoal = cleanGoal ? cleanGoal.slice(0, 42) : 'Working';
-    const headerTitle = shortGoal ? `Running ${shortGoal}...` : 'Working...';
+    const shortGoal = cleanGoal ? cleanGoal.slice(0, 42) : '';
+    const headerTitle = shortGoal ? `Running ${shortGoal}...` : 'Running...';
 
     cardEl.innerHTML = `
       <div class="antigravity-progress-header" title="Toggle execution steps">
@@ -1196,6 +1223,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updateAntigravityStep(stepMsg) {
     if (!stepMsg || !sidePanelTimeline) return;
+    hideAntigravityWorking();
     if (!activeAntigravityCard || activeAntigravityCard.isDone) {
       startAntigravityProgress();
     }
@@ -1207,7 +1235,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (lower.includes('navigating') || lower.includes('navigated') || lower.includes('http://') || lower.includes('https://') || lower.includes('tab')) {
       tag = 'NAV';
       tagClass = 'tag-nav';
-    } else if (lower.includes('terminal') || lower.includes('powershell') || lower.includes('cmd') || lower.includes('executed terminal')) {
+    } else if (lower.includes('terminal') || lower.includes('powershell') || lower.includes('cmd') || lower.includes('executed terminal') || lower.includes('ran terminal')) {
       tag = 'TERM';
       tagClass = 'tag-term';
     } else if (lower.includes('plan') || lower.includes('goal breakdown') || lower.includes('strategy')) {
@@ -1248,6 +1276,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function finishAntigravityProgress(outcomeSummary = null) {
+    hideAntigravityWorking();
     if (!activeAntigravityCard || activeAntigravityCard.isDone) return;
     
     clearInterval(activeAntigravityCard.timer);
@@ -1282,12 +1311,17 @@ document.addEventListener('DOMContentLoaded', () => {
     activeAntigravityCard = null;
   }
 
-  function isProgressStep(text) {
-    if (!text) return false;
-    const trimmed = text.trim();
+  function isProgressStep(dataOrText) {
+    if (!dataOrText) return false;
+    if (typeof dataOrText === 'object') {
+      if (dataOrText.isCompletion) return false;
+      if (dataOrText.isStep) return true;
+      dataOrText = dataOrText.message || '';
+    }
+    const trimmed = String(dataOrText).trim();
     const lower = trimmed.toLowerCase();
 
-    // Explicit progress and coordination messages
+    // Explicit progress, sub-actions and coordination messages
     if (
       lower.startsWith('analyzing current page') ||
       lower.startsWith('autonomous agent coordinating') ||
@@ -1298,8 +1332,22 @@ document.addEventListener('DOMContentLoaded', () => {
       /^step\s*\d+/i.test(lower) ||
       /^📋\s*step\s*\d+/i.test(lower) ||
       /^iter\s*\d+/i.test(lower) ||
+      lower.startsWith('opened new tab') ||
+      lower.startsWith('opened tab') ||
+      lower.startsWith('opened live telemetry') ||
+      lower.startsWith('opened whatsapp') ||
+      lower.startsWith('opened settings') ||
+      lower.startsWith('opened bookmarks') ||
+      lower.startsWith('opened history') ||
+      lower.startsWith('switched to tab') ||
+      lower.startsWith('switched to active') ||
+      lower.startsWith('switched developer tools') ||
+      lower.startsWith('closed active tab') ||
+      (lower.startsWith('closed ') && lower.includes('tab')) ||
       lower.startsWith('navigating to') ||
       lower.startsWith('navigated to') ||
+      lower.startsWith('navigated back') ||
+      lower.startsWith('navigated forward') ||
       lower.startsWith('locating ') ||
       lower.startsWith('searching for ') ||
       lower.startsWith('scanning ') ||
@@ -1308,10 +1356,13 @@ document.addEventListener('DOMContentLoaded', () => {
       lower.startsWith('tapped ') ||
       lower.startsWith('typing ') ||
       lower.startsWith('dispatched ') ||
+      lower.startsWith('scrolled ') ||
+      lower.startsWith('scroll ') ||
       lower.startsWith('driving the desktop') ||
       lower.startsWith('computer use mode') ||
       lower.startsWith('terminal command') ||
       lower.startsWith('executed terminal') ||
+      lower.startsWith('ran terminal') ||
       lower.startsWith('autonomous runway extended') ||
       lower.startsWith('waiting for continuation') ||
       lower.startsWith('microphone stream open') ||
@@ -1336,15 +1387,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const msgEl = document.createElement('div');
     msgEl.className = 'copilot-msg-user';
-    const copyBtnHtml = `<button class="copilot-btn-copy" title="Copy text" onclick="event.stopPropagation(); const targetBody = this.closest('.copilot-msg-user').querySelector('.copilot-user-content'); const textToCopy = targetBody ? targetBody.innerText.trim() : this.closest('.copilot-msg-user').innerText.trim(); navigator.clipboard.writeText(textToCopy); const prev = this.innerHTML; this.innerHTML='<svg width=\\'12\\' height=\\'12\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'#10b981\\' stroke-width=\\'2.5\\'><polyline points=\\'20 6 9 17 4 12\\'></polyline></svg>'; setTimeout(() => { this.innerHTML=prev; }, 1400);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>`;
-
-    msgEl.innerHTML = `
-      <div class="copilot-user-header">
-        <span class="copilot-user-badge">You</span>
-        ${copyBtnHtml}
-      </div>
-      <div class="copilot-user-content">${escapeHTML(text)}</div>
-    `;
+    msgEl.textContent = text;
 
     sidePanelTimeline.appendChild(msgEl);
     if (sidePanelBody) sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
@@ -1354,23 +1397,40 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!sidePanelTimeline || !text) return;
     if (sidePanelEmptyState) sidePanelEmptyState.style.display = 'none';
 
-    // Finish any active running progress card before outputting assistant response
+    hideAntigravityWorking();
     finishAntigravityProgress();
 
     const msgEl = document.createElement('div');
     msgEl.className = 'antigravity-assistant-msg';
-    const copyBtnHtml = `<button class="copilot-btn-copy" title="Copy text" onclick="event.stopPropagation(); const content = this.closest('.antigravity-assistant-msg').querySelector('.antigravity-assistant-content'); const textToCopy = content ? content.innerText.trim() : this.closest('.antigravity-assistant-msg').innerText.trim(); navigator.clipboard.writeText(textToCopy); const prev = this.innerHTML; this.innerHTML='<svg width=\\'12\\' height=\\'12\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'#10b981\\' stroke-width=\\'2.5\\'><polyline points=\\'20 6 9 17 4 12\\'></polyline></svg>'; setTimeout(() => { this.innerHTML=prev; }, 1400);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>`;
 
     msgEl.innerHTML = `
-      <div class="antigravity-assistant-header">
-        <span class="antigravity-assistant-badge">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
-          Adion
-        </span>
-        ${copyBtnHtml}
-      </div>
       <div class="antigravity-assistant-content">${renderCleanMarkdown(text)}</div>
+      <div class="antigravity-msg-footer">
+        <button class="antigravity-action-btn btn-copy-resp" title="Copy text">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+        </button>
+        <button class="antigravity-action-btn" title="Good response">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>
+        </button>
+        <button class="antigravity-action-btn" title="Bad response">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"></path></svg>
+        </button>
+        <span class="antigravity-action-time">Just now</span>
+      </div>
     `;
+
+    const copyBtn = msgEl.querySelector('.btn-copy-resp');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const contentEl = msgEl.querySelector('.antigravity-assistant-content');
+        const textToCopy = contentEl ? contentEl.innerText.trim() : msgEl.innerText.trim();
+        navigator.clipboard.writeText(textToCopy);
+        const original = copyBtn.innerHTML;
+        copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        setTimeout(() => { copyBtn.innerHTML = original; }, 1400);
+      });
+    }
 
     sidePanelTimeline.appendChild(msgEl);
     if (sidePanelBody) sidePanelBody.scrollTop = sidePanelBody.scrollHeight;
@@ -1444,8 +1504,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // User message bubble
     appendCopilotUserMessage(task);
     
-    // Start Antigravity-style live execution card
-    startAntigravityProgress(task);
+    // Pure Antigravity initial "Working" status
+    showAntigravityWorking();
 
     setAdionState('THINKING');
     showAdionToast(`Copilot: Coordinating "${task.slice(0, 35)}..."`, 'success');
@@ -1459,6 +1519,7 @@ document.addEventListener('DOMContentLoaded', () => {
       loadSessionHistory();
     } catch (err) {
       console.error('[Copilot] Error executing task:', err);
+      hideAntigravityWorking();
       finishAntigravityProgress('Error executing task');
       appendCopilotAssistantResponse(`Error: ${err.message || 'Task failed to execute.'}`);
       showAdionToast(`Copilot error: ${err.message || 'Unknown error'}`, 'alert');
@@ -3847,9 +3908,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const isAlert = data.level === 'warning' || data.level === 'error';
         showAdionToast(data.message, isAlert ? 'alert' : 'success');
         if (sidePanelTimeline) {
-          if (isProgressStep(data.message)) {
+          if (data.isCompletion) {
+            hideAntigravityWorking();
+            finishAntigravityProgress();
+            appendCopilotAssistantResponse(data.message);
+          } else if (isProgressStep(data)) {
+            hideAntigravityWorking();
             updateAntigravityStep(data.message);
           } else {
+            hideAntigravityWorking();
             finishAntigravityProgress();
             appendCopilotAssistantResponse(data.message);
           }

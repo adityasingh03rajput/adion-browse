@@ -1109,7 +1109,7 @@ class AgentRuntime extends EventEmitter {
             this.emit('task-mode:completed', this.currentTask);
           }
 
-          this.emit('feedback', { message: feedbackMsg, level: 'info' });
+          this.emit('feedback', { message: feedbackMsg, level: 'info', isCompletion: true });
           this.emit('adion-notification', { type: 'info', message: feedbackMsg });
           this.sessionManager.recordInteraction({
             source: source,
@@ -1713,9 +1713,11 @@ class AgentRuntime extends EventEmitter {
           this.jarvisSession.addTurn(exactPrompt, finalFeedback || (executedPlan && executedPlan.thought) || (goalAborted ? 'Task stopped before completion.' : 'Task completed successfully'), pageContext);
         }
 
+        const completionMsg = finalFeedback || (executedPlan && executedPlan.thought) || (goalAborted ? 'Task stopped before completion.' : 'Task completed successfully.');
+        this.emit('feedback', { message: completionMsg, level: goalAborted ? 'warning' : 'success', isCompletion: true });
         this.emit('adion-notification', {
           type: goalAborted ? 'warning' : 'success',
-          message: finalFeedback || (executedPlan && executedPlan.thought) || (goalAborted ? 'Task stopped before completion.' : `Task executed successfully.`)
+          message: completionMsg
         });
         return;
       }
@@ -2224,10 +2226,10 @@ class AgentRuntime extends EventEmitter {
           }
         }
         if (tabVerified) {
-          this.emit('feedback', { message: `Opened new tab: ${intent.url}`, level: 'success' });
+          this.emit('feedback', { message: `Opened new tab: ${intent.url}`, level: 'success', isStep: true });
           executionResult = { success: true, verified: true };
         } else {
-          this.emit('feedback', { message: 'New tab did not open — browser may be busy', level: 'warning' });
+          this.emit('feedback', { message: 'New tab did not open — browser may be busy', level: 'warning', isStep: true });
           executionResult = { success: false, reason: 'NEW_TAB_NOT_VERIFIED', verified: false };
         }
         break;
