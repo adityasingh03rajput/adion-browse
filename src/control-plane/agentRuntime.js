@@ -888,13 +888,31 @@ class AgentRuntime extends EventEmitter {
       }
     }
 
-    const isComputerUse = (matchedSkill && (matchedSkill.skill.name === 'computer-use' || matchedSkill.skill.trigger === '/pc_use')) ||
+    let isComputerUse = (matchedSkill && (matchedSkill.skill.name === 'computer-use' || matchedSkill.skill.trigger === '/pc_use')) ||
                           /^\/(?:pc_use|pc|computer|workspace)\b/i.test(exactPrompt) ||
                           /^(?:run\s+on\s+(?:pc|computer|workspace)|on\s+(?:my\s+)?(?:pc|computer|workspace))\b/i.test(exactPrompt);
+
+    // Intelligent desktop app intent routing: if user mentions a native desktop application, route to PcEngine
+    if (!isComputerUse && this.pcEngine && this.pcEngine.platform === 'win32') {
+      const desktopAppPattern = /^(?:(?:open|launch|start|switch\s+to|bring\s+up)\s+(?:whatsapp|notepad|calculator|spotify|discord|slack|telegram|word|excel|powerpoint|paint|vlc|terminal|cmd|powershell)|(?:in|on)\s+whatsapp\b)/i;
+      if (desktopAppPattern.test(exactPrompt.trim())) {
+        isComputerUse = true;
+      }
+    }
 
     if (isComputerUse && !matchedSkill) {
       plannedText = text.replace(/^(?:\/pc_use\s+|\/pc\s+|\/computer\s+|\/workspace\s+|run\s+on\s+(?:pc|computer|workspace)\s+|on\s+(?:my\s+)?(?:pc|computer|workspace)\s*)/i, '').trim();
       if (!plannedText) plannedText = 'inspect current directory and system status';
+    }
+
+    // Ensure running PC task is stopped before a new command begins to prevent concurrent focus stealing
+    if (this.pcEngine && typeof this.pcEngine.sessionStatus === 'function') {
+      const pcStatus = this.pcEngine.sessionStatus();
+      if (pcStatus && pcStatus.running) {
+        console.log('[AgentRuntime] Cleanly superseding previous active PC task for new command');
+        this.pcEngine.stopRun('superseded');
+        await new Promise(r => setTimeout(r, 200));
+      }
     }
 
     // Fast Utterance Classification & Zero-Latency Dismiss (adapted from companion/src/guide/voice.js)

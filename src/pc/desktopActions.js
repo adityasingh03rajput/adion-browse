@@ -279,6 +279,9 @@ function createDesktopActions(deps = {}) {
       }
 
       if (!target) return { ok: false, report: 'no element id and no screen point to click' };
+      if (target.name && /^(restore|minimize)$/i.test(target.name.trim()) && !/\b(restore|minimize)\b/i.test(String(ctx.prompt || ''))) {
+        return { ok: false, report: `refused to click "${target.name}": that would un-maximize or minimize the app window.` };
+      }
       const label = target.name || args.text || args.target || '';
       const gate = evaluateAction({ kind: 'page', label }, ctx.prompt || '');
       if (!gate.allowed) return { ok: false, refused: gate.reason, report: gate.message };
