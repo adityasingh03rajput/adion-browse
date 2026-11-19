@@ -6,13 +6,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Adion Browse</title>
   <script>/* adion-theme pre-paint: set data-theme before first paint (no flash) */try{var __t=localStorage.getItem("adion-theme");document.documentElement.dataset.theme=(__t==="light"||__t==="dark")?__t:"dark";}catch(__e){document.documentElement.dataset.theme="dark";}</script>
-<link rel="stylesheet" href="styles.css">
-<link rel="stylesheet" href="theme.css">
-<link rel="stylesheet" href="theme-light-overrides.css">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="theme-light-overrides.css">
 </head>
 
 <body class="dark-theme">
-  <!-- Top Browser Chrome (Fixed 80px) -->
+
+  <!-- ========================================================================= -->
+  <!-- 1. TOP BROWSER CHROME (HEADER & NAVIGATION BAR)                           -->
+  <!-- ========================================================================= -->
   <header class="browser-header">
     <!-- Tabs Strip -->
     <div class="tabs-bar">
@@ -20,19 +23,18 @@
         <!-- Tabs rendered dynamically -->
       </div>
       <button class="btn-icon new-tab-btn" id="newTabBtn" title="New Tab (Ctrl+T)">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-          stroke-linecap="round" stroke-linejoin="round">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="5" x2="12" y2="19"></line>
           <line x1="5" y1="12" x2="19" y2="12"></line>
         </svg>
       </button>
 
-      <!-- Chrome Gemini-Style Ask Jarvis Pill Button in Tab Strip -->
-      <button class="btn-ask-jarvis" id="btnAskJarvis" title="Ask Jarvis Copilot (Ctrl+J)">
+      <!-- Gemini-Style Ask Adion Pill Button in Tab Strip -->
+      <button class="btn-ask-adion" id="btnAskAdion" title="Ask Adion Copilot (Ctrl+J)">
         <svg class="sparkle-gemini-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none">
           <path d="M12 0C12 6.627 6.627 12 0 12C6.627 12 12 17.373 12 24C12 17.373 17.373 12 24 12C17.373 12 12 6.627 12 0Z" fill="currentColor"/>
         </svg>
-        <span class="btn-ask-jarvis-text">Ask Jarvis</span>
+        <span class="btn-ask-adion-text">Ask Adion</span>
       </button>
     </div>
 
@@ -40,28 +42,24 @@
     <div class="nav-bar">
       <div class="nav-controls">
         <button class="btn-icon" id="btnBack" title="Back (Alt+Left)" disabled>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-            stroke-linecap="round" stroke-linejoin="round">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="15 18 9 12 15 6"></polyline>
           </svg>
         </button>
         <button class="btn-icon" id="btnForward" title="Forward (Alt+Right)" disabled>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-            stroke-linecap="round" stroke-linejoin="round">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="9 18 15 12 9 6"></polyline>
           </svg>
         </button>
         <button class="btn-icon" id="btnReload" title="Reload (Ctrl+R)">
-          <svg id="reloadIcon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <svg id="reloadIcon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="23 4 23 10 17 10"></polyline>
             <polyline points="1 20 1 14 7 14"></polyline>
             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
           </svg>
         </button>
         <button class="btn-icon" id="btnHome" title="Home (New Tab)">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-            stroke-linecap="round" stroke-linejoin="round">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
             <polyline points="9 22 9 12 15 12 15 22"></polyline>
           </svg>
@@ -71,14 +69,12 @@
       <!-- Omnibox (Address & Search Bar) -->
       <div class="omnibox-wrapper">
         <div class="omnibox-security-icon" id="securityIcon" title="Security Status">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           </svg>
         </div>
-        <input type="text" id="omniboxInput" class="omnibox-input" placeholder="Search with Brave or enter web address"
-          autocomplete="off" spellcheck="false">
+        <input type="text" id="omniboxInput" class="omnibox-input" placeholder="Search with Brave or enter web address" autocomplete="off" spellcheck="false">
 
         <!-- Live Voice Commander Status Pill inside Omnibox -->
         <div class="omnibox-voice-pill" id="omniboxVoicePill" title="Microphone Active - Streaming audio to AI Commander">
@@ -88,8 +84,7 @@
 
         <!-- Omnibox Action Buttons -->
         <div class="omnibox-actions">
-          <!-- Hidden compatibility anchor for test suite -->
-          <button class="btn-omnibox-action btn-text-agent" id="btnTextAgent" style="display:none;" title="AI Text Task Commander (Type task • Ctrl+K)">
+          <button class="btn-omnibox-action btn-text-agent" id="btnTextAgent" style="display:none;" title="AI Text Task Commander (Ctrl+K)">
             <svg id="textTaskIcon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
               <line x1="6" y1="8" x2="6.01" y2="8"></line>
@@ -105,19 +100,15 @@
 
           <!-- Bookmark Star Button -->
           <button class="btn-omnibox-action" id="btnBookmark" title="Bookmark this tab">
-            <svg id="starIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon
-                points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2">
-              </polygon>
+            <svg id="starIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
             </svg>
           </button>
 
-          <!-- Brave Shield Icon Button with Live Badge -->
+          <!-- Shields Icon Button with Live Badge -->
           <button class="btn-omnibox-shield" id="btnShield" title="Adion Shields">
             <div class="shield-badge-container">
-              <svg class="shield-icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg class="shield-icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
                 <path d="m9 12 2 2 4-4" stroke-width="2"></path>
               </svg>
@@ -127,54 +118,71 @@
         </div>
       </div>
 
-      <!-- Hidden compatibility anchor for task input -->
-      <input type="text" id="taskInputText" style="display:none;" autocomplete="off">
-
-      <!-- Browser Menu / Tool Buttons -->
+      <!-- Browser Menu Controls -->
       <div class="menu-controls">
         <button class="btn-icon" id="btnBookmarksMenu" title="Bookmarks">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="m19 21-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
           </svg>
         </button>
         <button class="btn-icon" id="btnHistory" title="History (Ctrl+H)">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10"></circle>
             <polyline points="12 6 12 12 16 14"></polyline>
           </svg>
         </button>
-        <button id="btnThemeToggle" class="icon-btn theme-toggle" title="Switch to light theme (Ctrl+Shift+L)" aria-label="Toggle light / dark theme" aria-pressed="false"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" class="theme-ic theme-ic-sun"><circle cx="12" cy="12" r="4.4" fill="none" stroke="currentColor" stroke-width="1.8"/><g stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="12" y1="2.5" x2="12" y2="5.2"/><line x1="12" y1="18.8" x2="12" y2="21.5"/><line x1="2.5" y1="12" x2="5.2" y2="12"/><line x1="18.8" y1="12" x2="21.5" y2="12"/><line x1="5" y1="5" x2="6.9" y2="6.9"/><line x1="17.1" y1="17.1" x2="19" y2="19"/><line x1="5" y1="19" x2="6.9" y2="17.1"/><line x1="17.1" y1="6.9" x2="19" y2="5"/></g></svg><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" class="theme-ic theme-ic-moon"><path d="M20.2 13.4A8.2 8.2 0 1 1 10.6 3.8a6.9 6.9 0 0 0 9.6 9.6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button>
-<button class="btn-icon" id="btnSettings" title="Settings">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
+        <button class="btn-icon profile-btn" id="btnProfile" title="Browser profiles">
+          <span class="profile-avatar" id="profileAvatar">P</span>
+        </button>
+        <div class="profile-menu" id="profileMenu">
+          <div class="profile-menu-header">Profiles</div>
+          <div id="profileMenuList"></div>
+          <div class="profile-menu-new">
+            <input type="text" id="profileNewName" placeholder="New profile name" maxlength="40" />
+            <button id="btnProfileCreate" class="btn-small">Add</button>
+          </div>
+        </div>
+        <button id="btnThemeToggle" class="icon-btn theme-toggle" title="Switch to light theme (Ctrl+Shift+L)" aria-label="Toggle light / dark theme" aria-pressed="false">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" class="theme-ic theme-ic-sun">
+            <circle cx="12" cy="12" r="4.4" fill="none" stroke="currentColor" stroke-width="1.8"/>
+            <g stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+              <line x1="12" y1="2.5" x2="12" y2="5.2"/><line x1="12" y1="18.8" x2="12" y2="21.5"/>
+              <line x1="2.5" y1="12" x2="5.2" y2="12"/><line x1="18.8" y1="12" x2="21.5" y2="12"/>
+              <line x1="5" y1="5" x2="6.9" y2="6.9"/><line x1="17.1" y1="17.1" x2="19" y2="19"/>
+              <line x1="5" y1="19" x2="6.9" y2="17.1"/><line x1="17.1" y1="6.9" x2="19" y2="5"/>
+            </g>
+          </svg>
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" class="theme-ic theme-ic-moon">
+            <path d="M20.2 13.4A8.2 8.2 0 1 1 10.6 3.8a6.9 6.9 0 0 0 9.6 9.6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <button class="btn-icon" id="btnSettings" title="Settings">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
-            <path
-              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
-            </path>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
           </svg>
         </button>
         <button class="btn-icon" id="btnDevTools" title="Developer Tools (F12)">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="16 18 22 12 16 6"></polyline>
             <polyline points="8 6 2 12 8 18"></polyline>
           </svg>
         </button>
-        <!-- Telemetry button completely hidden as requested -->
         <button class="btn-icon" id="btnTelemetryOverlay" style="display:none !important;" title="Telemetry"></button>
       </div>
     </div>
   </header>
 
-  <!-- SHIELDS DROPDOWN POPUP (Brave-like) -->
+  <!-- ========================================================================= -->
+  <!-- 2. BROWSER MODALS & OVERLAYS                                              -->
+  <!-- ========================================================================= -->
+
+  <!-- Shields Dropdown Popup -->
   <div class="shields-popup-overlay" id="shieldsOverlay">
     <div class="shields-popup" id="shieldsPopup">
       <div class="shields-header">
         <div class="shields-brand">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff5500" stroke-width="2.5"
-            stroke-linecap="round" stroke-linejoin="round">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff5500" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
           </svg>
           <span class="shields-title">ADION SHIELDS</span>
@@ -186,7 +194,6 @@
         <span class="site-domain" id="shieldSiteDomain">example.com</span>
       </div>
 
-      <!-- Main Shields Up/Down Big Switch -->
       <div class="shields-main-toggle-card">
         <div class="toggle-info">
           <div class="toggle-label" id="shieldStatusText">Shields are UP for this site</div>
@@ -198,13 +205,11 @@
         </label>
       </div>
 
-      <!-- Stats on this page -->
       <div class="shields-stats-box">
         <div class="stat-number" id="siteBlockedCount">0</div>
         <div class="stat-label">Trackers & ads blocked on this page</div>
       </div>
 
-      <!-- Granular Controls -->
       <div class="shields-controls-list">
         <div class="control-item">
           <div class="control-text">
@@ -238,7 +243,7 @@
     </div>
   </div>
 
-  <!-- BOOKMARKS DROPDOWN / MODAL -->
+  <!-- Bookmarks Modal -->
   <div class="modal-overlay" id="bookmarksModal">
     <div class="modal-card">
       <div class="modal-header">
@@ -246,14 +251,12 @@
         <button class="btn-close-sm" id="btnCloseBookmarks">&times;</button>
       </div>
       <div class="modal-body">
-        <ul class="bookmarks-list" id="bookmarksList">
-          <!-- Rendered dynamically -->
-        </ul>
+        <ul class="bookmarks-list" id="bookmarksList"></ul>
       </div>
     </div>
   </div>
 
-  <!-- HISTORY MODAL -->
+  <!-- History Modal -->
   <div class="modal-overlay" id="historyModal">
     <div class="modal-card">
       <div class="modal-header">
@@ -265,14 +268,12 @@
       </div>
       <div class="modal-body">
         <input type="text" id="historySearchInput" class="filter-input" placeholder="Search history...">
-        <ul class="history-list" id="historyList">
-          <!-- Rendered dynamically -->
-        </ul>
+        <ul class="history-list" id="historyList"></ul>
       </div>
     </div>
   </div>
 
-  <!-- SETTINGS MODAL -->
+  <!-- Settings Modal -->
   <div class="modal-overlay" id="settingsModal">
     <div class="modal-card">
       <div class="modal-header">
@@ -306,7 +307,7 @@
         <div class="settings-group">
           <label class="settings-label">Appearance</label>
           <div class="theme-row">
-            <span>Dark Cyber Theme (Brave Aesthetic)</span>
+            <span>Dark Cyber Theme (Default)</span>
             <span class="status-pill active">Active</span>
           </div>
         </div>
@@ -321,13 +322,13 @@
           </div>
         </div>
         <div class="settings-group">
-          <label class="settings-label">Local PC Terminal Bridge (Standalone Executable)</label>
+          <label class="settings-label">Local PC Terminal Bridge</label>
           <label class="checkbox-row">
             <input type="checkbox" id="settingTerminalBridge">
             <span>Connect local PC terminal bridge on startup (Port 9225)</span>
           </label>
           <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
-            Enables the integrated AI to seamlessly execute local system commands directly from the browser without preinstalled Python.
+            Enables integrated AI to execute local system commands directly from the browser.
           </div>
         </div>
         <div class="settings-group">
@@ -344,14 +345,14 @@
           <label class="settings-label">AI Model & Custom API Providers</label>
           <div style="display:flex; align-items:center; justify-content:space-between; margin-top:6px;">
             <span style="font-size: 12px; color: var(--text-muted);">Configure Custom endpoints (DeepSeek, Ollama, OpenRouter) and API keys</span>
-            <button type="button" class="btn-sm" id="btnSettingsOpenModelConfig" style="background: rgba(0,242,254,0.15); border: 1px solid rgba(0,242,254,0.35); color:#00f2fe; cursor:pointer; padding: 4px 10px; border-radius: 6px; font-weight: 500;">⚙️ Configure</button>
+            <button type="button" class="btn-sm" id="btnSettingsOpenModelConfig" style="background: rgba(0,242,254,0.15); border: 1px solid rgba(0,242,254,0.35); color:#00f2fe; cursor:pointer; padding: 4px 10px; border-radius: 6px; font-weight: 500;">Configure</button>
           </div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- AI TASK COMMANDER MODAL (TEXT TASK INPUT) -->
+  <!-- AI Task Commander Modal (Ctrl+K) -->
   <div class="modal-overlay" id="taskModal">
     <div class="modal-card task-modal-card">
       <div class="modal-header">
@@ -371,7 +372,7 @@
           </div>
           <div>
             <h3 style="margin: 0; font-size: 15px; color: var(--text-main); font-weight: 600;">AI TASK COMMANDER</h3>
-            <span style="font-size: 11.5px; color: var(--text-muted);">Write a task or instruction for Jarvis to perform</span>
+            <span style="font-size: 11.5px; color: var(--text-muted);">Write a task or instruction for Adion to perform</span>
           </div>
         </div>
         <button class="btn-close-sm" id="btnCloseTaskModal">&times;</button>
@@ -389,11 +390,11 @@
         </div>
         <div class="task-suggestions-row">
           <span class="task-sugg-label">Quick Suggestions:</span>
-          <button class="task-sugg-pill" data-task="Scroll down">📜 Scroll down</button>
-          <button class="task-sugg-pill" data-task="Scroll up">⬆️ Scroll up</button>
-          <button class="task-sugg-pill" data-task="Open youtube.com">▶️ YouTube</button>
-          <button class="task-sugg-pill" data-task="Go to github.com">🐙 GitHub</button>
-          <button class="task-sugg-pill" data-task="Set base frequency boost to 10 decibels">🎚️ Set Bass Boost</button>
+          <button class="task-sugg-pill" data-task="Scroll down">Scroll down</button>
+          <button class="task-sugg-pill" data-task="Scroll up">Scroll up</button>
+          <button class="task-sugg-pill" data-task="Open youtube.com">YouTube</button>
+          <button class="task-sugg-pill" data-task="Go to github.com">GitHub</button>
+          <button class="task-sugg-pill" data-task="Set base frequency boost to 10 decibels">Set Bass Boost</button>
         </div>
         <div class="task-footer-hint">
           <span>Tip: Press <kbd>Enter</kbd> to run • <kbd>Esc</kbd> to dismiss • Shortcut: <kbd>Ctrl+K</kbd></span>
@@ -402,7 +403,7 @@
     </div>
   </div>
 
-  <!-- AI CUSTOM MODEL & API KEY CONFIGURATION MODAL -->
+  <!-- AI Custom Model & API Key Configuration Modal -->
   <div class="modal-overlay" id="modelConfigModal">
     <div class="modal-card model-config-card">
       <div class="modal-header">
@@ -424,16 +425,18 @@
         <div class="model-config-group">
           <label class="config-label" for="configProviderSelect">Target Provider</label>
           <select id="configProviderSelect" class="config-select">
-            <option value="custom">🛠️ Custom Model (OpenAI-Compatible: DeepSeek, Ollama, OpenRouter)</option>
-            <option value="gemini">🧠 Google Gemini (gemini-2.0-flash, gemini-1.5-pro)</option>
-            <option value="openai">🌐 OpenAI / ChatGPT (gpt-4o, gpt-4o-mini, o1, o3-mini)</option>
-            <option value="anthropic">🟣 Anthropic / Claude (claude-3-5-sonnet, claude-3-5-haiku)</option>
-            <option value="groq">🤖 Groq Cloud (Default Zero-Cost / High-Speed LPU)</option>
+            <option value="mercury">Mercury AI (mercury-3, mercury-decide)</option>
+            <option value="freemodel">FreeModel (deepseek-v4.1-flash)</option>
+            <option value="custom">Custom Model (OpenAI-Compatible: DeepSeek, Ollama, OpenRouter)</option>
+            <option value="gemini">Google Gemini (gemini-2.0-flash, gemini-1.5-pro)</option>
+            <option value="openai">OpenAI (gpt-4o, gpt-4o-mini, o1, o3-mini)</option>
+            <option value="anthropic">Anthropic (claude-3-5-sonnet, claude-3-5-haiku)</option>
+            <option value="groq">Groq Cloud (Default High-Speed LPU)</option>
           </select>
         </div>
 
         <div class="model-config-hint" id="configProviderHint">
-          💡 Connect any OpenAI-compatible endpoint like DeepSeek, OpenRouter, local Ollama (<code>http://localhost:11434/v1</code>), LM Studio, or vLLM.
+          Connect any OpenAI-compatible endpoint like DeepSeek, OpenRouter, local Ollama (<code>http://localhost:11434/v1</code>), LM Studio, or vLLM.
         </div>
 
         <div class="model-config-group" id="configApiUrlGroup">
@@ -481,7 +484,7 @@
     </div>
   </div>
 
-  <!-- LIVE TELEMETRY & DIAGNOSTICS OVERLAY GUI (Real-Time Metrics & Test Query Runner) -->
+  <!-- Live Telemetry & Diagnostics Overlay -->
   <div class="telemetry-overlay" id="telemetryOverlay">
     <div class="telemetry-panel">
       <div class="telemetry-panel-header">
@@ -490,8 +493,8 @@
           <h3 style="margin:0; font-size:15px; color:#00f2fe;">Live Telemetry & Diagnostics GUI</h3>
         </div>
         <div style="display:flex; gap:8px;">
-          <button class="btn-overlay-action" id="btnOverlayTestQuery">⚡ Run Test Query</button>
-          <button class="btn-overlay-action" id="btnOverlayFullDashboard">↗ Open Full Tab</button>
+          <button class="btn-overlay-action" id="btnOverlayTestQuery">Run Test Query</button>
+          <button class="btn-overlay-action" id="btnOverlayFullDashboard">Open Full Tab</button>
           <button class="btn-overlay-close" id="btnCloseTelemetry">&times;</button>
         </div>
       </div>
@@ -519,10 +522,13 @@
     </div>
   </div>
 
-  <!-- AI VOICE CONTROL PLANE HUD OVERLAY WITH JARVIS ANIMATED SPHERE -->
+  <!-- ========================================================================= -->
+  <!-- 3. VOICE & ASSISTANT HUD OVERLAYS                                         -->
+  <!-- ========================================================================= -->
+
+  <!-- Voice Control Plane HUD Overlay with Animated Sphere -->
   <div class="agent-hud-overlay" id="agentHudOverlay">
     <div class="agent-hud-card" id="agentHudCard">
-      <!-- Jarvis 3D Animated Sphere Engine in Assistant Overlay -->
       <div class="agent-hud-sphere-wrapper" id="agentHudSphereWrapper">
         <div class="agent-hud-ring agent-hud-ring-outer"></div>
         <div class="agent-hud-ring agent-hud-ring-inner"></div>
@@ -532,73 +538,76 @@
       </div>
       <div class="agent-hud-content">
         <div class="agent-hud-header">
-          <span class="agent-hud-tag" id="agentHudTag">JARVIS ASSISTANT</span>
+          <span class="agent-hud-tag" id="agentHudTag">ADION ASSISTANT</span>
           <span class="agent-hud-state" id="agentHudState">IDLE</span>
+          <button class="btn-agent-stoplistening" id="btnStopListening" title="Stop Listening">STOP</button>
         </div>
-        <div class="agent-hud-message" id="agentHudMessage">Ready. Say "Scroll down", "Open YouTube", or "Click search"...</div>
+        <div class="agent-hud-message" id="agentHudMessage">Ready. Say "Adion" then your command...</div>
         <div class="agent-transcript-preview" id="agentTranscriptPreview"></div>
       </div>
-      <button class="btn-agent-close" id="btnCancelAgent" title="Cancel Agent Task">✕</button>
+      <button class="btn-agent-close" id="btnCancelAgent" title="Cancel Agent Task">&times;</button>
     </div>
   </div>
 
-  <!-- JARVIS INTERACTIVE ASSISTANT & DYNAMIC ANIMATED SPHERE WIDGET -->
-  <div class="jarvis-container" id="jarvisContainer">
-    <!-- Floating Real-Time Confirmation & Alert Speech Bubble -->
-    <div class="jarvis-toast" id="jarvisToast">
-      <div class="jarvis-toast-badge">JARVIS</div>
-      <div class="jarvis-toast-text" id="jarvisToastText">System online. Ready for browser commands.</div>
+  <!-- Voice Input Subtitles Bar -->
+  <div class="voice-subtitle-bar" id="voiceSubtitleBar" aria-live="polite">
+    <span class="voice-subtitle-label" id="voiceSubtitleLabel">YOU</span>
+    <span class="voice-subtitle-text" id="voiceSubtitleText"></span>
+  </div>
+
+  <!-- Adion Dynamic Animated Sphere Widget -->
+  <div class="adion-container" id="adionContainer">
+    <div class="adion-toast" id="adionToast">
+      <div class="adion-toast-badge">ADION</div>
+      <div class="adion-toast-text" id="adionToastText">System online. Ready for browser commands.</div>
     </div>
 
-    <!-- Dynamic 3D Jarvis Sphere & Concentric Holographic Rings -->
-    <div class="jarvis-orb-wrapper" id="btnToggleJarvis" title="JARVIS Assistant • Dynamic Sphere (Click to open Session Memory & Small Chat)">
-      <div class="jarvis-ring jarvis-ring-outer"></div>
-      <div class="jarvis-ring jarvis-ring-inner"></div>
-      <div class="jarvis-ring jarvis-ring-pulse"></div>
-      <canvas id="jarvisCanvas" width="80" height="80"></canvas>
-      <div class="jarvis-core-glow" id="jarvisCoreGlow"></div>
-      <div class="jarvis-state-dot" id="jarvisStateDot"></div>
+    <div class="adion-orb-wrapper" id="btnToggleAdion" title="ADION Assistant (Click to open Session Memory)">
+      <div class="adion-ring adion-ring-outer"></div>
+      <div class="adion-ring adion-ring-inner"></div>
+      <div class="adion-ring adion-ring-pulse"></div>
+      <canvas id="adionCanvas" width="80" height="80"></canvas>
+      <div class="adion-core-glow" id="adionCoreGlow"></div>
+      <div class="adion-state-dot" id="adionStateDot"></div>
     </div>
   </div>
 
-  <!-- JARVIS ASSISTANT & SESSION MEMORY FLYOUT HUD -->
-  <div class="jarvis-panel-overlay" id="jarvisPanelOverlay">
-    <div class="jarvis-panel" id="jarvisPanel">
-      <div class="jarvis-panel-header">
-        <div class="jarvis-panel-identity">
-          <div class="jarvis-mini-sphere">
+  <!-- Adion Assistant & Session Memory Flyout HUD -->
+  <div class="adion-panel-overlay" id="adionPanelOverlay">
+    <div class="adion-panel" id="adionPanel">
+      <div class="adion-panel-header">
+        <div class="adion-panel-identity">
+          <div class="adion-mini-sphere">
             <div class="mini-core"></div>
           </div>
           <div>
-            <div class="jarvis-title">JARVIS ASSISTANT</div>
-            <div class="jarvis-subtitle">Autonomous Browser Intelligence & Session Memory</div>
+            <div class="adion-title">ADION ASSISTANT</div>
+            <div class="adion-subtitle">Autonomous Browser Intelligence & Session Memory</div>
           </div>
         </div>
-        <div class="jarvis-header-actions">
-          <button class="btn-jarvis-action" id="btnNewSession" title="Clear current session memory and begin fresh session">
+        <div class="adion-header-actions">
+          <button class="btn-adion-action" id="btnNewSession" title="Clear current session memory">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M12 5v14M5 12h14"></path>
             </svg>
             New Session
           </button>
-          <button class="btn-jarvis-close" id="btnCloseJarvis">&times;</button>
+          <button class="btn-adion-close" id="btnCloseAdion">&times;</button>
         </div>
       </div>
 
-      <!-- Session Memory Meta -->
-      <div class="jarvis-session-meta">
-        <div class="jarvis-session-meta-pill">
+      <div class="adion-session-meta">
+        <div class="adion-session-meta-pill">
           <span class="meta-dot"></span>
-          <span id="jarvisSessionId">Session: Initializing...</span>
+          <span id="adionSessionId">Session: Initializing...</span>
         </div>
-        <div class="jarvis-session-count-pill">
-          <span id="jarvisInteractionCount">0 Exchanges</span>
+        <div class="adion-session-count-pill">
+          <span id="adionInteractionCount">0 Exchanges</span>
         </div>
       </div>
 
-      <!-- Jarvis Component Controls: Optional MCP Server Toggle & Diagnostic Monitoring -->
-      <div class="jarvis-component-strip">
-        <div class="jarvis-strip-item">
+      <div class="adion-component-strip">
+        <div class="adion-strip-item">
           <div class="strip-icon-badge">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="4 17 10 11 4 5"></polyline>
@@ -607,13 +616,13 @@
           </div>
           <div class="strip-item-info">
             <span class="strip-label">Terminal Bridge</span>
-            <span class="strip-status" id="jarvisTerminalStatus"><span class="status-dot dot-off"></span> Standby</span>
+            <span class="strip-status" id="adionTerminalStatus"><span class="status-dot dot-off"></span> Standby</span>
           </div>
-          <button class="btn-toggle-switch" id="btnToggleTerminal" title="Toggle Local PC Terminal Bridge (Standalone Executable)">
+          <button class="btn-toggle-switch" id="btnToggleTerminal" title="Toggle Local PC Terminal Bridge">
             <span class="toggle-knob"></span>
           </button>
         </div>
-        <div class="jarvis-strip-item">
+        <div class="adion-strip-item">
           <div class="strip-icon-badge">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
@@ -623,13 +632,13 @@
           </div>
           <div class="strip-item-info">
             <span class="strip-label">MCP Server</span>
-            <span class="strip-status" id="jarvisMcpStatus"><span class="status-dot dot-off"></span> Standby</span>
+            <span class="strip-status" id="adionMcpStatus"><span class="status-dot dot-off"></span> Standby</span>
           </div>
-          <button class="btn-toggle-switch" id="btnToggleMcp" title="Toggle Model Context Protocol Server (Optional Component)">
+          <button class="btn-toggle-switch" id="btnToggleMcp" title="Toggle Model Context Protocol Server">
             <span class="toggle-knob"></span>
           </button>
         </div>
-        <div class="jarvis-strip-item">
+        <div class="adion-strip-item">
           <div class="strip-icon-badge">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
@@ -637,29 +646,32 @@
           </div>
           <div class="strip-item-info">
             <span class="strip-label">Diagnostics</span>
-            <span class="strip-status" id="jarvisDiagStatus"><span class="status-dot dot-on"></span> Active</span>
+            <span class="strip-status" id="adionDiagStatus"><span class="status-dot dot-on"></span> Active</span>
           </div>
-          <button class="btn-toggle-switch active" id="btnToggleDiagnostics" title="Toggle Real-Time System Diagnostic Monitoring">
+          <button class="btn-toggle-switch active" id="btnToggleDiagnostics" title="Toggle Diagnostics">
             <span class="toggle-knob"></span>
           </button>
         </div>
       </div>
 
-      <!-- Session Interactions Timeline -->
-      <div class="jarvis-timeline" id="jarvisTimeline">
-        <div class="jarvis-empty-state" id="jarvisEmptyState">
-          <div class="empty-icon">⚡</div>
+      <div class="adion-timeline" id="adionTimeline">
+        <div class="adion-empty-state" id="adionEmptyState">
+          <div class="empty-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#00f2fe" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+          </div>
           <div class="empty-title">Session Memory Initialized</div>
-          <p>No commands executed yet in this session. Speak hands-free with your microphone or enter a command below to interact with JARVIS.</p>
+          <p>No commands executed yet in this session. Speak hands-free with your microphone or enter a command below to interact with ADION.</p>
         </div>
       </div>
 
-      <!-- Quick Chat Input Box -->
-      <div class="jarvis-chat-input-row">
-        <div class="jarvis-input-dock">
-          <input type="text" id="jarvisChatInput" placeholder="Command browser or chat with Jarvis..." autocomplete="off">
-          <div class="jarvis-dock-actions">
-            <button class="btn-jarvis-mic" id="btnJarvisVoice" title="Toggle Hands-Free Voice Input">
+      <div class="adion-chat-input-row">
+        <div class="adion-input-dock">
+          <input type="text" id="adionChatInput" placeholder="Command browser or chat with Adion..." autocomplete="off">
+          <div class="adion-dock-actions">
+            <button class="btn-adion-wake" id="btnAdionWakeMode" title="Toggle hands-free wake word mode">Wake</button>
+            <button class="btn-adion-mic" id="btnAdionVoice" title="Toggle Voice Input">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
                 <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
@@ -667,7 +679,7 @@
                 <line x1="8" y1="23" x2="16" y2="23"></line>
               </svg>
             </button>
-            <button class="btn-jarvis-send" id="btnJarvisSend" title="Send Command">
+            <button class="btn-adion-send" id="btnAdionSend" title="Send Command">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="22" y1="2" x2="11" y2="13"></line>
                 <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
@@ -679,15 +691,22 @@
     </div>
   </div>
 
-  <!-- JARVIS COPILOT SIDE PANEL (CHROME GEMINI ARCHITECTURE) -->
-  <aside class="jarvis-side-panel" id="jarvisSidePanel">
+  <!-- ========================================================================= -->
+  <!-- 4. ADION COPILOT SIDE PANEL (GEMINI ARCHITECTURE)                         -->
+  <!-- ========================================================================= -->
+  <aside class="adion-side-panel" id="adionSidePanel">
     <div class="side-panel-header">
-      <div class="copilot-terminal-pill" id="copilotTerminalPill" title="Local PC Terminal Bridge: Single toggle to link browser AI with PC terminal">
-        <span class="terminal-status-dot dot-off" id="copilotTerminalDot"></span>
-        <span class="terminal-status-label" id="copilotTerminalLabel">Terminal Standby</span>
-        <button class="copilot-toggle-switch" id="btnToggleTerminalBridge" title="Toggle Local PC Terminal Bridge">
-          <span class="toggle-knob"></span>
-        </button>
+      <div class="side-panel-brand">
+        <div class="side-panel-brand-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="9" stroke="#00f2fe" stroke-width="2.2"/>
+            <circle cx="12" cy="12" r="3.5" fill="#00f2fe"/>
+          </svg>
+        </div>
+        <div class="side-panel-brand-text">
+          <span class="side-panel-title">Adion Copilot</span>
+          <span class="side-panel-status-tag" id="copilotStatusPill">Ready</span>
+        </div>
       </div>
       <div class="side-panel-header-actions">
         <button class="btn-side-panel-options" id="btnSidePanelOptions" title="Options">
@@ -701,69 +720,242 @@
       </div>
     </div>
 
-    <!-- Copilot Conversation & Live Autonomous Steps Timeline -->
-    <div class="side-panel-body" id="sidePanelBody">
-      <div class="side-panel-empty-state" id="sidePanelEmptyState">
-        <div class="gemini-sparkle-hero">
-          <svg width="44" height="44" viewBox="0 0 24 24" fill="none">
-            <path d="M12 0C12 6.627 6.627 12 0 12C6.627 12 12 17.373 12 24C12 17.373 17.373 12 24 12C17.373 12 12 6.627 12 0Z" fill="url(#geminiGradHero)"/>
-            <defs>
-              <linearGradient id="geminiGradHero" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
-                <stop stop-color="#4285F4"/>
-                <stop offset="0.33" stop-color="#EA4335"/>
-                <stop offset="0.66" stop-color="#FBBC05"/>
-                <stop offset="1" stop-color="#34A853"/>
-              </linearGradient>
-            </defs>
-          </svg>
-        </div>
-        <h2 class="side-panel-greeting" id="sidePanelGreeting">Your move, Aditya Singh!</h2>
-        
-        <div class="contextual-chips-container" id="contextualChipsContainer">
-          <button class="gemini-chip" data-task="Compare Inspect.exe and Accessibility Insights">Compare Inspect.exe and Accessibility Insights</button>
-          <button class="gemini-chip" data-task="Explain Windows UI Automation via PowerShell">Explain Windows UI Automation via PowerShell</button>
-          <button class="gemini-chip" data-task="Explore UIA libraries for JSON output">Explore UIA libraries for JSON output</button>
-        </div>
+    <!-- Quick Mode Control Strip -->
+    <div class="side-panel-toolbar">
+      <div class="copilot-task-mode-pill active" id="copilotTaskModePill" title="Task Mode: Autonomous multi-step execution">
+        <span class="task-mode-status-dot dot-on" id="copilotTaskModeDot"></span>
+        <span class="task-mode-status-label" id="copilotTaskModeLabel">Task Mode</span>
+        <button class="copilot-toggle-switch active" id="btnToggleTaskMode" title="Toggle Task Mode">
+          <span class="toggle-knob"></span>
+        </button>
       </div>
-      <div class="side-panel-timeline" id="sidePanelTimeline">
-        <!-- Rendered conversation & execution steps -->
+      <div class="copilot-terminal-pill" id="copilotTerminalPill" title="Terminal Bridge: Local system command execution">
+        <span class="terminal-status-dot dot-off" id="copilotTerminalDot"></span>
+        <span class="terminal-status-label" id="copilotTerminalLabel">Terminal Standby</span>
+        <button class="copilot-toggle-switch" id="btnToggleTerminalBridge" title="Toggle Terminal Bridge">
+          <span class="toggle-knob"></span>
+        </button>
       </div>
     </div>
 
-    <!-- Copilot Bottom Docked Card (Sharing Pill + Input Row) -->
-    <div class="side-panel-footer">
-      <!-- Active Tab Context Pill (Sharing Current Page, Chrome Gemini Style) -->
-      <div class="sharing-pill-wrapper" id="sharingPillWrapper">
-        <div class="sharing-pill" id="sharingPill">
-          <span class="sharing-pill-icon" id="sharingFavicon">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"></circle>
-              <line x1="2" y1="12" x2="22" y2="12"></line>
-              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
-            </svg>
-          </span>
-          <span class="sharing-pill-text">Sharing <strong id="sidePanelPageTitle">"Browser Token Usage"</strong></span>
-          <button class="btn-sharing-dismiss" id="btnSharingDismiss" title="Stop sharing this page">&times;</button>
+    <!-- Copilot Conversation & Steps Timeline -->
+    <div class="side-panel-body" id="sidePanelBody">
+      <!-- Gemini Task Mode Work Panel -->
+      <div class="task-work-panel" id="taskWorkPanel" style="display: none;">
+        <div class="task-work-header">
+          <div class="task-work-badge-row">
+            <span class="task-mode-badge">GEMINI TASK MODE</span>
+            <span class="task-state-pill pill-executing" id="taskStatePill">EXECUTING</span>
+          </div>
+          <div class="task-work-title" id="taskWorkGoal">Autonomous Web Task</div>
+          <div class="task-progress-bar-bg">
+            <div class="task-progress-bar-fill" id="taskProgressBarFill" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Checkpoint Banner -->
+        <div class="task-checkpoint-banner" id="taskCheckpointBanner" style="display: none;">
+          <div class="checkpoint-header">
+            <span class="checkpoint-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="4" width="4" height="16"></rect>
+                <rect x="14" y="4" width="4" height="16"></rect>
+              </svg>
+            </span>
+            <span class="checkpoint-title">Checkpoint: User Confirmation Required</span>
+          </div>
+          <div class="checkpoint-reason" id="taskCheckpointReason">
+            Sensitive action requires approval before continuing.
+          </div>
+          <div class="checkpoint-actions">
+            <button class="btn-checkpoint btn-approve" id="btnTaskApprove">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span>Approve & Continue</span>
+            </button>
+            <button class="btn-checkpoint btn-takeover" id="btnTaskTakeover">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"></path><path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"></path><path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"></path><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"></path></svg>
+              <span>Take Over Browser</span>
+            </button>
+            <button class="btn-checkpoint btn-resume" id="btnTaskResume" style="display: none;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              <span>Hand Back Control</span>
+            </button>
+            <button class="btn-checkpoint btn-stop" id="btnTaskStop">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>
+              <span>Stop</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Current Step Card -->
+        <div class="task-current-step-card" id="taskCurrentStepCard" style="display: none;">
+          <div class="current-step-header">
+            <span class="current-step-spinner"></span>
+            <span class="current-step-label">Current Step:</span>
+            <span class="current-step-name" id="taskCurrentStepName">Observing page state...</span>
+          </div>
+          <div class="current-step-target" id="taskCurrentStepTarget"></div>
+          <div class="current-step-outcome" id="taskCurrentStepOutcome"></div>
+        </div>
+
+        <!-- Task Step History -->
+        <div class="task-steps-accordion" id="taskStepsAccordion">
+          <div class="steps-accordion-header" id="btnToggleStepsList">
+            <span class="accordion-title">Task Steps (<span id="taskStepsCount">0/0</span>)</span>
+            <span class="accordion-chevron" id="taskStepsChevron">▼</span>
+          </div>
+          <div class="task-steps-list" id="taskStepsList"></div>
+        </div>
+
+        <!-- Touched Resources -->
+        <div class="task-resources-row" id="taskResourcesRow" style="display: none;">
+          <span class="resources-label">Resources Touched:</span>
+          <div class="resources-badges" id="taskResourcesBadges"></div>
+        </div>
+
+        <!-- Live Controls -->
+        <div class="task-live-controls">
+          <button class="btn-task-control" id="btnTaskLiveTakeover" title="Take over manual control of browser">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"></path><path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"></path><path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"></path><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"></path></svg>
+            <span>Take Over</span>
+          </button>
+          <button class="btn-task-control" id="btnTaskLiveResume" style="display: none;" title="Hand control back to AI agent">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            <span>Resume Task</span>
+          </button>
+          <button class="btn-task-control btn-task-danger" id="btnTaskLiveStop" title="Cancel this task cleanly">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>
+            <span>Stop Task</span>
+          </button>
         </div>
       </div>
 
-      <!-- Floating Skills & Quick Tools Menu (Triggered by + button or / key) -->
+      <!-- Empty State Hero -->
+      <div class="side-panel-empty-state" id="sidePanelEmptyState">
+        <div class="copilot-hero-icon">
+          <svg width="42" height="42" viewBox="0 0 24 24" fill="none">
+            <defs>
+              <linearGradient id="copilotOrbGrad" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#00f2fe"/>
+                <stop offset="0.6" stop-color="#3b82f6"/>
+                <stop offset="1" stop-color="#a855f7"/>
+              </linearGradient>
+            </defs>
+            <circle cx="12" cy="12" r="10" stroke="url(#copilotOrbGrad)" stroke-width="1.8" stroke-dasharray="3 3"/>
+            <circle cx="12" cy="12" r="6" stroke="#00f2fe" stroke-width="2"/>
+            <circle cx="12" cy="12" r="2.5" fill="#00f2fe"/>
+          </svg>
+        </div>
+        <h2 class="side-panel-greeting" id="sidePanelGreeting">How can I assist you?</h2>
+        <p class="side-panel-subgreeting">Autonomous browser agent powered by Chromium hardware execution.</p>
+        
+        <div class="contextual-chips-container" id="contextualChipsContainer">
+          <button class="gemini-chip" data-task="Summarize this page">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            <span>Summarize this page</span>
+          </button>
+          <button class="gemini-chip" data-task="Extract key takeaways & links">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+            <span>Extract key takeaways & links</span>
+          </button>
+          <button class="gemini-chip" data-task="Automate task on this site">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            <span>Automate task on this site</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="side-panel-timeline" id="sidePanelTimeline"></div>
+    </div>
+
+    <!-- Copilot Bottom Dock -->
+    <div class="side-panel-footer">
+      <!-- Shared Tabs Popover -->
+      <div class="shared-tabs-popover" id="sharedTabsPopover">
+        <div class="shared-tabs-popover-header">
+          <div class="shared-tabs-header-left">
+            <span class="shared-tabs-popover-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+                <path d="M8 4V2"></path>
+                <path d="M16 4V2"></path>
+              </svg>
+            </span>
+            <span id="sharedTabsCountLabel">Shared with AI</span>
+          </div>
+          <div class="shared-tabs-header-actions">
+            <button class="btn-popover-action" id="btnSharedTabsSelectAll" title="Share all open tabs">Select All</button>
+            <button class="btn-popover-action" id="btnSharedTabsDeselectAll" title="Unshare all tabs">Deselect</button>
+            <button class="btn-popover-close" id="btnCloseSharedTabsPopover" title="Close">&times;</button>
+          </div>
+        </div>
+        <div class="shared-tabs-list" id="sharedTabsList"></div>
+        <div class="shared-tabs-footer-hint">Adion AI has simultaneous real-time awareness across checked tabs</div>
+      </div>
+
+      <!-- Active Tab Context Pill & Modes Bar -->
+      <div class="side-panel-footer-meta">
+        <div class="sharing-pill-wrapper" id="sharingPillWrapper">
+          <div class="sharing-pill" id="sharingPill">
+            <span class="sharing-pill-icon" id="sharingFavicon">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="2" y1="12" x2="22" y2="12"></line>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+              </svg>
+            </span>
+            <span class="sharing-pill-text">Context: <strong id="sidePanelPageTitle">"New Tab"</strong></span>
+            <button class="btn-sharing-dismiss" id="btnSharingDismiss" title="Stop sharing this page">&times;</button>
+          </div>
+        </div>
+
+        <div class="side-panel-mode-pills">
+          <button class="btn-mode-chip active" id="btnSidePanelTaskToggle" title="Task Mode: Autonomous multi-step execution">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            <span>Task</span>
+          </button>
+          <button class="btn-mode-chip" id="btnSidePanelConvoToggle" title="Conversation Mode: Tap mic once for continuous voice dialogue">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            <span>Convo</span>
+          </button>
+          <button class="btn-mode-chip" id="btnSidePanelJarvisToggle" title="Jarvis Memory: Persistent 200k context">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+            <span>Memory</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Skills Popover Menu -->
       <div class="skills-menu-popover" id="skillsQuickMenu">
         <div class="skills-menu-header">
           <span class="skills-header-title">AI Tools & Skills</span>
           <span class="skills-header-hint">Type / to filter</span>
         </div>
         <div class="skills-menu-list">
-          <div class="skill-menu-item" data-action="/pc " title="Computer Use: Instruct AI to execute commands & manage tasks on your local PC / workspace">
-            <span class="skill-icon">🖥️</span>
+          <div class="skill-menu-item" data-action="/task" title="Toggle Gemini Task Mode">
+            <span class="skill-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            </span>
+            <div class="skill-info">
+              <span class="skill-name">Gemini Task Mode</span>
+              <span class="skill-desc">Stateful loop, Work Panel, & takeover checkpoints</span>
+            </div>
+            <span class="skill-tag">/task</span>
+          </div>
+          <div class="skill-menu-item" data-action="/pc_use " title="Computer Use">
+            <span class="skill-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+            </span>
             <div class="skill-info">
               <span class="skill-name">Computer Use (PC)</span>
               <span class="skill-desc">Execute commands & tasks on local workspace</span>
             </div>
-            <span class="skill-tag">/pc</span>
+            <span class="skill-tag">/pc_use</span>
           </div>
-          <div class="skill-menu-item" data-action="/terminal " title="Execute local PC terminal command">
-            <span class="skill-icon">💻</span>
+          <div class="skill-menu-item" data-action="/terminal " title="Execute terminal command">
+            <span class="skill-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+            </span>
             <div class="skill-info">
               <span class="skill-name">Terminal Command</span>
               <span class="skill-desc">Run local system command directly on PC</span>
@@ -771,7 +963,9 @@
             <span class="skill-tag">/terminal</span>
           </div>
           <div class="skill-menu-item" data-action="/summarize" title="Summarize the active webpage">
-            <span class="skill-icon">⚡</span>
+            <span class="skill-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+            </span>
             <div class="skill-info">
               <span class="skill-name">Summarize Page</span>
               <span class="skill-desc">Synthesize key points from current page</span>
@@ -779,7 +973,9 @@
             <span class="skill-tag">/summarize</span>
           </div>
           <div class="skill-menu-item" data-action="/whatsapp " title="Send a WhatsApp message">
-            <span class="skill-icon">💬</span>
+            <span class="skill-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
+            </span>
             <div class="skill-info">
               <span class="skill-name">WhatsApp Message</span>
               <span class="skill-desc">Text contacts with hardware dispatch</span>
@@ -787,31 +983,39 @@
             <span class="skill-tag">/whatsapp</span>
           </div>
           <div class="skill-menu-item" data-action="/search " title="Search within current site or web">
-            <span class="skill-icon">🔍</span>
+            <span class="skill-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            </span>
             <div class="skill-info">
               <span class="skill-name">Scoped Site Search</span>
               <span class="skill-desc">Search content within active site</span>
             </div>
             <span class="skill-tag">/search</span>
           </div>
-          <div class="skill-menu-item" data-action="/inspect " title="Inspect elements using Chrome DevTools HUD">
-            <span class="skill-icon">🎯</span>
+          <div class="skill-menu-item" data-action="/inspect " title="Inspect elements">
+            <span class="skill-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="22" y1="12" x2="18" y2="12"></line><line x1="6" y1="12" x2="2" y2="12"></line><line x1="12" y1="6" x2="12" y2="2"></line><line x1="12" y1="22" x2="12" y2="18"></line></svg>
+            </span>
             <div class="skill-info">
               <span class="skill-name">Live Inspect & Click</span>
               <span class="skill-desc">Highlight and interact with page elements</span>
             </div>
             <span class="skill-tag">/inspect</span>
           </div>
-          <div class="skill-menu-item" data-action="/explain " title="Explain active page content in depth">
-            <span class="skill-icon">📋</span>
+          <div class="skill-menu-item" data-action="/explain " title="Explain active page content">
+            <span class="skill-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            </span>
             <div class="skill-info">
               <span class="skill-name">Explain Content</span>
               <span class="skill-desc">Deep cognitive reasoning on shared content</span>
             </div>
             <span class="skill-tag">/explain</span>
           </div>
-          <div class="skill-menu-item" data-action="/devtools" title="Toggle Developer Tools console">
-            <span class="skill-icon">🛠️</span>
+          <div class="skill-menu-item" data-action="/devtools" title="Toggle Developer Tools">
+            <span class="skill-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+            </span>
             <div class="skill-info">
               <span class="skill-name">Developer Tools</span>
               <span class="skill-desc">Toggle DevTools Elements & Console</span>
@@ -821,7 +1025,7 @@
         </div>
       </div>
 
-      <!-- Floating AI Models & Providers Menu (Triggered by clicking AI Model badge) -->
+      <!-- Models Menu Popover -->
       <div class="model-menu-popover" id="modelSelectorMenu">
         <div class="model-menu-header">
           <div class="model-header-title-box">
@@ -830,26 +1034,28 @@
           </div>
           <button class="btn-model-menu-close" id="btnCloseModelMenu" title="Close">&times;</button>
         </div>
-        <div class="model-menu-list" id="modelMenuList">
-          <!-- Rendered dynamically -->
-        </div>
+        <div class="model-menu-list" id="modelMenuList"></div>
         <div class="model-menu-footer">
           <button class="btn-model-config-action" id="btnOpenModelConfigModal">
-            <span class="config-action-icon">⚙️</span>
+            <span class="config-action-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            </span>
             <span>Add Custom Model & API Keys</span>
           </button>
         </div>
       </div>
 
       <div class="side-panel-input-container">
-        <button class="btn-input-add" id="btnSidePanelAdd" title="Tools & skills">+</button>
-        <input type="text" id="sidePanelInput" class="side-panel-input" placeholder="Type / to use skills" autocomplete="off">
+        <button class="btn-input-add" id="btnSidePanelAdd" title="Skills & Tools (Type /)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        </button>
+        <input type="text" id="sidePanelInput" class="side-panel-input" placeholder="Ask Adion or type / for skills..." autocomplete="off">
         <div class="side-panel-input-actions">
           <div class="model-badge-dropdown" id="modelSelectorBadge" title="AI Model">
             <span id="activeModelLabel">Auto</span>
             <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
           </div>
-          <button class="btn-side-panel-mic" id="btnVoiceAgent" title="Ask Jarvis Voice (Ctrl+Space)">
+          <button class="btn-side-panel-mic" id="btnVoiceAgent" title="Ask Adion Voice (Ctrl+Space)">
             <span class="mic-wave"></span>
             <span class="mic-wave"></span>
             <span class="mic-wave"></span>
@@ -867,8 +1073,10 @@
     </div>
   </aside>
 
+  <!-- Scripts -->
   <script src="theme.js"></script>
-<script src="app.js"></script>
+  <script src="adionReflex.js"></script>
+  <script src="app.js"></script>
 </body>
 
 </html>

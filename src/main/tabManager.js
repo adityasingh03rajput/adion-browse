@@ -1,4 +1,4 @@
-const { BrowserView, app } = require('electron');
+const { BrowserView, app, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { URL } = require('url');
@@ -6,7 +6,7 @@ const shield = require('./shield');
 const store = require('./store');
 
 const TOP_BAR_HEIGHT = 80;
-const CHROME_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const { CHROME_USER_AGENT } = require('./userAgent');
 
 class TabManager {
   constructor(mainWindow) {
@@ -20,6 +20,7 @@ class TabManager {
     this.isOverlayActive = false;
     this.isSidePanelOpen = false;
     this.sidePanelWidth = 380;
+    this.getProfilePartition = null; // () => partition string, set by main process
 
     // Handle window resize & state transitions (maximize, unmaximize, restore, fullscreen)
     const updateBounds = () => {
@@ -183,14 +184,16 @@ class TabManager {
     }
   }
 
-  createTab(initialUrl = 'adion://newtab') {
+  createTab(initialUrl = 'adion://newtab', options = {}) {
     const id = `tab_${this.nextTabId++}`;
+    const partition = typeof this.getProfilePartition === 'function' ? this.getProfilePartition() : null;
     const view = new BrowserView({
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
         sandbox: true,
-        spellcheck: true
+        spellcheck: true,
+        ...(partition ? { partition } : {})
       }
     });
 
@@ -215,49 +218,109 @@ class TabManager {
     // Setup WebContents handlers
     const wc = view.webContents;
     wc.setMaxListeners(40);
-    if (!wc.__adionHandlersAttached) { wc.__adionHandlersAttached = true; } else { for (const __ev of ["did-start-loading", "did-stop-loading", "page-title-updated", "page-favicon-updated", "did-navigate", "did-navigate-in-page", "before-input-event"]) { try { wc.removeAllListeners(__ev); } catch (_) {} } }
+    
+    // Store handler references for proper cleanup
+    if (!wc.__adionHandlersAttached) {
+      wc.__adionHandlersAttached = true;
+      wc.__adionHandlerRefs = {};
+    } else {
+      // Remove existing handlers before re-attaching
+      for (const __ev of ["did-start-loading", "did-stop-loading", "page-title-updated", "page-favicon-updated", "did-navigate", "did-navigate-in-page", "before-input-event"]) {
+        try { 
+          if (wc.__adionHandlerRefs && wc.__adionHandlerRefs[__ev]) {
+            wc.removeListener(__ev, wc.__adionHandlerRefs[__ev]);
+          } else {
+            wc.removeAllListeners(__ev);
+          }
+        } catch (_) {} 
+      }
+    }
 
-    wc.setWindowOpenHandler(({ url }) => {
-      this.createTab(url);
+    wc.setWindowOpenHandler(({ url, disposition }) => {
+      const trimmed = (url || '').trim();
+
+      // Block empty or blank popup window hijacking
+      if (!trimmed || trimmed === 'about:blank' || trimmed === 'javascript:void(0);' || /^javascript:/i.test(trimmed)) {
+        console.warn('[TabManager] Blocked unsolicited blank popup from:', tab.url);
+        return { action: 'deny' };
+      }
+
+      // Check with shield engine if blocker is active
+      if (shield && shield.blocker) {
+        try {
+          const { Request } = require('@ghostery/adblocker');
+          const req = Request.fromRawDetails({ url: trimmed, type: 'popup', sourceUrl: tab.url });
+          const match = shield.blocker.match(req);
+          if (match && match.match) {
+            console.log('[TabManager] Shield blocked ad popup window:', trimmed);
+            try { shield.recordBlocked(tab.webContentsId, new URL(trimmed).hostname, trimmed); } catch (_) {}
+            return { action: 'deny' };
+          }
+        } catch (_) {}
+      }
+
+      // General-purpose popup focus protection:
+      // Third-party / cross-origin popups must never hijack active focus from the user or the agent.
+      let isSameOrigin = false;
+      try {
+        if (tab.url && trimmed && !trimmed.startsWith('adion://') && !tab.url.startsWith('adion://')) {
+          const tabHost = new URL(tab.url).hostname;
+          const targetHost = new URL(trimmed).hostname;
+          isSameOrigin = tabHost === targetHost || targetHost.endsWith('.' + tabHost);
+        }
+      } catch (_) {}
+
+      const shouldActivate = isSameOrigin && disposition !== 'background-tab';
+      this.createTab(trimmed, { activate: shouldActivate });
       return { action: 'deny' };
     });
 
     // Keyboard shortcut handler for DevTools from within page webContents
-    wc.on('before-input-event', (event, input) => {
+    const beforeInputHandler = (event, input) => {
       if (input.type === 'keyDown') {
         if (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i')) {
           event.preventDefault();
           this.toggleDevTools('detach');
         }
       }
-    });
+    };
+    wc.on('before-input-event', beforeInputHandler);
+    wc.__adionHandlerRefs['before-input-event'] = beforeInputHandler;
 
     const canGoBack = (wc) => (wc.navigationHistory ? wc.navigationHistory.canGoBack() : (wc.canGoBack ? wc.canGoBack() : false));
     const canGoForward = (wc) => (wc.navigationHistory ? wc.navigationHistory.canGoForward() : (wc.canGoForward ? wc.canGoForward() : false));
 
-    wc.on('did-start-loading', () => {
+    const startLoadingHandler = () => {
       tab.isLoading = true;
       this.sendTabUpdate(tab);
-    });
+    };
+    wc.on('did-start-loading', startLoadingHandler);
+    wc.__adionHandlerRefs['did-start-loading'] = startLoadingHandler;
 
-    wc.on('did-stop-loading', () => {
+    const stopLoadingHandler = () => {
       tab.isLoading = false;
       tab.canGoBack = canGoBack(wc);
       tab.canGoForward = canGoForward(wc);
       this.sendTabUpdate(tab);
-    });
+    };
+    wc.on('did-stop-loading', stopLoadingHandler);
+    wc.__adionHandlerRefs['did-stop-loading'] = stopLoadingHandler;
 
-    wc.on('page-title-updated', (e, title) => {
+    const titleUpdateHandler = (e, title) => {
       tab.title = title || 'Untitled';
       this.sendTabUpdate(tab);
-    });
+    };
+    wc.on('page-title-updated', titleUpdateHandler);
+    wc.__adionHandlerRefs['page-title-updated'] = titleUpdateHandler;
 
-    wc.on('page-favicon-updated', (e, favicons) => {
+    const faviconUpdateHandler = (e, favicons) => {
       if (favicons && favicons.length > 0) {
         tab.favicon = favicons[0];
         this.sendTabUpdate(tab);
       }
-    });
+    };
+    wc.on('page-favicon-updated', faviconUpdateHandler);
+    wc.__adionHandlerRefs['page-favicon-updated'] = faviconUpdateHandler;
 
     wc.on('did-navigate', (e, url) => {
       this.handleNavigation(tab, url);
@@ -271,8 +334,10 @@ class TabManager {
     const targetUrl = this.resolveUrl(initialUrl);
     view.webContents.loadURL(targetUrl);
 
-    // Make active
-    this.switchTab(id);
+    // Make active unless explicitly backgrounded
+    if (options.activate !== false) {
+      this.switchTab(id);
+    }
     this.sendTabsList();
     return tab;
   }
@@ -545,17 +610,38 @@ class TabManager {
    * Switch tab by index, title, or query
    */
   switchTabByQuery(query) {
-    if (!query) return null;
+    if (query === undefined || query === null || query === '') return null;
+
+    // Handle numeric index directly
+    if (typeof query === 'number') {
+      const tabList = Array.from(this.tabs.values());
+      const idx1 = query - 1; // 1-based index (e.g. 2 -> second tab)
+      if (idx1 >= 0 && idx1 < tabList.length) {
+        this.switchTab(tabList[idx1].id);
+        return tabList[idx1];
+      }
+      if (query >= 0 && query < tabList.length) {
+        this.switchTab(tabList[query].id);
+        return tabList[query];
+      }
+    }
+
     const q = String(query).toLowerCase().trim();
 
-    // 1. Direct index e.g. "1", "tab 2", "first"
-    const indexMatch = q.match(/^(?:tab\s+)?(\d+)$/);
+    // 1. Direct index e.g. "1", "2", "tab 2", "tab #2", "#2"
+    const indexMatch = q.match(/^(?:tab\s+)?#?(\d+)$/i);
     if (indexMatch) {
-      const idx = parseInt(indexMatch[1], 10) - 1;
+      const num = parseInt(indexMatch[1], 10);
       const tabList = Array.from(this.tabs.values());
-      if (idx >= 0 && idx < tabList.length) {
-        this.switchTab(tabList[idx].id);
-        return tabList[idx];
+      // 1-based index (e.g. Tab #1 is first tab)
+      if (num >= 1 && num <= tabList.length) {
+        this.switchTab(tabList[num - 1].id);
+        return tabList[num - 1];
+      }
+      // 0-based index fallback
+      if (num >= 0 && num < tabList.length) {
+        this.switchTab(tabList[num].id);
+        return tabList[num];
       }
     }
 
@@ -573,8 +659,22 @@ class TabManager {
         return tabList[tabList.length - 1];
       }
     }
+    if (q === 'prev' || q === 'previous' || q === 'previous tab') {
+      const tabList = Array.from(this.tabs.values());
+      const curIdx = tabList.findIndex(t => t.id === this.activeTabId);
+      if (curIdx > 0) {
+        this.switchTab(tabList[curIdx - 1].id);
+        return tabList[curIdx - 1];
+      }
+    }
 
-    // 2. Title or URL matching
+    // 2. Direct tab ID match (e.g. "tab_1")
+    if (this.tabs.has(query)) {
+      this.switchTab(query);
+      return this.tabs.get(query);
+    }
+
+    // 3. Title or URL matching
     for (const tab of this.tabs.values()) {
       const title = (tab.title || '').toLowerCase();
       const url = (tab.url || '').toLowerCase();
@@ -584,11 +684,38 @@ class TabManager {
       }
     }
 
+    // 4. Token coverage matching (e.g. "BooksByMohit" or "nomoney" or "overthinking")
+    const tokens = q.split(/\s+/).filter(t => t.length > 2);
+    if (tokens.length > 0) {
+      for (const tab of this.tabs.values()) {
+        const title = (tab.title || '').toLowerCase();
+        const url = (tab.url || '').toLowerCase();
+        const matchesAny = tokens.some(tok => title.includes(tok) || url.includes(tok));
+        if (matchesAny) {
+          this.switchTab(tab.id);
+          return tab;
+        }
+      }
+    }
+
     return null;
   }
 
   getActiveTab() {
     return this.tabs.get(this.activeTabId);
+  }
+
+  /** Close every tab (used when switching browser profiles). */
+  closeAllTabs() {
+    for (const id of Array.from(this.tabs.keys())) {
+      const tab = this.tabs.get(id);
+      if (tab) {
+        try { shield.cleanTab(tab.webContentsId); } catch (_) {}
+        try { tab.view.webContents.destroy(); } catch (_) {}
+        this.tabs.delete(id);
+      }
+    }
+    this.activeTabId = null;
   }
 
   sendTabUpdate(tab) {

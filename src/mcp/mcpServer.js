@@ -61,6 +61,31 @@ class MCPServer extends EventEmitter {
   /**
    * Register available MCP Tools with JSON Schema declarations
    */
+  /**
+   * Resolve a WebFrameMain target for JS execution.
+   * frame: undefined/'main' → main frame; numeric string → index across all frames;
+   * otherwise → substring match on frame URL (case-insensitive).
+   */
+  _resolveFrame(contents, frame) {
+    const root = contents.mainFrame;
+    if (!frame || frame === 'main' || frame === '0') return root;
+    const all = [];
+    const walk = (f) => {
+      all.push(f);
+      for (const c of (f.frames || [])) walk(c);
+    };
+    walk(root);
+    if (/^\d+$/.test(String(frame))) {
+      const idx = parseInt(frame, 10);
+      if (all[idx]) return all[idx];
+      throw new Error(`Frame index ${idx} out of range (${all.length} frames)`);
+    }
+    const q = String(frame).toLowerCase();
+    const hit = all.find(f => (f.url || '').toLowerCase().includes(q));
+    if (!hit) throw new Error(`No frame matching "${frame}". Frames: ${all.map(f => f.url).join(' | ')}`);
+    return hit;
+  }
+
   registerTools() {
     return [
       {
@@ -163,13 +188,31 @@ class MCPServer extends EventEmitter {
       },
       {
         name: 'browser_evaluate_javascript',
-        description: 'Execute isolated JavaScript code in the active tab context via Chrome DevTools Protocol.',
+        description: 'Execute JavaScript in the active tab. Optionally target a subframe (iframe) by index or URL substring — required for cross-origin embedded apps/games.',
         inputSchema: {
           type: 'object',
           properties: {
-            expression: { type: 'string', description: 'JavaScript code expression to evaluate' }
+            expression: { type: 'string', description: 'JavaScript code expression to evaluate' },
+            frame: { type: 'string', description: 'Frame selector: "main" (default), numeric index among all frames, or substring of the frame URL (e.g. "chess-free")' }
           },
           required: ['expression']
+        }
+      },
+      {
+        name: 'browser_list_frames',
+        description: 'List all frames (main frame + iframes) in the active tab with index, URL, and name.',
+        inputSchema: { type: 'object', properties: {} }
+      },
+      {
+        name: 'browser_click_at',
+        description: 'Click at raw viewport pixel coordinates using real Chromium input dispatch. Works on canvas games and inside iframes (coordinates are in page viewport space).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            x: { type: 'number', description: 'Viewport X coordinate' },
+            y: { type: 'number', description: 'Viewport Y coordinate' }
+          },
+          required: ['x', 'y']
         }
       },
       {
@@ -198,13 +241,24 @@ class MCPServer extends EventEmitter {
       },
       {
         name: 'browser_dispatch_agent_command',
-        description: 'Send a natural language instruction or autonomous command to the browser AI agent (Jarvis) runtime.',
+        description: 'Send a natural language instruction or autonomous command to the browser AI agent (Adion) runtime.',
         inputSchema: {
           type: 'object',
           properties: {
             command: { type: 'string', description: 'The natural language instruction to execute' }
           },
           required: ['command']
+        }
+      },
+      {
+        name: 'ask_adion_chat',
+        description: 'Send a command directly through the Ask Adion side panel chat bar (#sidePanelInput), updating the copilot chat UI and executing through submitSidePanelTask.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            text: { type: 'string', description: 'The task or prompt to type into the Ask Adion chat bar and submit' }
+          },
+          required: ['text']
         }
       },
       {
@@ -744,8 +798,32 @@ class MCPServer extends EventEmitter {
       case 'browser_evaluate_javascript': {
         if (!activeTab || !activeTab.view) throw new Error('No active browser tab found');
         const contents = activeTab.view.webContents;
-        const result = await contents.executeJavaScript(args.expression);
-        return { result };
+        const frame = this._resolveFrame(contents, args.frame);
+        const result = await frame.executeJavaScript(args.expression);
+        return { result, frameUrl: frame.url };
+      }
+
+      case 'browser_list_frames': {
+        if (!activeTab || !activeTab.view) throw new Error('No active browser tab found');
+        const contents = activeTab.view.webContents;
+        const frames = [];
+        const walk = (f, depth) => {
+          frames.push({ index: frames.length, depth, url: f.url, name: f.name || '' });
+          for (const child of (f.frames || [])) walk(child, depth + 1);
+        };
+        walk(contents.mainFrame, 0);
+        return { frames };
+      }
+
+      case 'browser_click_at': {
+        if (!activeTab || !activeTab.view) throw new Error('No active browser tab found');
+        const contents = activeTab.view.webContents;
+        const x = Number(args.x), y = Number(args.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('x and y must be numbers');
+        contents.sendInputEvent({ type: 'mouseMove', x, y });
+        contents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+        contents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+        return { success: true, x, y };
       }
 
       case 'browser_scroll': {
@@ -792,8 +870,65 @@ class MCPServer extends EventEmitter {
 
       case 'browser_dispatch_agent_command': {
         if (!this.runtime) throw new Error('Agent runtime not initialized');
-        const res = await this.runtime.processCommand(args.command);
+        const res = await this.runtime.processCommand(args.command, 'mcp');
         return { success: true, result: res, state: this.runtime.state };
+      }
+
+      case 'ask_adion_chat': {
+        const text = args.text || args.command;
+        if (!text) throw new Error('Missing parameter: text');
+
+        let uiSuccess = false;
+        let uiDetails = null;
+        if (this.controlPlane && this.controlPlane.mainWindow && !this.controlPlane.mainWindow.isDestroyed()) {
+          try {
+            uiDetails = await this.controlPlane.mainWindow.webContents.executeJavaScript(`
+              (async () => {
+                const sidePanel = document.getElementById('adionSidePanel');
+                if (sidePanel && !sidePanel.classList.contains('open')) {
+                  sidePanel.classList.add('open');
+                  const btn = document.getElementById('btnAskAdion');
+                  if (btn) btn.classList.add('active');
+                }
+                const input = document.getElementById('sidePanelInput');
+                if (input) {
+                  input.value = ${JSON.stringify(text)};
+                  input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                if (typeof window.submitSidePanelTask === 'function') {
+                  window.submitSidePanelTask(${JSON.stringify(text)});
+                  return { success: true, method: 'window.submitSidePanelTask' };
+                } else if (typeof submitSidePanelTask === 'function') {
+                  submitSidePanelTask(${JSON.stringify(text)});
+                  return { success: true, method: 'submitSidePanelTask' };
+                } else {
+                  const sendBtn = document.getElementById('btnSidePanelSend');
+                  if (sendBtn) {
+                    sendBtn.click();
+                    return { success: true, method: 'btnSidePanelSend.click()' };
+                  }
+                }
+                return { success: false, reason: 'submitSidePanelTask not found' };
+              })()
+            `);
+            uiSuccess = uiDetails && uiDetails.success;
+          } catch (e) {
+            uiDetails = { success: false, error: e.message };
+          }
+        }
+
+        let runtimeResult = null;
+        if (!uiSuccess && this.runtime) {
+          runtimeResult = await this.runtime.processCommand(text, 'adion-chat');
+        }
+
+        return {
+          success: true,
+          command: text,
+          uiDispatched: uiSuccess,
+          uiDetails,
+          runtimeResult
+        };
       }
 
       case 'audio_adjust_slider': {

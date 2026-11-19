@@ -50,9 +50,12 @@ function loadEnv() {
     groqWhisperUrl: process.env.GROQ_WHISPER_URL || 'https://api.groq.com/openai/v1/audio/transcriptions',
     groqWhisperModel: process.env.GROQ_WHISPER_MODEL || 'whisper-large-v3-turbo',
     mercuryApiKey: process.env.MERCURY_API_KEY || '',
-    mercuryApiUrl: process.env.MERCURY_API_URL || 'https://api.mercury.ai/v1/chat/completions',
-    mercuryModel: process.env.MERCURY_MODEL || 'mercury-coder',
+    mercuryApiUrl: process.env.MERCURY_API_URL || 'https://api.inceptionlabs.ai/v1/chat/completions',
+    mercuryModel: process.env.MERCURY_MODEL || 'mercury-3',
     localModelEndpoint: process.env.LOCAL_MODEL_ENDPOINT || 'http://127.0.0.1:11434/api/generate',
+    freemodelApiKey: process.env.FREEMODEL_API_KEY || '',
+    freemodelApiUrl: process.env.FREEMODEL_API_URL || 'https://freemodel.in/v1',
+    freemodelModel: process.env.FREEMODEL_MODEL || 'deepseek-v4.1-flash',
 
   };
 }

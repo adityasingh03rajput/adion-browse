@@ -43,6 +43,15 @@ contextBridge.exposeInMainWorld('adionAPI', {
   getHistory: () => ipcRenderer.invoke('get-history'),
   clearHistory: () => ipcRenderer.invoke('clear-history'),
 
+  // Browser profiles (multi-account)
+  profile: {
+    list: () => ipcRenderer.invoke('profile:list'),
+    create: (name) => ipcRenderer.invoke('profile:create', name),
+    switch: (id) => ipcRenderer.invoke('profile:switch', id),
+    remove: (id) => ipcRenderer.invoke('profile:delete', id),
+    onUpdated: (cb) => ipcRenderer.on('profile-updated', (e, data) => cb(data))
+  },
+
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),
   updateSetting: (key, value) => ipcRenderer.invoke('update-setting', { key, value }),
@@ -53,7 +62,7 @@ contextBridge.exposeInMainWorld('adionAPI', {
   // AI Voice & Autonomous Control Plane API
   agent: {
     sendCommand: (commandText) => ipcRenderer.invoke('agent:send-command', commandText),
-    startVoice: () => ipcRenderer.send('agent:voice-start'),
+    startVoice: (mode) => ipcRenderer.send('agent:voice-start', mode),
     sendVoiceChunk: (audioBuffer) => ipcRenderer.send('agent:voice-data', audioBuffer),
     stopVoice: (transcript) => ipcRenderer.invoke('agent:voice-stop', transcript),
     cancelTask: () => ipcRenderer.send('agent:cancel-task'),
@@ -70,7 +79,9 @@ contextBridge.exposeInMainWorld('adionAPI', {
     getTabClusters: () => ipcRenderer.invoke('agent:get-tab-clusters'),
     verifyBiometric: (vector) => ipcRenderer.invoke('agent:verify-biometric', vector),
     getPageContext: () => ipcRenderer.invoke('agent:get-page-context'),
-    setPageSharing: (isShared) => ipcRenderer.invoke('agent:set-page-sharing', isShared)
+    setPageSharing: (isShared) => ipcRenderer.invoke('agent:set-page-sharing', isShared),
+    setSharedTabs: (tabIds) => ipcRenderer.invoke('agent:set-shared-tabs', tabIds),
+    getSharedTabs: () => ipcRenderer.invoke('agent:get-shared-tabs')
   },
 
   // Distributed Multi-Agent Pool
@@ -95,14 +106,14 @@ contextBridge.exposeInMainWorld('adionAPI', {
     getTelemetry: () => ipcRenderer.invoke('enterprise:get-telemetry')
   },
 
-  // JARVIS Interactive Assistant & Session Memory
+  // ADION Interactive Assistant & Session Memory
   session: {
     getHistory: () => ipcRenderer.invoke('session:get-history'),
     clearSession: () => ipcRenderer.invoke('session:clear'),
     sendChat: (message) => ipcRenderer.invoke('session:send-chat', message),
     onUpdated: (callback) => ipcRenderer.on('session:updated', (e, data) => callback(data)),
     onCleared: (callback) => ipcRenderer.on('session:cleared', (e, data) => callback(data)),
-    onNotification: (callback) => ipcRenderer.on('jarvis:notification', (e, data) => callback(data))
+    onNotification: (callback) => ipcRenderer.on('adion:notification', (e, data) => callback(data))
   },
 
   // Optional Model Context Protocol (MCP) Server Control
@@ -112,6 +123,18 @@ contextBridge.exposeInMainWorld('adionAPI', {
     onStatusChange: (callback) => ipcRenderer.on('mcp:status-change', (e, data) => callback(data))
   },
 
+  // Gemini Task Mode (Stateful Observable Execution Loop, Work Panel, & Takeover)
+  taskMode: {
+    getStatus: () => ipcRenderer.invoke('task-mode:get-status'),
+    toggle: (enable) => ipcRenderer.invoke('task-mode:toggle', enable),
+    userAction: (action, data) => ipcRenderer.invoke('task-mode:user-action', { action, data }),
+    onStatusChange: (callback) => ipcRenderer.on('task-mode:status-change', (e, data) => callback(data)),
+    onUpdate: (callback) => ipcRenderer.on('task-mode:update', (e, data) => callback(data)),
+    onPaused: (callback) => ipcRenderer.on('task-mode:paused', (e, data) => callback(data)),
+    onResumed: (callback) => ipcRenderer.on('task-mode:resumed', (e, data) => callback(data)),
+    onCompleted: (callback) => ipcRenderer.on('task-mode:completed', (e, data) => callback(data))
+  },
+
   // Standalone Local PC Terminal Bridge Control
   terminal: {
     getStatus: () => ipcRenderer.invoke('terminal:get-status'),
@@ -119,6 +142,18 @@ contextBridge.exposeInMainWorld('adionAPI', {
     exec: (command, options) => ipcRenderer.invoke('terminal:exec', { command, ...(options || {}) }),
     getHistory: () => ipcRenderer.invoke('terminal:get-history'),
     onStatusChange: (callback) => ipcRenderer.on('terminal:status-change', (e, data) => callback(data))
+  },
+
+  // PC control (Windows): read-only UI Automation probe + real input, gated
+  // by the consent layer in the control plane.
+  pc: {
+    getStatus: () => ipcRenderer.invoke('pc:get-status'),
+    toggle: (enable) => ipcRenderer.invoke('pc:toggle', enable),
+    run: (goal) => ipcRenderer.invoke('pc:run', goal),
+    stop: () => ipcRenderer.invoke('pc:stop'),
+    onStatusChange: (callback) => ipcRenderer.on('pc:status-change', (e, data) => callback(data)),
+    onStep: (callback) => ipcRenderer.on('pc:step', (e, data) => callback(data)),
+    onDone: (callback) => ipcRenderer.on('pc:done', (e, data) => callback(data))
   },
 
   // Continuous Diagnostic Logging & Telemetry Configuration

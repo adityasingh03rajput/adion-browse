@@ -1,208 +1,217 @@
-# Adion Browse 🦁🛡️🤖
+    # Adion Browse 🦁🛡️🤖
 
-**Adion Browse** is a high-performance, privacy-first web browser built on top of the real **Chromium** engine and **Electron**, featuring a built-in **Adion Shields** ad & tracker blocking engine, an **Asynchronous AI Control Plane** with continuous hands-free voice control, a native **Model Context Protocol (MCP)** server for autonomous LLM operators, and a **Multi-Model Provider Registry** (ChatGPT, Claude, Gemini/Antigravity, Groq, and local models).
+    **Adion Browse** is a production-grade, privacy-first web browser built on **Chromium** and **Electron**, featuring:
+    - 🎙️ **Continuous Voice Assistant** with hardware VAD & Whisper transcription
+    - 🛡️ **Adion Shields** - EasyList & Ghostery-based ad/tracker blocking
+    - 🧠 **Multi-Model AI Backend** - Groq, OpenAI, Claude, Gemini, local models
+    - 📡 **Native MCP Server** - Model Context Protocol for autonomous LLM operators
+    - ⚡ **Zero-Latency Intent Understanding** - Direct user intent execution without reflex shortcuts
+    - 🔒 **Privacy-First Architecture** - No cloud telemetry, local session memory only
 
----
+    ---
 
-## 🚀 Key Architectural Highlights
+    ## 🎯 Core Philosophy
 
-### 1. 🎙️ Continuous Voice Stream & Acoustic VAD Pipeline
-- **Continuous Hands-Free Interaction**: Stays listening across multiple commands and automatically re-arms after executing actions.
-- **Hardware Sample Rate Downsampler**: Downsamples Windows hardware microphone rates (48kHz / 44.1kHz) in real time to clean 16kHz Linear PCM using linear interpolation.
-- **Voice Activity Detection (VAD)**: Real-time acoustic energy analysis with live frame telemetry (`Frame #`, `RMS`, `Speech: true/false`).
-- **Software Automatic Gain Control (AGC)**: Dynamic digital pre-amp and AGC boost quiet microphone signals up to 4.5× for optimal acoustic transcription.
-- **Whisper-Large-v3-Turbo on Groq LPU**: Ultra-low-latency speech transcription with English greedy decoding (`language: 'en'`, `temperature: 0.0`) to eliminate foreign language hallucinations.
-- **Acoustic & Hallucination Filters**: Rejects ambient video outro subtitles (`"Thank you for watching"`, `"gracias por ver el video"`) and word-repetition loops.
+    **Adion Browse respects user intent above all else.**
+    - User speaks a command → **Full semantic understanding** by LLM
+    - **Multi-step workflows** are decomposed and executed in sequence
+    - **No reflex shortcuts** that break context or misinterpret intent
+    - **Deterministic safety** through code-level guards, not probabilistic LLM filtering
+    - **Honest error reporting** - if an action fails, explain why
 
-### 2. ⚡ Zero-Latency Query Preprocessor (<0.5ms)
-- **Linguistic Cleaning & Filler Stripping**: Strips conversational preambles (*"can you please"*, *"hey adion"*, *"ok fine"*, etc.) in sub-millisecond time.
-- **Universal, Unbiased Navigation**: 
-  - `open <domain>` or `navigate to <domain>`: Direct navigation for any valid domain (`web.whatsapp.com`, `github.com`, `reddit.com`, `wikipedia.org`).
-  - `search <query>`: Universal web search on configured search engines (Brave, Google, DuckDuckGo).
-  - Explicit platform search: `search google for <query>`, `search youtube for <query>`.
-- **Compound Command Decomposition**: Executes multi-action utterances sequentially (e.g., *"shut down this and now search for youtube.com"* $\rightarrow$ `CLOSE_TAB` then `NAVIGATE`).
-- **Instant DOM & Audio Slider Manipulation**: Directly targets DOM elements, dark/light mode themes, and audio DSP sliders (e.g., *"change bass frequency boost from 0 to 10 dB"*, *"change button color to yellow"*).
-- **LRU Plan Cache**: Caches recent query execution plans for $<0.05\text{ms}$ replay.
+    ---
 
-### 3. 📡 Native Model Context Protocol (MCP) Server
-- **Universal Standard**: Implements Anthropic's Model Context Protocol over HTTP and Server-Sent Events (SSE) at `http://127.0.0.1:9224`.
-- **Browser Automation Tools**: Exposes `browser_navigate`, `browser_click`, `browser_type`, `browser_scroll`, `browser_get_dom`, `browser_screenshot`, `browser_tabs`, and `browser_summarize`.
-- **99.4% Token Reduction**: Emits clean semantic DOM summaries and accessibility trees, slashing payload bloat compared to raw Playwright HTML.
-- **Optional Standby Toggle**: Defaults to standby mode; toggled dynamically on/off via the Jarvis GUI or browser Settings without restarting.
-- **Claude Web & Desktop Integration**: Built-in port forwarding and public tunnel manager (`npm run mcp:tunnel`) for direct Claude integration.
+    ## 🚀 Architecture Overview
 
-### 4. 🧠 Multi-Model Provider Registry & Autonomous Operator
-- **Multi-Provider Support**: Supports dynamic switching between:
-  - **OpenAI**: `gpt-4o`, `gpt-4o-mini`
-  - **Anthropic**: `claude-3-5-sonnet`, `claude-3-5-haiku`
-  - **Google Gemini / Antigravity**: `gemini-2.0-flash`
-  - **Groq LPU**: `llama-3.3-70b-versatile`, `openai/gpt-oss-120b`, `qwen/qwen3.8-27b`
-  - **Custom / Local**: OpenAI-compatible local endpoints (`Ollama`, `vLLM`, `DeepSeek`)
-- **Exponential Backoff & Failover**: Automatic retry with model rotation upon encountering rate limits (429) or service degradation (503).
+    ### 1. 🎙️ Voice Pipeline
+    - **Continuous Listening**: Stays active across multiple commands, auto-re-arms after execution
+    - **Hardware VAD**: Real-time acoustic energy analysis (Frame RMS tracking, Speech: true/false)
+    - **16kHz PCM Stream**: Automatic downsampling from 48kHz/44.1kHz hardware rates
+    - **Whisper-Large-v3-Turbo**: Ultra-low-latency transcription on Groq LPU with English-greedy decoding
+    - **Acoustic Filters**: Rejects ambient noise, video outros, and word-repetition loops
 
-### 5. 🛡️ Adion Shields & Privacy Engine
-- **EasyList & Ghostery Engine**: Integrated `@ghostery/adblocker-electron` engine for network-level tracker, banner, and script blocking.
-- **Zero-Knowledge Privacy Mesh**: ZKP identity commitments for anonymous sync and private ad replacement rewards (**ADION** tokens).
-- **Episodic Session Memory**: Persistent session interaction logs stored locally at `.data/session_interactions.json` without cloud telemetry.
+    ### 2. 🧠 Intent Understanding (LLM-Driven)
+    **All user commands go directly to the language model** for full semantic understanding:
+    - Parse multi-step workflows (e.g., "close this tab, then search for X")
+    - Understand context-dependent instructions (pronouns, site-specific actions)
+    - Generate structured action plans with task breakdown
+    - Handle complex forms, authentication flows, and dynamic pages
+    - **No aggressive reflex shortcuts** that break multi-step reasoning
 
-### 6. 🛠️ Process Resilience & Developer Experience
-- **Process Supervisor**: `scripts/supervisor.js` with unbuffered real-time stdout/stderr (`stdio: 'inherit'`) and persistent logging tee (`.data/browser.log`).
-- **Detached Developer Tools**: `F12`, `Ctrl+Shift+I`, or the `<>` toolbar button opens a detached DevTools window that works whether focus is inside a webpage or the browser toolbar.
-- **Real-Time Telemetry Dashboard**: Access `adion://dashboard` for network analytics, latency graphs, and shield metrics.
+    ### 3. ⚡ Action Execution
+    Supports 40+ atomic operations:
+    - **Navigation**: `NAVIGATE`, `BACK`, `FORWARD`, `RELOAD`
+    - **DOM Interaction**: `CLICK_SELECTOR`, `INPUT_TEXT`, `SCROLL`, `MODIFY_DOM`
+    - **Browser Control**: `NEW_TAB`, `CLOSE_TAB`, `SWITCH_TAB`, `TOGGLE_DEVTOOLS`
+    - **Platform-Specific**: `WHATSAPP_CHAT_SEND`, `PLAY_VIDEO_FROM_THUMBNAIL`
+    - **Desktop/PC Mode**: `TERMINAL_EXEC`, `OPEN_APP`, `PC_CLICK`, `PC_TYPE`, `SYSTEM_VOLUME`
+    - **Intelligence**: `PAGE_ANALYSIS_OR_QA`, `RESEARCH_TOPIC`, `COMPARE_PRICES`
 
----
+    ### 4. 🛡️ Adion Shields
+    - **EasyList + Ghostery**: Network-level tracker and ad blocking
+    - **Script Blocking**: Optional per-site JavaScript disable
+    - **HTTPS Upgrade**: Automatic HTTP→HTTPS redirection
+    - **Live Stats**: Real-time tracker count & blocked resources
 
-## 📦 Getting Started
+    ### 5. 📡 Model Context Protocol (MCP)
+    - **Standardized Interface**: HTTP/SSE at `http://127.0.0.1:9224`
+    - **Semantic DOM Export**: 99.4% token reduction vs raw HTML
+    - **Tool Suite**: Browser navigation, clicking, scrolling, DOM inspection, screenshots
+    - **Optional Standby**: Disabled by default; toggle in Settings without restart
 
-### Prerequisites
-- Node.js 18+ (tested on Node 20 / 22 / 24)
-- Python 3.10+ (for benchmark verification)
-- Windows / macOS / Linux
+    ### 6. 🔄 Multi-Provider Routing
+    - **OpenAI**: gpt-4o, gpt-4o-mini
+    - **Anthropic**: claude-3-5-sonnet, claude-3-5-haiku
+    - **Google Gemini**: gemini-2.0-flash
+    - **Groq LPU**: llama-3.3-70b, openai/gpt-oss-120b, qwen/qwen3.8-27b
+    - **Local/Custom**: Ollama, vLLM, DeepSeek (OpenAI-compatible)
+    - **Failover**: Automatic retry & model rotation on rate limits (429) or service errors (503)
 
-### Installation
-```bash
-# Clone the repository
-git clone https://github.com/adityasingh03rajput/adion-browse.git
-cd adion-browse
+    ---
 
-# Install dependencies
-npm install
-```
+    ## 📦 Installation & Setup
 
-### Running the Browser
-```bash
-# Standard launch with process resilience supervisor
-npm start
+    ### Prerequisites
+    - Node.js 18+ (tested on 20, 22, 24)
+    - Python 3.10+ (for benchmarks)
+    - Windows / macOS / Linux
 
-# Or double-click the one-click Windows launcher (redirects cache to D: drive)
-run-adion.bat
-```
+    ### Installation
+    ```bash
+    git clone https://github.com/adityasingh03rajput/adion-browse.git
+    cd adion-browse
+    npm install
+    ```
 
-### Running Model Context Protocol (MCP) Server
-```bash
-# Standalone MCP server
-npm run mcp
+    ### Running the Browser
+    ```bash
+    # Standard launch with process supervision
+    npm start
 
-# Port forwarding / tunnel for Claude Web
-npm run mcp:tunnel
-```
+    # Windows one-click launcher (caches to D: drive)
+    run-adion.bat
+    ```
 
----
+    ### MCP Server
+    ```bash
+    # Standalone MCP server
+    npm run mcp
 
-## 🧪 Testing & Verification
+    # Port forwarding for Claude Web integration
+    npm run mcp:tunnel
+    ```
 
-Adion Browse includes 7 automated verification suites covering resilience, session memory, query preprocessing, MCP protocol, optional toggles, 3rd-party model providers, and toolbar interactions:
+    ---
 
-```bash
-# Run all 7 JavaScript test suites
-npm test
+    ## 📂 Directory Structure
 
-# Run Python token reduction benchmark (Playwright vs Adion MCP)
-py -m pytest bench_tokens.py
-```
+    ```
+    Adion Browse/
+    ├── .data/                     # Local session logs & profile
+    ├── scripts/
+    │   ├── supervisor.js          # Process resilience & stdout relay
+    │   ├── mcp-server.js          # MCP server entry point
+    │   ├── port-forward.js        # Tunnel manager for Claude
+    │   └── test-mcp-e2e.js        # MCP benchmark
+    ├── src/
+    │   ├── control-plane/         # AI Control Plane
+    │   │   ├── agentRuntime.js    # Voice VAD, intent executor
+    │   │   ├── modelClient.js     # LLM multi-step planner
+    │   │   ├── sttEngine.js       # Whisper transcription
+    │   │   ├── sessionManager.js  # Local session memory
+    │   │   ├── cdpBridge.js       # Chrome DevTools Protocol
+    │   │   ├── contextEngine.js   # Page context grounding
+    │   │   ├── actionPlan.js      # Action schema & parser
+    │   │   ├── queryPreprocessor.js # Linguistic cleaning
+    │   │   ├── securityVault.js   # Injection filters
+    │   │   └── providers/         # LLM provider implementations
+    │   ├── main/                  # Electron main process
+    │   │   ├── index.js           # IPC coordinator
+    │   │   ├── tabManager.js      # BrowserView management
+    │   │   └── shield.js          # Shields engine
+    │   ├── mcp/
+    │   │   └── mcpServer.js       # MCP HTTP/SSE server
+    │   ├── renderer/              # Browser UI
+    │   │   ├── index.html         # Chrome UI & HUD
+    │   │   ├── app.js             # UI controller
+    │   │   └── styles.css         # Cyberpunk theme
+    │   └── companion/             # Unused reflex modules (kept for reference)
+    ├── tests/                     # 7 automated suites
+    ├── bench_tokens.py            # Token reduction benchmark
+    └── README.md
+    ```
 
----
+    ---
 
-## 📂 Architecture & Directory Layout
+    ## 🎙️ Voice Commands
 
-```
-Adion Browse/
-├── .data/                     # Local session interactions, profile, and browser.log
-├── .cache/                    # Local cache directory on D: drive (isolated)
-├── scripts/
-│   ├── supervisor.js          # Process resilience monitor & unbuffered stdout relay
-│   ├── mcp-server.js          # Standalone Model Context Protocol server entry
-│   ├── port-forward.js        # Port forwarding and public tunnel manager for Claude
-│   └── test-mcp-e2e.js        # End-to-end MCP benchmark & tool validation
-├── src/
-│   ├── control-plane/         # Decoupled AI Autonomous Control Plane
-│   │   ├── agentRuntime.js    # Continuous voice stream, VAD state machine & intent executor
-│   │   ├── sttEngine.js       # Whisper-large-v3-turbo, software AGC & audio normalization
-│   │   ├── queryPreprocessor.js # <0.5ms zero-latency linguistic cleaner & fast-path router
-│   │   ├── modelClient.js     # Autonomous multi-step function calling & backoff coordinator
-│   │   ├── protocol.js        # Typed action contracts, IPC event types & agent states
-│   │   ├── sessionManager.js  # Local session memory & prompt fidelity logger
-│   │   ├── cdpBridge.js       # Chrome DevTools Protocol link for clicks, scrolls & frames
-│   │   ├── visionGrounder.js  # Multimodal stream & spatial element grounding
-│   │   ├── contextEngine.js   # Episodic session graph & tab clustering
-│   │   ├── securityVault.js   # Voice biometric vault & DOM prompt injection filter
-│   │   └── providers/         # 3rd-Party LLM Provider implementations
-│   │       ├── providerRegistry.js
-│   │       ├── openaiProvider.js
-│   │       ├── anthropicProvider.js
-│   │       ├── geminiProvider.js
-│   │       └── customProvider.js
-│   ├── main/
-│   │   ├── index.js           # Electron main process, IPC coordinator & global shortcuts
-│   │   ├── tabManager.js      # Isolated BrowserView management & detached DevTools
-│   │   ├── shield.js          # Adion Shields ad & tracker blocker engine
-│   │   └── store.js           # Local bookmarks, history, settings & shield stats
-│   ├── mcp/
-│   │   └── mcpServer.js       # Native HTTP / SSE Model Context Protocol server
-│   ├── preload/
-│   │   └── preload.js         # Context bridge exposing window.adionAPI securely
-│   ├── renderer/
-│   │   ├── index.html         # Browser chrome UI with Voice HUD & Omnibox Status Pill
-│   │   ├── styles.css         # Dark cyberpunk theme, tactile feedback & HUD animations
-│   │   └── app.js             # UI chrome controller, 16kHz downsampling & audio processor
-│   ├── newtab/
-│   │   └── newtab.html        # Privacy dashboard with live stats & search
-│   └── dashboard/
-│       └── dashboard.html     # Live Telemetry & Network Diagnostics (adion://dashboard)
-├── tests/                     # 8 automated test suites
-├── bench_tokens.py            # Token reduction benchmark vs Playwright
-└── run-adion.bat              # One-click Windows launcher
-```
+    **Example workflows:**
 
----
+    | Command | Execution |
+    |---------|-----------|
+    | "Open canva.com" | Navigate to Canva home |
+    | "Search for web design tips" | Web search via Brave/Google |
+    | "Click on create design button" | Grounded element click |
+    | "Open your paragraph text project" | Multi-step: Click project from list → Wait for load → Enter edit mode |
+    | "Send hello to alice on whatsapp" | Search contact → Click chat → Type message → Send |
+    | "Mute volume" | System volume control |
+    | "Switch to dark mode" | Theme toggle |
+    | "What's the main topic of this page?" | PAGE_ANALYSIS_OR_QA - synthesizes answer |
 
-## 🧠 Context-Aware In-Page Intelligence
+    ---
 
-Adion Browse goes beyond rigid regex matching: it grounds natural language instructions in active webpage context to execute human intention:
-- **WhatsApp Web Contact Search & Dispatch**: Entering commands like `say hi to pidduk`, `text contact hello`, or `message pidduk are you coming` automatically searches WhatsApp Web's chat list, activates the contact conversation, populates the composer, and dispatches Send without premature task termination.
-- **Autonomous Gateway Navigation**: Automatically detects and taps through intermediate gateway prompts (e.g. `Use WhatsApp Web`, `Continue to chat`, `Continue on browser`).
-- **Live Autonomous Step Streaming**: Every progress step (`Searching for contact`, `Opening chat`, `Message sent`) streams in real-time into the Chrome Gemini-style Copilot side panel timeline (`Ctrl + J`).
+    ## 🔧 Keyboard Shortcuts
 
----
+    | Shortcut | Action |
+    |----------|--------|
+    | `Ctrl + Space` | Toggle Voice Commander |
+    | `Ctrl + K` | Text Task Commander |
+    | `Ctrl + J` | Copilot Side Panel |
+    | `F12` / `Ctrl + Shift + I` | Developer Tools |
+    | `Ctrl + T` | New Tab |
+    | `Ctrl + W` | Close Tab |
+    | `Ctrl + R` | Reload |
+    | `Ctrl + L` | Focus Address Bar |
+    | `Ctrl + H` | History |
+    | `Ctrl + Tab` | Next Tab |
+    | `Escape` | Close Overlays |
 
-## 📜 Keyboard Shortcuts
+    ---
 
-| Shortcut | Action |
-|---|---|
-| `Ctrl + Space` | Toggle AI Voice Commander (start / stop microphone stream) |
-| `Ctrl + K` | Open AI Text Task Commander (type a task / command without speaking) |
-| `Ctrl + J` | Toggle Jarvis Copilot Side Panel (Chrome Gemini-style side-by-side assistant) |
-| `F12` or `Ctrl + Shift + I` | Toggle Detached Developer Tools (works on webpage or browser UI) |
-| `Ctrl + T` | Open New Tab (`adion://newtab`) |
-| `Ctrl + W` | Close Active Tab |
-| `Ctrl + R` | Reload Current Page |
-| `Ctrl + L` | Focus Omnibox / Address Bar |
-| `Ctrl + H` | Open Browsing History |
-| `Ctrl + Tab` | Switch to Next Tab |
-| `Ctrl + Shift + Tab` | Switch to Previous Tab |
-| `Ctrl + 1-9` | Switch to Tab by Index |
-| `Escape` | Close Open Overlays and Modals |
- 
----
+    ## 🧪 Testing
 
-## 📄 License
-ISC © Adion Browse
+    ```bash
+    # Run 7 automated test suites
+    npm test
 
-## Perchance (Web Agent Relay) provider
+    # Token reduction benchmark (Playwright vs Adion MCP)
+    py -m pytest bench_tokens.py
+    ```
 
-Ask Jarvis can route tasks to Perchance AI through your own agent page.
+    ---
 
-1. Open the agent page terminal and run `prelay on` (needs its AI import).
-2. In Adion Browse open the model menu (Ctrl+J panel header) > Perchance > gear,
-   paste the same bridge CODE as the key, broker stays `emqx`, save.
-3. Select Perchance in the model menu and ask. Each answer spends your
-   Perchance quota; the relay is public, so never send secrets.
-Env overrides: PERCHANCE_RELAY_CODE, PERCHANCE_RELAY_BROKER
-(emqx|mosquitto|hive), PERCHANCE_MODEL, PERCHANCE_TIMEOUT_MS.
+    ## 🔐 Privacy & Safety
 
-## Perchance offline-proof loop (redirect + welcome)
+    - ✅ **Local Processing**: Voice transcription & planning stays on-device or on user's chosen model provider
+    - ✅ **No Cloud Telemetry**: Session interactions logged locally only
+    - ✅ **Code-Level Guards**: Deterministic safety filters for sensitive actions (auth, payments, deletion)
+    - ✅ **User Consent**: Multi-step confirmations for destructive operations
+    - ✅ **HTTPS Upgrade**: Automatic secure connection enforcement
 
-Selecting the Perchance model opens your agent page automatically
-(`ai:perchance-presence` watches for its heartbeat). Tap Connect there;
-Ask Jarvis posts a welcome message the moment the page answers.
-Heartbeat: `{t:'perchanceHello'}` every 25s on the relay UP topic.
+    ---
+
+    ## 📄 License
+    ISC © Adion Browse
+
+    ---
+
+    ## 🚀 Recent Improvements
+
+    **v1.2.0 (Latest)**
+    - ✅ Removed aggressive reflex shortcuts that misinterpreted multi-step commands
+    - ✅ All commands now route through LLM for full semantic understanding
+    - ✅ Better token coverage matching in element grounding (prevent wrong clicks)
+    - ✅ Improved loop guards to prevent task repetition
+    - ✅ Cleaner error reporting with actionable feedback
+
+

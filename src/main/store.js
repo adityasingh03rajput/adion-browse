@@ -38,6 +38,7 @@ class Store {
         theme: 'dark',
         showBookmarksBar: true,
         mcpServerEnabled: true, // Enabled for Claude Web and external agents
+        taskModeEnabled: true,  // Gemini Task Mode (Stateful loop, Work Panel, Human-in-the-Loop Takeover)
         diagnosticLogging: true, // Continuous structured telemetry and diagnostic monitoring
         logLevel: 'structured'   // 'structured' | 'verbose' | 'minimal'
       },

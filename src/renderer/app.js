@@ -51,8 +51,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnRunTask = document.getElementById('btnRunTask');
 
   // Chrome Gemini-Architecture Copilot Side Panel Elements
-  const btnAskJarvis = document.getElementById('btnAskJarvis');
-  const jarvisSidePanel = document.getElementById('jarvisSidePanel');
+  const btnAskAdion = document.getElementById('btnAskAdion');
+  const adionSidePanel = document.getElementById('adionSidePanel');
   const btnCloseSidePanel = document.getElementById('btnCloseSidePanel');
   const sidePanelPageTitle = document.getElementById('sidePanelPageTitle');
   const sidePanelBody = document.getElementById('sidePanelBody');
@@ -156,7 +156,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- TAB UPDATES ---
   window.adionAPI.onTabsListUpdated(({ tabs, activeTabId }) => {
+    if (typeof syncSharedTabsWithOpenTabs === 'function') {
+      syncSharedTabsWithOpenTabs(tabs);
+    }
     renderTabs(tabs, activeTabId);
+    if (typeof updatePageSharingContext === 'function') {
+      updatePageSharingContext();
+    }
   });
 
   window.adionAPI.onTabUpdated((tab) => {
@@ -164,9 +170,6 @@ document.addEventListener('DOMContentLoaded', () => {
       currentActiveUrl = tab.url;
       currentActiveTitle = tab.title;
 
-      if (sidePanelPageTitle) {
-        sidePanelPageTitle.textContent = `"${tab.title || (tab.url === 'adion://newtab' ? 'New Tab' : tab.url)}"`;
-      }
       if (typeof updatePageSharingContext === 'function') {
         updatePageSharingContext();
       }
@@ -276,7 +279,7 @@ document.addEventListener('DOMContentLoaded', () => {
       (historyModal && historyModal.classList.contains('show')) ||
       (settingsModal && settingsModal.classList.contains('show')) ||
       (telemetryOverlay && telemetryOverlay.classList.contains('show')) ||
-      (jarvisPanelOverlay && jarvisPanelOverlay.classList.contains('open')) ||
+      (adionPanelOverlay && adionPanelOverlay.classList.contains('open')) ||
       (taskModal && taskModal.classList.contains('show')) ||
       (modelConfigModal && modelConfigModal.classList.contains('show'))
     );
@@ -291,7 +294,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (except !== 'history' && historyModal) historyModal.classList.remove('show');
     if (except !== 'settings' && settingsModal) settingsModal.classList.remove('show');
     if (except !== 'telemetry' && telemetryOverlay) telemetryOverlay.classList.remove('show');
-    if (except !== 'jarvis' && jarvisPanelOverlay) jarvisPanelOverlay.classList.remove('open');
+    if (except !== 'adion' && adionPanelOverlay) adionPanelOverlay.classList.remove('open');
     if (except !== 'modelConfig' && modelConfigModal) modelConfigModal.classList.remove('show');
     if (except !== 'task' && taskModal) {
       taskModal.classList.remove('show');
@@ -311,7 +314,7 @@ document.addEventListener('DOMContentLoaded', () => {
     e.stopPropagation();
     try {
       if (!currentActiveUrl || currentActiveUrl.startsWith('adion://')) {
-        showJarvisToast('Built-in tabs (adion://) are internal system pages.');
+        showAdionToast('Built-in tabs (adion://) are internal system pages.');
         btnBookmark.classList.add('bookmarked');
         setTimeout(() => {
           if (!currentActiveUrl || currentActiveUrl.startsWith('adion://')) {
@@ -323,10 +326,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await window.adionAPI.toggleBookmark(currentActiveTitle || currentActiveUrl, currentActiveUrl);
       if (res && res.isBookmarked) {
         btnBookmark.classList.add('bookmarked');
-        showJarvisToast(`★ Bookmarked: ${currentActiveTitle || currentActiveUrl}`);
+        showAdionToast(`Bookmarked: ${currentActiveTitle || currentActiveUrl}`);
       } else {
         btnBookmark.classList.remove('bookmarked');
-        showJarvisToast('Bookmark removed.');
+        showAdionToast('Bookmark removed.');
       }
     } catch (err) {
       console.error('[Bookmark UI] Error toggling bookmark:', err);
@@ -400,12 +403,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (btnOverlayTestQuery) {
     btnOverlayTestQuery.addEventListener('click', async () => {
-      overlayQueryResult.innerHTML = '<span style="color:#00f2fe;">⚡ Executing test query across Chromium control plane...</span>';
+      overlayQueryResult.innerHTML = '<span style="color:#00f2fe;">Executing test query across Chromium control plane...</span>';
       setTimeout(() => {
         const ping = (12.4 + Math.random() * 3).toFixed(1);
         const domNodes = 148;
         overlayQueryResult.innerHTML = `
-          <strong style="color:#10b981;">✓ Diagnostics Test Verified</strong><br>
+          <strong style="color:#10b981;">Diagnostics Test Verified</strong><br>
           Network RTT: <strong>${ping} ms</strong> | HTTP/2 Multiplexing: <strong>Active</strong><br>
           DOM Reactive Nodes: <strong>${domNodes}</strong> | Memory Heap: <strong>88.2 MB</strong><br>
           <span style="color:#8b949e; font-size:11px;">Status: New display format synchronized with autonomous agent!</span>
@@ -500,10 +503,11 @@ document.addEventListener('DOMContentLoaded', () => {
     bookmarks.forEach(bm => {
       const li = document.createElement('li');
       li.className = 'list-row';
+      const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
       li.innerHTML = `
         <div class="list-row-info">
-          <span class="list-row-title">${bm.title}</span>
-          <span class="list-row-url">${bm.url}</span>
+          <span class="list-row-title">${esc(bm.title)}</span>
+          <span class="list-row-url">${esc(bm.url)}</span>
         </div>
       `;
       li.addEventListener('click', () => {
@@ -618,7 +622,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (window.adionAPI && window.adionAPI.mcp) {
         const res = await window.adionAPI.mcp.toggle(willEnable);
         updateMcpUI(res.running, res.port);
-        showJarvisToast(res.running ? `MCP server started on port ${res.port}` : 'MCP server stopped', res.running ? 'success' : 'alert');
+        showAdionToast(res.running ? `MCP server started on port ${res.port}` : 'MCP server stopped', res.running ? 'success' : 'alert');
       }
     });
   }
@@ -630,7 +634,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (window.adionAPI && window.adionAPI.diagnostics) {
         const res = await window.adionAPI.diagnostics.updateConfig({ diagnosticLogging: willEnable });
         updateDiagUI(res.diagnosticLogging);
-        showJarvisToast(`Continuous diagnostics ${res.diagnosticLogging ? 'active & persisted' : 'paused'}`, 'success');
+        showAdionToast(`Continuous diagnostics ${res.diagnosticLogging ? 'active & persisted' : 'paused'}`, 'success');
       }
     });
   }
@@ -640,7 +644,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btnDevTools.addEventListener('click', (e) => {
       e.stopPropagation();
       window.adionAPI.toggleDevTools();
-      showJarvisToast('Developer Tools toggled.');
+      showAdionToast('Developer Tools toggled.');
     });
   }
 
@@ -682,10 +686,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (taskInputText) taskInputText.value = '';
     closeTaskModal();
 
-    // Show visual confirmation in HUD, Jarvis toast, and session
+    // Show visual confirmation in HUD, Adion toast, and session
     showAgentHud('EXECUTING', `Executing task: "${task.slice(0, 45)}"`);
-    showJarvisToast(`JARVIS: Executing task "${task.slice(0, 35)}..."`, 'success');
-    setJarvisState('THINKING');
+    showAdionToast(`ADION: Executing task "${task.slice(0, 35)}..."`, 'success');
+    setAdionState('THINKING');
 
     try {
       if (window.adionAPI && window.adionAPI.agent && typeof window.adionAPI.agent.sendCommand === 'function') {
@@ -696,7 +700,7 @@ document.addEventListener('DOMContentLoaded', () => {
       loadSessionHistory();
     } catch (err) {
       console.error('[TaskCommander] Error executing task:', err);
-      showJarvisToast('Error coordinating task.', 'alert');
+      showAdionToast('Error coordinating task.', 'alert');
     }
   }
 
@@ -741,37 +745,196 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // --- CHROME GEMINI-STYLE JARVIS COPILOT SIDE PANEL CONTROLLER ---
+  // --- CHROME GEMINI-STYLE ADION COPILOT SIDE PANEL CONTROLLER ---
   let isPageShared = true;
+  let sharedTabsPopoverOpen = false;
+  let selectedSharedTabIds = new Set();
+  let hasUserCustomizedSharedTabs = false;
 
-  async function updatePageSharingContext() {
+  function syncSharedTabsWithOpenTabs(tabs) {
+    if (!Array.isArray(tabs)) return;
+    const currentTabIds = new Set(tabs.map(t => t.id));
+
+    // Remove closed tabs
+    for (const id of selectedSharedTabIds) {
+      if (!currentTabIds.has(id)) {
+        selectedSharedTabIds.delete(id);
+      }
+    }
+
+    // If user hasn't explicitly customized, or if set is empty, select all open tabs by default
+    if (!hasUserCustomizedSharedTabs || selectedSharedTabIds.size === 0) {
+      tabs.forEach(t => selectedSharedTabIds.add(t.id));
+    }
+
+    notifySharedTabsChanged();
+  }
+
+  function notifySharedTabsChanged() {
+    if (window.adionAPI && window.adionAPI.agent && typeof window.adionAPI.agent.setSharedTabs === 'function') {
+      window.adionAPI.agent.setSharedTabs(Array.from(selectedSharedTabIds));
+    }
+  }
+
+  function renderSharedTabsPopover() {
+    const popover = document.getElementById('sharedTabsPopover');
+    const listEl = document.getElementById('sharedTabsList');
+    const labelEl = document.getElementById('sharedTabsCountLabel');
+    if (!popover || !listEl) return;
+
+    const tabs = Array.isArray(currentTabs) && currentTabs.length > 0 ? currentTabs : [];
+    const sharedCount = tabs.filter(t => selectedSharedTabIds.has(t.id)).length;
+    if (labelEl) labelEl.textContent = `Shared with AI (${sharedCount} of ${tabs.length} tabs)`;
+
+    listEl.innerHTML = '';
+    tabs.forEach((tab) => {
+      const isActive = tab.id === currentActiveTabId;
+      const isChecked = selectedSharedTabIds.has(tab.id);
+      const item = document.createElement('div');
+      item.className = `shared-tab-item ${isActive ? 'active' : ''}`;
+
+      let faviconHtml = '';
+      if (tab.favicon) {
+        const escAttr = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        faviconHtml = `<img src="${escAttr(tab.favicon)}" class="shared-tab-favicon" onerror="this.outerHTML='<svg width=\\'12\\' height=\\'12\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'2\\' style=\\'margin-right:4px;\\'><circle cx=\\'12\\' cy=\\'12\\' r=\\'10\\'></circle><line x1=\\'2\\' y1=\\'12\\' x2=\\'22\\' y2=\\'12\\'></line><path d=\\'M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z\\'></path></svg>'">`;
+      } else {
+        faviconHtml = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>`;
+      }
+
+      let host = '';
+      try {
+        if (tab.url && !tab.url.startsWith('adion://')) {
+          host = new URL(tab.url).hostname;
+        } else {
+          host = tab.url || 'adion://newtab';
+        }
+      } catch (_) {
+        host = tab.url || '';
+      }
+
+      const escText = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+      item.innerHTML = `
+        <label class="shared-tab-checkbox-label" title="Toggle AI access to this tab">
+          <input type="checkbox" class="shared-tab-checkbox" data-tab-id="${tab.id}" ${isChecked ? 'checked' : ''}>
+        </label>
+        <div class="shared-tab-main">
+          ${faviconHtml}
+          <div class="shared-tab-info">
+            <span class="shared-tab-title" title="${escText(tab.title || 'New Tab')}">${escText(tab.title || 'New Tab')}</span>
+            <span class="shared-tab-url">${escText(host)}</span>
+          </div>
+        </div>
+        ${isActive ? '<span class="shared-tab-badge">Active</span>' : ''}
+        <button class="btn-tab-switch" title="Switch to this tab">Switch</button>
+      `;
+
+      const checkbox = item.querySelector('.shared-tab-checkbox');
+      if (checkbox) {
+        checkbox.addEventListener('change', (e) => {
+          e.stopPropagation();
+          hasUserCustomizedSharedTabs = true;
+          if (checkbox.checked) {
+            selectedSharedTabIds.add(tab.id);
+          } else {
+            selectedSharedTabIds.delete(tab.id);
+          }
+          notifySharedTabsChanged();
+          updatePageSharingContext();
+          if (labelEl) {
+            const sc = tabs.filter(t => selectedSharedTabIds.has(t.id)).length;
+            labelEl.textContent = `Shared with AI (${sc} of ${tabs.length} tabs)`;
+          }
+        });
+      }
+
+      const btnSwitch = item.querySelector('.btn-tab-switch');
+      if (btnSwitch) {
+        btnSwitch.addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.adionAPI.switchTab(tab.id);
+          toggleTabsSharingPopover(false);
+        });
+      }
+
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('.shared-tab-checkbox-label') || e.target.closest('.btn-tab-switch')) return;
+        window.adionAPI.switchTab(tab.id);
+        toggleTabsSharingPopover(false);
+      });
+
+      listEl.appendChild(item);
+    });
+  }
+
+  function toggleTabsSharingPopover(forceState) {
+    const popover = document.getElementById('sharedTabsPopover');
+    if (!popover) return;
+    if (typeof forceState === 'boolean') {
+      sharedTabsPopoverOpen = forceState;
+    } else {
+      sharedTabsPopoverOpen = !sharedTabsPopoverOpen;
+    }
+
+    if (sharedTabsPopoverOpen) {
+      renderSharedTabsPopover();
+      popover.classList.add('open');
+    } else {
+      popover.classList.remove('open');
+    }
+  }
+
+  const btnCloseSharedTabsPopover = document.getElementById('btnCloseSharedTabsPopover');
+  if (btnCloseSharedTabsPopover) {
+    btnCloseSharedTabsPopover.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleTabsSharingPopover(false);
+    });
+  }
+
+  const btnSharedTabsSelectAll = document.getElementById('btnSharedTabsSelectAll');
+  if (btnSharedTabsSelectAll) {
+    btnSharedTabsSelectAll.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hasUserCustomizedSharedTabs = true;
+      currentTabs.forEach(t => selectedSharedTabIds.add(t.id));
+      notifySharedTabsChanged();
+      updatePageSharingContext();
+      renderSharedTabsPopover();
+    });
+  }
+
+  const btnSharedTabsDeselectAll = document.getElementById('btnSharedTabsDeselectAll');
+  if (btnSharedTabsDeselectAll) {
+    btnSharedTabsDeselectAll.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hasUserCustomizedSharedTabs = true;
+      selectedSharedTabIds.clear();
+      notifySharedTabsChanged();
+      updatePageSharingContext();
+      renderSharedTabsPopover();
+    });
+  }
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#sharedTabsPopover') && !e.target.closest('#sharingPill')) {
+      toggleTabsSharingPopover(false);
+    }
+  });
+
+  async function fetchContextSuggestions() {
     if (!window.adionAPI || !window.adionAPI.agent || typeof window.adionAPI.agent.getPageContext !== 'function') return;
     try {
       const pageCtx = await window.adionAPI.agent.getPageContext();
       if (!pageCtx) return;
 
-      if (sidePanelPageTitle) {
-        const titleText = pageCtx.title || (currentActiveUrl === 'adion://newtab' ? 'New Tab' : 'Current Page');
-        sidePanelPageTitle.textContent = `"${titleText}"`;
-      }
-
-      const sharingFavicon = document.getElementById('sharingFavicon');
-      if (sharingFavicon) {
-        if (pageCtx.favicon) {
-          sharingFavicon.innerHTML = `<img src="${pageCtx.favicon}" width="13" height="13" style="border-radius:2px; vertical-align:middle;" onerror="this.parentElement.innerHTML='🌐'">`;
-        } else {
-          sharingFavicon.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>`;
-        }
-      }
-
-      // Populate Dynamic Contextual Suggestion Chips (Chrome Gemini Architecture)
       const chipsContainer = document.getElementById('contextualChipsContainer');
       if (chipsContainer && Array.isArray(pageCtx.suggestions) && pageCtx.suggestions.length > 0) {
         chipsContainer.innerHTML = '';
         pageCtx.suggestions.slice(0, 3).forEach(suggestionText => {
           const btn = document.createElement('button');
           btn.className = 'gemini-chip';
-          btn.textContent = suggestionText;
+          btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg><span>${escapeHTML(suggestionText)}</span>`;
           btn.setAttribute('data-task', suggestionText);
           btn.addEventListener('click', () => {
             submitSidePanelTask(suggestionText);
@@ -780,6 +943,77 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
     } catch (_) {}
+  }
+
+  function updatePageSharingContext() {
+    const pill = document.getElementById('sharingPill');
+    if (!pill) return;
+
+    if (!isPageShared) {
+      pill.classList.add('paused');
+      pill.innerHTML = `
+        <span class="sharing-pill-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg></span>
+        <span class="sharing-pill-text">Page sharing paused</span>
+        <button class="btn-sharing-resume" id="btnSharingResume">Share tabs</button>
+      `;
+      const resumeBtn = document.getElementById('btnSharingResume');
+      if (resumeBtn) resumeBtn.onclick = (e) => { e.stopPropagation(); togglePageSharing(); };
+      return;
+    }
+
+    pill.classList.remove('paused');
+
+    const tabs = Array.isArray(currentTabs) ? currentTabs : [];
+    const sharedTabs = tabs.filter(t => selectedSharedTabIds.has(t.id));
+    const sharedCount = sharedTabs.length;
+
+    let pillContent = '';
+    let pillIcon = '';
+
+    if (sharedCount === 0) {
+      pillContent = `No tabs shared`;
+      pillIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>`;
+    } else if (sharedCount === 1) {
+      const singleTab = sharedTabs[0];
+      const title = singleTab.title || 'Untitled Tab';
+      const displayTitle = title.length > 25 ? title.slice(0, 23) + '…' : title;
+      pillContent = `Sharing <strong id="sidePanelPageTitle">"${displayTitle}"</strong>`;
+      if (singleTab.favicon) {
+        const escAttr = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        pillIcon = `<img src="${escAttr(singleTab.favicon)}" width="13" height="13" style="border-radius:2px; vertical-align:middle;" onerror="this.outerHTML='<svg width=\\'13\\' height=\\'13\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'2\\'><circle cx=\\'12\\' cy=\\'12\\' r=\\'10\\'></circle><line x1=\\'2\\' y1=\\'12\\' x2=\\'22\\' y2=\\'12\\'></line><path d=\\'M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z\\'></path></svg>'">`;
+      } else {
+        pillIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"></path></svg>`;
+      }
+    } else {
+      pillContent = `Sharing <strong>${sharedCount} tabs</strong>`;
+      pillIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="14" height="14" rx="2" ry="2"></rect><path d="M7 7h14v14"></path></svg>`;
+    }
+
+    pill.innerHTML = `
+      <span class="sharing-pill-icon" id="sharingFavicon">${pillIcon}</span>
+      <span class="sharing-pill-text">${pillContent}</span>
+      <span class="sharing-pill-chevron">▾</span>
+      <button class="btn-sharing-dismiss" id="btnSharingDismiss" title="Pause sharing tabs">&times;</button>
+    `;
+
+    const dismissBtn = document.getElementById('btnSharingDismiss');
+    if (dismissBtn) {
+      dismissBtn.onclick = (e) => {
+        e.stopPropagation();
+        togglePageSharing();
+      };
+    }
+
+    pill.onclick = (e) => {
+      if (e.target.closest('#btnSharingDismiss') || e.target.closest('#btnSharingResume')) return;
+      toggleTabsSharingPopover();
+    };
+
+    if (sharedTabsPopoverOpen) {
+      renderSharedTabsPopover();
+    }
+
+    fetchContextSuggestions();
   }
 
   function togglePageSharing() {
@@ -791,40 +1025,13 @@ document.addEventListener('DOMContentLoaded', () => {
       window.adionAPI.agent.setPageSharing(isPageShared);
     }
 
-    if (isPageShared) {
-      pill.classList.remove('paused');
-      pill.innerHTML = `
-        <span class="sharing-pill-icon" id="sharingFavicon">🌐</span>
-        <span class="sharing-pill-text">Sharing <strong id="sidePanelPageTitle">"${currentActiveTitle || 'Current Page'}"</strong></span>
-        <button class="btn-sharing-dismiss" id="btnSharingDismiss" title="Stop sharing this page">&times;</button>
-      `;
-      const dismissBtn = document.getElementById('btnSharingDismiss');
-      if (dismissBtn) dismissBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePageSharing(); });
-      updatePageSharingContext();
-    } else {
-      pill.classList.add('paused');
-      pill.innerHTML = `
-        <span class="sharing-pill-icon">✦</span>
-        <span class="sharing-pill-text">Page sharing paused</span>
-        <button class="btn-sharing-resume" id="btnSharingResume">Share page</button>
-      `;
-      const resumeBtn = document.getElementById('btnSharingResume');
-      if (resumeBtn) resumeBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePageSharing(); });
-    }
-  }
-
-  const btnSharingDismiss = document.getElementById('btnSharingDismiss');
-  if (btnSharingDismiss) {
-    btnSharingDismiss.addEventListener('click', (e) => {
-      e.stopPropagation();
-      togglePageSharing();
-    });
+    updatePageSharingContext();
   }
 
   function openSidePanel() {
-    if (!jarvisSidePanel) return;
-    jarvisSidePanel.classList.add('open');
-    if (btnAskJarvis) btnAskJarvis.classList.add('active');
+    if (!adionSidePanel) return;
+    adionSidePanel.classList.add('open');
+    if (btnAskAdion) btnAskAdion.classList.add('active');
     if (window.adionAPI && typeof window.adionAPI.setSidePanelOpen === 'function') {
       window.adionAPI.setSidePanelOpen(true);
     }
@@ -835,16 +1042,16 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function closeSidePanel() {
-    if (!jarvisSidePanel) return;
-    jarvisSidePanel.classList.remove('open');
-    if (btnAskJarvis) btnAskJarvis.classList.remove('active');
+    if (!adionSidePanel) return;
+    adionSidePanel.classList.remove('open');
+    if (btnAskAdion) btnAskAdion.classList.remove('active');
     if (window.adionAPI && typeof window.adionAPI.setSidePanelOpen === 'function') {
       window.adionAPI.setSidePanelOpen(false);
     }
   }
 
   function toggleSidePanel() {
-    if (jarvisSidePanel && jarvisSidePanel.classList.contains('open')) {
+    if (adionSidePanel && adionSidePanel.classList.contains('open')) {
       closeSidePanel();
     } else {
       openSidePanel();
@@ -861,12 +1068,44 @@ document.addEventListener('DOMContentLoaded', () => {
     return formatted;
   }
 
+  function updateCopilotPanel() {
+    // Refresh Copilot panel with latest session history
+    if (window.adionAPI && window.adionAPI.session) {
+      window.adionAPI.session.getHistory().then(history => {
+        const interactions = history.interactions || [];
+        const recent = interactions.slice(-5);
+        
+        // Get timeline container
+        const timeline = document.getElementById('sidePanelTimeline');
+        if (timeline) {
+          // Clear and rebuild timeline
+          timeline.innerHTML = '';
+          
+          // Add conversation entries
+          recent.forEach((entry, idx) => {
+            const userMsg = entry.prompt?.raw || entry.prompt?.transcription || '';
+            const agentMsg = entry.response?.thought || entry.feedback || '';
+            
+            if (userMsg) {
+              appendCopilotMessage('user', userMsg, true);
+            }
+            if (agentMsg) {
+              appendCopilotMessage('agent', agentMsg, true);
+            }
+          });
+        }
+      }).catch(err => {
+        console.warn('[Copilot] Could not update panel:', err);
+      });
+    }
+  }
+
   function appendCopilotMessage(sender, text, isStep = false) {
     if (!sidePanelTimeline) return;
     if (sidePanelEmptyState) sidePanelEmptyState.style.display = 'none';
 
     const msgEl = document.createElement('div');
-    const copyBtnHtml = `<button class="copilot-btn-copy" title="Copy text" onclick="event.stopPropagation(); const targetBody = this.closest('.copilot-msg-user, .copilot-msg-agent').querySelector('.copilot-card-body, .copilot-user-content'); const textToCopy = targetBody ? targetBody.innerText.trim() : this.closest('.copilot-msg-user, .copilot-msg-agent').innerText.trim(); navigator.clipboard.writeText(textToCopy); const prev = this.innerHTML; this.innerHTML='✓'; setTimeout(() => { this.innerHTML=prev; }, 1400);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>`;
+    const copyBtnHtml = `<button class="copilot-btn-copy" title="Copy text" onclick="event.stopPropagation(); const targetBody = this.closest('.copilot-msg-user, .copilot-msg-agent').querySelector('.copilot-card-body, .copilot-user-content'); const textToCopy = targetBody ? targetBody.innerText.trim() : this.closest('.copilot-msg-user, .copilot-msg-agent').innerText.trim(); navigator.clipboard.writeText(textToCopy); const prev = this.innerHTML; this.innerHTML='<svg width=\\'12\\' height=\\'12\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'#10b981\\' stroke-width=\\'2.5\\'><polyline points=\\'20 6 9 17 4 12\\'></polyline></svg>'; setTimeout(() => { this.innerHTML=prev; }, 1400);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>`;
 
     if (sender === 'user') {
       msgEl.className = 'copilot-msg-user';
@@ -881,15 +1120,15 @@ document.addEventListener('DOMContentLoaded', () => {
       const lower = (text || '').toLowerCase();
 
       // Intelligently categorize messages to break monochromacy with distinct color palettes
-      if (lower.startsWith('📋 goal breakdown:') || lower.includes('goal breakdown:')) {
+      if (lower.startsWith('goal breakdown:') || lower.includes('goal breakdown:')) {
         msgEl.className = 'copilot-msg-agent copilot-card-tasks';
-        const lines = text.replace(/^📋\s*goal breakdown:\s*/i, '').trim().split('\n').filter(Boolean);
+        const lines = text.replace(/^(?:\[PLAN\]\s*)?goal breakdown:\s*/i, '').trim().split('\n').filter(Boolean);
         let checklistHtml = '<div class="copilot-task-checklist">';
         lines.forEach((line, idx) => {
           const cleanLine = line.replace(/^\d+[\.\)]\s*/, '').trim();
           checklistHtml += `
             <div class="copilot-task-item status-${idx === 0 ? 'in_progress' : 'pending'}">
-              <span class="copilot-task-icon">${idx === 0 ? '⚡' : '⏳'}</span>
+              <span class="copilot-task-icon">${idx === 0 ? '•' : '◦'}</span>
               <span class="copilot-task-text">${formatCopilotText(cleanLine)}</span>
             </div>
           `;
@@ -898,7 +1137,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         msgEl.innerHTML = `
           <div class="copilot-card-header">
-            <span class="copilot-badge badge-indigo">📋 Task Breakdown</span>
+            <span class="copilot-badge badge-indigo">Task Breakdown</span>
             ${copyBtnHtml}
           </div>
           <div class="copilot-card-body">${checklistHtml}</div>
@@ -907,7 +1146,7 @@ document.addEventListener('DOMContentLoaded', () => {
         msgEl.className = 'copilot-msg-agent copilot-card-question';
         msgEl.innerHTML = `
           <div class="copilot-card-header">
-            <span class="copilot-badge badge-amber">❓ Clarification Needed</span>
+            <span class="copilot-badge badge-amber">Clarification Needed</span>
             ${copyBtnHtml}
           </div>
           <div class="copilot-card-body">${formatCopilotText(text)}</div>
@@ -917,7 +1156,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const planContent = text.replace(/^ai plan:\s*/i, '');
         msgEl.innerHTML = `
           <div class="copilot-card-header">
-            <span class="copilot-badge badge-purple">🧠 AI Strategy Plan</span>
+            <span class="copilot-badge badge-purple">Strategy Plan</span>
             ${copyBtnHtml}
           </div>
           <div class="copilot-card-body">${formatCopilotText(planContent)}</div>
@@ -926,7 +1165,7 @@ document.addEventListener('DOMContentLoaded', () => {
         msgEl.className = 'copilot-msg-agent copilot-card-nav';
         msgEl.innerHTML = `
           <div class="copilot-card-header">
-            <span class="copilot-badge badge-cyan">🌐 Web Navigation</span>
+            <span class="copilot-badge badge-cyan">Web Navigation</span>
             ${copyBtnHtml}
           </div>
           <div class="copilot-card-body">${formatCopilotText(text)}</div>
@@ -935,7 +1174,7 @@ document.addEventListener('DOMContentLoaded', () => {
         msgEl.className = 'copilot-msg-agent copilot-card-tab';
         msgEl.innerHTML = `
           <div class="copilot-card-header">
-            <span class="copilot-badge badge-coral">📑 Tab Manager</span>
+            <span class="copilot-badge badge-coral">Tab Manager</span>
             ${copyBtnHtml}
           </div>
           <div class="copilot-card-body">${formatCopilotText(text)}</div>
@@ -944,7 +1183,7 @@ document.addEventListener('DOMContentLoaded', () => {
         msgEl.className = 'copilot-msg-agent copilot-card-target';
         msgEl.innerHTML = `
           <div class="copilot-card-header">
-            <span class="copilot-badge badge-emerald">🎯 Element Grounding</span>
+            <span class="copilot-badge badge-emerald">Element Grounding</span>
             ${copyBtnHtml}
           </div>
           <div class="copilot-card-body">${formatCopilotText(text)}</div>
@@ -953,7 +1192,7 @@ document.addEventListener('DOMContentLoaded', () => {
         msgEl.className = 'copilot-msg-agent copilot-card-success';
         msgEl.innerHTML = `
           <div class="copilot-card-header">
-            <span class="copilot-badge badge-green">✓ Task Verified</span>
+            <span class="copilot-badge badge-green">Task Verified</span>
             ${copyBtnHtml}
           </div>
           <div class="copilot-card-body">${formatCopilotText(text)}</div>
@@ -993,8 +1232,8 @@ document.addEventListener('DOMContentLoaded', () => {
     appendCopilotMessage('user', task);
     appendCopilotMessage('agent', `Analyzing current page context & coordinating: "${task}"...`, true);
 
-    setJarvisState('THINKING');
-    showJarvisToast(`Copilot: Coordinating "${task.slice(0, 35)}..."`, 'success');
+    setAdionState('THINKING');
+    showAdionToast(`Copilot: Coordinating "${task.slice(0, 35)}..."`, 'success');
 
     try {
       if (window.adionAPI && window.adionAPI.agent && typeof window.adionAPI.agent.sendCommand === 'function') {
@@ -1004,12 +1243,15 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       loadSessionHistory();
     } catch (err) {
-      appendCopilotMessage('agent', `Notice: Action performed.`);
+      console.error('[Copilot] Error executing task:', err);
+      appendCopilotMessage('agent', `Error: ${err.message || 'Task failed to execute.'}`);
+      showAdionToast(`Copilot error: ${err.message || 'Unknown error'}`, 'alert');
     }
   }
+  window.submitSidePanelTask = submitSidePanelTask;
 
-  if (btnAskJarvis) {
-    btnAskJarvis.addEventListener('click', (e) => {
+  if (btnAskAdion) {
+    btnAskAdion.addEventListener('click', (e) => {
       e.stopPropagation();
       toggleSidePanel();
     });
@@ -1040,6 +1282,60 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnSidePanelMic) {
     btnSidePanelMic.addEventListener('click', () => {
       handleVoiceButtonClick();
+    });
+  }
+
+  // --- Side Panel Conversation Mode Toggle (ChatGPT/Gemini-style) ---
+  const btnSidePanelConvoToggle = document.getElementById('btnSidePanelConvoToggle');
+  if (btnSidePanelConvoToggle) {
+    btnSidePanelConvoToggle.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      adionConvoModeEnabled = !adionConvoModeEnabled;
+      // Disable wake mode when convo mode is toggled (mutually exclusive)
+      if (adionConvoModeEnabled && adionWakeModeEnabled) {
+        adionWakeModeEnabled = false;
+        if (btnAdionWakeMode) btnAdionWakeMode.classList.remove('active');
+      }
+      // Disable Jarvis mode when convo mode is toggled
+      if (adionConvoModeEnabled && adionJarvisModeEnabled) {
+        adionJarvisModeEnabled = false;
+        if (btnSidePanelJarvisToggle) btnSidePanelJarvisToggle.classList.remove('active');
+      }
+      btnSidePanelConvoToggle.classList.toggle('active', adionConvoModeEnabled);
+      btnSidePanelConvoToggle.title = adionConvoModeEnabled
+        ? "Conversation Mode ON — tap mic once, stay listening for back-and-forth. Click to turn off."
+        : "Conversation Mode OFF — push-to-talk mode. Click to enable.";
+      showAdionToast(adionConvoModeEnabled
+        ? "Conversation mode ON — microphone stays open. Just speak, no wake word needed."
+        : 'Push-to-talk mode — tap mic for each command.', 'info');
+    });
+  }
+
+  // --- Side Panel Jarvis Mode Toggle (Persistent AI Assistant) ---
+  const btnSidePanelJarvisToggle = document.getElementById('btnSidePanelJarvisToggle');
+  if (btnSidePanelJarvisToggle) {
+    btnSidePanelJarvisToggle.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      adionJarvisModeEnabled = !adionJarvisModeEnabled;
+      // Disable convo mode when Jarvis mode is toggled (mutually exclusive)
+      if (adionJarvisModeEnabled && adionConvoModeEnabled) {
+        adionConvoModeEnabled = false;
+        if (btnSidePanelConvoToggle) btnSidePanelConvoToggle.classList.remove('active');
+      }
+      // Disable wake mode when Jarvis mode is toggled
+      if (adionJarvisModeEnabled && adionWakeModeEnabled) {
+        adionWakeModeEnabled = false;
+        if (btnAdionWakeMode) btnAdionWakeMode.classList.remove('active');
+      }
+      btnSidePanelJarvisToggle.classList.toggle('active', adionJarvisModeEnabled);
+      btnSidePanelJarvisToggle.title = adionJarvisModeEnabled
+        ? "Jarvis Mode ON — persistent AI assistant with 200k context memory. Click to turn off."
+        : "Jarvis Mode OFF — standard AI mode. Click to enable.";
+      showAdionToast(adionJarvisModeEnabled
+        ? "Jarvis mode ON — AI assistant with extended memory (200k context). All conversations are remembered."
+        : 'Standard AI mode — limited session memory.', 'info');
     });
   }
 
@@ -1078,7 +1374,13 @@ document.addEventListener('DOMContentLoaded', () => {
         closeSkillsMenu();
         if (!action) return;
 
-        if (action === '/summarize') {
+        if (action === '/task') {
+          if (typeof handleTaskModeToggle === 'function') {
+            handleTaskModeToggle();
+          } else if (window.adionAPI && window.adionAPI.taskMode) {
+            window.adionAPI.taskMode.toggle();
+          }
+        } else if (action === '/summarize') {
           submitSidePanelTask('summarize this page');
         } else if (action === '/devtools') {
           if (window.adionAPI && window.adionAPI.tabs) {
@@ -1154,42 +1456,58 @@ document.addEventListener('DOMContentLoaded', () => {
   let cachedProvidersData = null;
 
   const providerMeta = {
+    mercury: {
+      displayName: 'Mercury AI',
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>',
+      hint: 'Ultra low-latency diffusion-based LLM with native reasoning.',
+      defaultUrl: 'https://api.inceptionlabs.ai/v1/chat/completions',
+      defaultModel: 'mercury-3',
+      suggestedModels: ['mercury-3', 'mercury-decide']
+    },
+    freemodel: {
+      displayName: 'FreeModel',
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 22 8.5 12 15 2 8.5 12 2"></polygon><polygon points="12 22 2 15.5 12 15 22 15.5 12 22"></polygon></svg>',
+      hint: 'Cost-effective deepseek-v4.1-flash inference via FreeModel.',
+      defaultUrl: 'https://freemodel.in/v1',
+      defaultModel: 'deepseek-v4.1-flash',
+      suggestedModels: ['deepseek-v4.1-flash']
+    },
     custom: {
-      displayName: 'Custom Model (OpenAI-Compatible)',
-      icon: '🛠️',
-      hint: '💡 Connect any OpenAI-compatible API endpoint like DeepSeek, OpenRouter, local Ollama (<code>http://localhost:11434/v1</code>), LM Studio, or vLLM.',
+      displayName: 'Custom Model',
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>',
+      hint: 'Connect any OpenAI-compatible API endpoint like DeepSeek, OpenRouter, local Ollama (http://localhost:11434/v1), LM Studio, or vLLM.',
       defaultUrl: 'http://localhost:11434/v1',
       defaultModel: 'deepseek-chat',
       suggestedModels: ['deepseek-chat', 'deepseek-reasoner', 'llama3.2', 'qwen2.5-coder', 'mistral-nemo']
     },
     gemini: {
       displayName: 'Google Gemini',
-      icon: '🧠',
-      hint: '💡 Connect Google Gemini via Google AI Studio API key (aistudio.google.com). Supports high-speed reasoning and vision.',
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C12 6.627 6.627 12 0 12C6.627 12 12 17.373 12 24C12 17.373 17.373 12 24 12C17.373 12 12 6.627 12 0Z"/></svg>',
+      hint: 'Connect Google Gemini via Google AI Studio API key (aistudio.google.com). Supports reasoning and vision.',
       defaultUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
       defaultModel: 'gemini-2.0-flash',
       suggestedModels: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash']
     },
     openai: {
-      displayName: 'OpenAI / ChatGPT',
-      icon: '🌐',
-      hint: '💡 Connect OpenAI / ChatGPT via your platform.openai.com API key. Supports gpt-4o and reasoning models.',
+      displayName: 'OpenAI',
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg>',
+      hint: 'Connect OpenAI via platform.openai.com API key. Supports gpt-4o and reasoning models.',
       defaultUrl: 'https://api.openai.com/v1/chat/completions',
       defaultModel: 'gpt-4o',
       suggestedModels: ['gpt-4o', 'gpt-4o-mini', 'o1', 'o3-mini', 'gpt-4-turbo']
     },
     anthropic: {
-      displayName: 'Anthropic / Claude',
-      icon: '🟣',
-      hint: '💡 Connect Anthropic Claude via console.anthropic.com API key. Supports Claude 3.5 Sonnet and Haiku.',
+      displayName: 'Anthropic',
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>',
+      hint: 'Connect Anthropic Claude via console.anthropic.com API key. Supports Claude 3.5 Sonnet and Haiku.',
       defaultUrl: 'https://api.anthropic.com/v1/messages',
       defaultModel: 'claude-3-5-sonnet-20241022',
       suggestedModels: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229']
     },
     groq: {
-      displayName: 'Groq Cloud (Default Zero-Cost)',
-      icon: '🤖',
-      hint: '💡 Ultra-fast LPU inference. Free tier included by default with automatic model failover.',
+      displayName: 'Groq Cloud',
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>',
+      hint: 'Ultra-fast LPU inference. Free tier included by default with automatic model failover.',
       defaultUrl: 'https://api.groq.com/openai/v1/chat/completions',
       defaultModel: 'openai/gpt-oss-120b',
       suggestedModels: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b', 'allam-2-7b']
@@ -1216,6 +1534,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const target = (mode && mode !== 'auto') ? mode : activeName;
     const labelMap = {
+      mercury: 'Mercury-3',
+      freemodel: 'FreeModel',
       gemini: 'Gemini',
       openai: 'GPT-4o',
       anthropic: 'Claude',
@@ -1242,7 +1562,9 @@ document.addEventListener('DOMContentLoaded', () => {
     autoItem.className = `model-menu-item ${isAutoActive ? 'active' : ''}`;
     autoItem.innerHTML = `
       <div class="model-item-main">
-        <span class="model-item-icon">⚡</span>
+        <span class="model-item-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+        </span>
         <div class="model-item-details">
           <span class="model-item-name">Auto (Smart Failover)</span>
           <span class="model-item-id">Auto-prioritizes configured models / zero-cost fallback</span>
@@ -1255,11 +1577,11 @@ document.addEventListener('DOMContentLoaded', () => {
     autoItem.addEventListener('click', async () => {
       try {
         await window.adionAPI?.ai?.setProvider('auto');
-        showJarvisToast('AI Model switched to Auto (Smart Failover)', 'success');
+        showAdionToast('AI Model switched to Auto (Smart Failover)', 'success');
         updateActiveBadgeLabel('auto', 'auto');
         closeModelMenu();
       } catch (err) {
-        showJarvisToast(`Failed to switch provider: ${err.message}`, 'error');
+        showAdionToast(`Failed to switch provider: ${err.message}`, 'error');
       }
     });
     modelMenuList.appendChild(autoItem);
@@ -1268,7 +1590,7 @@ document.addEventListener('DOMContentLoaded', () => {
     providers.forEach(p => {
       const meta = providerMeta[p.name] || {
         displayName: p.displayName || p.name,
-        icon: '🤖'
+        icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>'
       };
       const isCurrent = (data?.mode === p.name) || (!isAutoActive && p.isActive);
       const item = document.createElement('div');
@@ -1293,7 +1615,9 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
         <div class="model-item-actions">
           ${badgeHtml}
-          <button class="btn-item-config" title="Configure ${meta.displayName}">⚙️</button>
+          <button class="btn-item-config" title="Configure ${meta.displayName}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          </button>
         </div>
       `;
 
@@ -1302,14 +1626,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.closest('.btn-item-config')) return;
         try {
           await window.adionAPI?.ai?.setProvider(p.name);
-          showJarvisToast(`AI Model switched to ${meta.displayName || p.displayName}`, 'success');
+          showAdionToast(`AI Model switched to ${meta.displayName || p.displayName}`, 'success');
           updateActiveBadgeLabel(p.name, p.name);
           closeModelMenu();
           if (!p.isConfigured && p.name !== 'groq') {
             setTimeout(() => openModelConfigModal(p.name), 250);
           }
         } catch (err) {
-          showJarvisToast(`Failed to switch provider: ${err.message}`, 'error');
+          showAdionToast(`Failed to switch provider: ${err.message}`, 'error');
         }
       });
 
@@ -1501,7 +1825,7 @@ document.addEventListener('DOMContentLoaded', () => {
         await window.adionAPI?.ai?.setProvider(providerName);
 
         const meta = providerMeta[providerName] || { displayName: providerName };
-        showJarvisToast(`Saved & activated ${meta.displayName} (${model || 'default'})`, 'success');
+        showAdionToast(`Saved & activated ${meta.displayName} (${model || 'default'})`, 'success');
         updateActiveBadgeLabel(providerName, providerName);
 
         // Refresh cache
@@ -1644,7 +1968,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const agentHudPulse = document.getElementById('agentHudPulse');
   const agentHudSphereCanvas = document.getElementById('agentHudSphereCanvas');
   const agentTranscriptPreview = document.getElementById('agentTranscriptPreview');
+  const voiceSubtitleBar = document.getElementById('voiceSubtitleBar');
+  const voiceSubtitleText = document.getElementById('voiceSubtitleText');
+  const voiceSubtitleLabel = document.getElementById('voiceSubtitleLabel');
   const btnCancelAgent = document.getElementById('btnCancelAgent');
+  const btnStopListening = document.getElementById('btnStopListening');
 
   let isListening = false;
   let recognition = null;
@@ -1652,7 +1980,79 @@ document.addEventListener('DOMContentLoaded', () => {
   let audioStream = null;
   let audioContext = null;
   let scriptProcessor = null;
+  let micSourceNode = null;
+  let voiceWorkletNode = null; // AudioWorklet capture node (preferred path)
+  let voiceSeqExpected = 0; // next expected worklet chunk seq (gap detection)
   let latestTranscript = '';
+  let voiceSubtitleHideTimer = null; // auto-hide timer for the voice subtitle bar
+  let voiceSubtitleFinalAt = 0; // timestamp of last final caption (LISTENING guard)
+  let zeroLevelFrames = 0;
+  const triedMicDeviceIds = new Set();
+  let adionWakeModeEnabled = false;
+  let adionConvoModeEnabled = false;
+  let adionJarvisModeEnabled = false;
+
+  /**
+   * Acquire a microphone MediaStream, optionally pinned to a specific deviceId.
+   */
+  async function openMicrophoneStream(deviceId) {
+    const audioConstraints = {
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    };
+    if (deviceId) audioConstraints.deviceId = { exact: deviceId };
+    return navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+  }
+
+  /**
+   * Failover: the default input device can be muted or a silent virtual device.
+   * When the PCM watchdog detects sustained digital silence, cycle to the next
+   * enumerated audioinput instead of streaming dead air forever.
+   */
+  async function switchToAlternateMicrophone() {
+    if (!isListening) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const mics = devices.filter(d => d.kind === 'audioinput' && d.deviceId);
+      const currentTrack = audioStream ? audioStream.getAudioTracks()[0] : null;
+      const currentId = currentTrack && currentTrack.getSettings ? currentTrack.getSettings().deviceId : null;
+      const candidates = mics.filter(d => d.deviceId !== currentId && !triedMicDeviceIds.has(d.deviceId));
+
+      if (!candidates.length) {
+        try { window.adionAPI.log('[Voice UI] [WARN] All available microphones are delivering silence. Check Windows Settings > Privacy > Microphone and the default input device.'); } catch(_) {}
+        showAdionToast('No mic audio detected. Check Windows mic privacy & default input device.', 'error');
+        showAgentHud('WARNING', 'Microphone is delivering silence. Check system input device.');
+        return;
+      }
+
+      const next = candidates[0];
+      triedMicDeviceIds.add(next.deviceId);
+      const newStream = await openMicrophoneStream(next.deviceId);
+      if (!isListening) {
+        newStream.getTracks().forEach(t => t.stop());
+        return;
+      }
+
+      const oldStream = audioStream;
+      audioStream = newStream;
+      if (oldStream) oldStream.getTracks().forEach(t => t.stop());
+
+      if (micSourceNode && audioContext) {
+        try { micSourceNode.disconnect(); } catch (_) {}
+        micSourceNode = audioContext.createMediaStreamSource(audioStream);
+        micSourceNode.connect(scriptProcessor);
+      }
+
+      zeroLevelFrames = 0;
+      const newTrack = audioStream.getAudioTracks()[0];
+      try { window.adionAPI.log(`[Voice UI] [SWITCH] Switched microphone to "${newTrack ? newTrack.label : next.label}" — retrying capture`); } catch(_) {}
+      showAdionToast(`Switched to microphone: ${newTrack ? newTrack.label : 'alternate device'}`, 'info');
+    } catch (err) {
+      try { window.adionAPI.log('[Voice UI] [ERROR] Microphone failover failed: ' + (err && err.message ? err.message : String(err))); } catch(_) {}
+    }
+  }
 
   // Initialize Web Speech Recognition as complementary STT if available
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1671,6 +2071,12 @@ document.addEventListener('DOMContentLoaded', () => {
         latestTranscript = transcript;
         agentTranscriptPreview.innerText = `"${transcript}"`;
         agentTranscriptPreview.classList.add('has-text');
+        // Voice subtitles: live interim captions while speaking, solid final after
+        try {
+          const __lastRes = event.results[event.results.length - 1];
+          const __isFinal = !!(__lastRes && __lastRes.isFinal);
+          showVoiceSubtitle(transcript, __isFinal ? { label: 'YOU', dwellMs: 6000 } : { interim: true, label: 'YOU' });
+        } catch (_) {}
 
         if (event.results[0].isFinal) {
           showAgentHud('PROCESSING', `Heard: "${transcript}"`);
@@ -1686,13 +2092,47 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  /**
+   * Voice subtitles: persistent bottom captions of the INPUT voice.
+   * Interim results render dimmed; finals stay for dwellMs then fade.
+   * sticky:true (the "Listening…" prompt) stays until replaced.
+   */
+  function showVoiceSubtitle(text, opts = {}) {
+    if (!voiceSubtitleBar || !voiceSubtitleText) return;
+    voiceSubtitleText.textContent = text;
+    if (opts.label && voiceSubtitleLabel) voiceSubtitleLabel.textContent = opts.label;
+    voiceSubtitleBar.classList.add('visible');
+    voiceSubtitleBar.classList.toggle('interim', !!opts.interim);
+    voiceSubtitleBar.classList.toggle('listening', !!opts.listening);
+    if (!opts.interim && !opts.listening) voiceSubtitleFinalAt = Date.now();
+    if (voiceSubtitleHideTimer) { clearTimeout(voiceSubtitleHideTimer); voiceSubtitleHideTimer = null; }
+    if (!opts.sticky) {
+      voiceSubtitleHideTimer = setTimeout(hideVoiceSubtitle, opts.dwellMs || (opts.interim ? 4000 : 6000));
+    }
+  }
+
+  function hideVoiceSubtitle() {
+    if (voiceSubtitleHideTimer) { clearTimeout(voiceSubtitleHideTimer); voiceSubtitleHideTimer = null; }
+    if (voiceSubtitleBar) voiceSubtitleBar.classList.remove('visible', 'interim', 'listening');
+  }
+
+  /**
+   * Show the "Listening…" prompt, unless a fresh final caption (<2.5s old)
+   * is on screen — a re-arm LISTENING event must never clobber what the
+   * user just said.
+   */
+  function showListeningSubtitle() {
+    if (Date.now() - voiceSubtitleFinalAt < 2500) return;
+    showVoiceSubtitle('Listening…', { listening: true, label: 'MIC', sticky: true });
+  }
+
   function showAgentHud(stateText, message, isListeningMode = false) {
     if (hudHideTimeout) clearTimeout(hudHideTimeout);
     if (!agentHudOverlay) return;
     agentHudOverlay.classList.add('visible');
     if (agentHudState) agentHudState.innerText = stateText;
     if (agentHudMessage) agentHudMessage.innerText = message;
-    setJarvisState(stateText);
+    setAdionState(stateText);
 
     const inVoiceMode = isListening || isListeningMode || stateText === 'LISTENING';
 
@@ -1765,6 +2205,13 @@ document.addEventListener('DOMContentLoaded', () => {
     isStartingMicrophone = true;
 
     // Clean up any stale audio stream or context before launching
+    triedMicDeviceIds.clear();
+    zeroLevelFrames = 0;
+    if (typeof voiceWorkletNode !== 'undefined' && voiceWorkletNode) {
+      try { voiceWorkletNode.disconnect(); } catch (_) {}
+      try { voiceWorkletNode.port.close(); } catch (_) {}
+      voiceWorkletNode = null;
+    }
     if (scriptProcessor) {
       try { scriptProcessor.disconnect(); } catch (_) {}
       scriptProcessor = null;
@@ -1783,35 +2230,38 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnVoiceAgent) btnVoiceAgent.classList.add('listening');
     const omnibox = document.querySelector('.omnibox-wrapper');
     if (omnibox) omnibox.classList.add('voice-active');
-    const btnJarvisVoiceEl = document.getElementById('btnJarvisVoice');
-    if (btnJarvisVoiceEl) btnJarvisVoiceEl.classList.add('listening');
+    const btnAdionVoiceEl = document.getElementById('btnAdionVoice');
+    if (btnAdionVoiceEl) btnAdionVoiceEl.classList.add('listening');
 
     showOmniboxVoiceStatus(true, 'LISTENING...');
     showAgentHud('LISTENING', 'Microphone active - speak now...', true);
+    showListeningSubtitle();
+    if (btnStopListening) btnStopListening.classList.add('visible');
     playAudioFeedbackCue(true);
 
     // Relay mic activation to main process terminal immediately (before IPC)
-    try { window.adionAPI.log('[Voice UI] 🎙️ startMicrophoneStream() called — mic button pressed'); } catch(_) {}
+    try { window.adionAPI.log('[Voice UI] [MIC] startMicrophoneStream() called — mic button pressed'); } catch(_) {}
 
     // Tell Control Plane immediately that speech session has started
     try {
-      window.adionAPI.agent.startVoice();
-      window.adionAPI.log('[Voice UI] ✅ agent:voice-start IPC sent to main process');
+      let voiceMode = 'talk';
+      if (adionJarvisModeEnabled) {
+        voiceMode = 'jarvis'; // Jarvis mode: persistent AI assistant with 200k context
+      } else if (adionConvoModeEnabled) {
+        voiceMode = 'convo'; // ChatGPT/Gemini-style: continuous, no wake word
+      } else if (adionWakeModeEnabled) {
+        voiceMode = 'wake'; // Hands-free with wake word
+      }
+      window.adionAPI.agent.startVoice(voiceMode);
+      window.adionAPI.log('[Voice UI] [OK] agent:voice-start IPC sent to main process');
     } catch (e) {
-      try { window.adionAPI.log('[Voice UI] ❌ agent.startVoice() threw: ' + e); } catch(_) {}
+      try { window.adionAPI.log('[Voice UI] [ERROR] agent.startVoice() threw: ' + e); } catch(_) {}
     }
 
     try {
       latestTranscript = '';
       try { window.adionAPI.log('[Voice UI] Requesting getUserMedia (microphone)...'); } catch(_) {}
-      audioStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      });
+      audioStream = await openMicrophoneStream();
 
       // If user toggled voice off while getUserMedia was prompting, abort cleanly
       if (!isListening) {
@@ -1821,7 +2271,20 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      try { window.adionAPI.log('[Voice UI] ✅ getUserMedia() granted — mic stream open'); } catch(_) {}
+      try { window.adionAPI.log('[Voice UI] [OK] getUserMedia() granted — mic stream open'); } catch(_) {}
+
+      // Diagnostic: report exactly which capture device Chromium opened so a
+      // muted/wrong default input device is visible in the terminal immediately.
+      const micTrack = audioStream.getAudioTracks()[0];
+      if (micTrack) {
+        let micInfo = `label="${micTrack.label || 'unknown'}" muted=${micTrack.muted} enabled=${micTrack.enabled}`;
+        try {
+          const s = micTrack.getSettings ? micTrack.getSettings() : {};
+          micInfo += ` deviceId=${s.deviceId || 'n/a'} rate=${s.sampleRate || 'n/a'}`;
+          if (s.deviceId) triedMicDeviceIds.add(s.deviceId);
+        } catch (_) {}
+        try { window.adionAPI.log(`[Voice UI] [MIC] Active microphone: ${micInfo}`); } catch(_) {}
+      }
 
       audioContext = new (window.AudioContext || window.webkitAudioContext)();
       if (audioContext.state === 'suspended') {
@@ -1830,17 +2293,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const hardwareRate = audioContext.sampleRate || 48000;
       const targetRate = 16000;
-      try { window.adionAPI.log(`[Voice UI] 🎙️ Hardware sample rate: ${hardwareRate}Hz -> downsampling to ${targetRate}Hz PCM`); } catch(_) {}
+      try { window.adionAPI.log(`[Voice UI] [AUDIO] Hardware sample rate: ${hardwareRate}Hz -> downsampling to ${targetRate}Hz PCM`); } catch(_) {}
 
-      const source = audioContext.createMediaStreamSource(audioStream);
+      micSourceNode = audioContext.createMediaStreamSource(audioStream);
 
-      // 4096 buffer on hardware rate = ~85ms at 48kHz
-      scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-
+      // Voice frames: AudioWorklet (audio thread, gap-tracked) preferred —
+      // legacy ScriptProcessor fallback is wired below if worklets fail.
+      // NOTE: both paths funnel through handleVoiceFrame, so DSP is identical.
       let chunksSent = 0;
-      scriptProcessor.onaudioprocess = (e) => {
+      voiceSeqExpected = 0;
+      const handleVoiceFrame = (inputData, seq) => {
         if (!isListening) return;
-        const inputData = e.inputBuffer.getChannelData(0);
+        if (typeof seq === 'number') {
+          if (seq !== voiceSeqExpected) {
+            try { window.adionAPI.log(`[Voice UI] dropped audio chunk(s): got seq ${seq}, expected ${voiceSeqExpected}`); } catch(_) {}
+          }
+          voiceSeqExpected = seq + 1;
+        }
 
         // High-fidelity linear interpolation downsampling to exact 16000Hz PCM
         let downsampledData;
@@ -1870,8 +2339,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const rms = Math.sqrt(sumSquares / downsampledData.length);
 
+        // Silence watchdog: ~60 consecutive near-zero frames (~5s) means the OS
+        // is feeding digital silence (muted/wrong/virtual device). Fail over to
+        // the next enumerated microphone instead of streaming dead air.
+        if (rms < 0.0008) {
+          zeroLevelFrames++;
+          if (zeroLevelFrames === 60) {
+            try { window.adionAPI.log('[Voice UI] [WARN] Microphone delivering digital silence (RMS ~0). Trying alternate input device...'); } catch(_) {}
+            switchToAlternateMicrophone();
+          }
+        } else {
+          zeroLevelFrames = 0;
+        }
+
         // Live visual pulse modulation based on acoustic energy
-        jarvisAudioLevel = Math.min(1.0, rms * 4.5);
+        adionAudioLevel = Math.min(1.0, rms * 4.5);
         const pulseEl = agentHudPulse || document.getElementById('agentHudSphereWrapper');
         if (pulseEl) {
           if (rms > 0.015) {
@@ -1888,31 +2370,61 @@ document.addEventListener('DOMContentLoaded', () => {
         chunksSent++;
         // Log first chunk and every 5th to terminal via IPC relay
         if (chunksSent === 1) {
-          try { window.adionAPI.log(`[Voice UI] 🔊 First PCM chunk sent to main (size: ${pcmBuffer.buffer.byteLength}B, RMS: ${rms.toFixed(4)})`); } catch(_) {}
+          try { window.adionAPI.log(`[Voice UI] [STREAM] First PCM chunk sent to main (size: ${pcmBuffer.buffer.byteLength}B, RMS: ${rms.toFixed(4)})`); } catch(_) {}
         }
 
         // Stream raw PCM frame across IPC to Control Plane / Local Model
         window.adionAPI.agent.sendVoiceChunk(pcmBuffer.buffer);
       };
 
-      source.connect(scriptProcessor);
-      scriptProcessor.connect(audioContext.destination);
+      // Route through a zero-gain node: audio nodes only pull when connected
+      // toward destination, but the mic must never play through the speakers
+      // (feedback/echo). A muted gain keeps the graph alive silently.
+      const micMuteGain = audioContext.createGain();
+      micMuteGain.gain.value = 0;
+      let voiceCaptureReady = false;
+      if (audioContext.audioWorklet && audioContext.audioWorklet.addModule) {
+        try {
+          await audioContext.audioWorklet.addModule(new URL('./voice-capture.worklet.js', document.baseURI));
+          voiceWorkletNode = new AudioWorkletNode(audioContext, 'adion-voice-capture');
+          voiceWorkletNode.port.onmessage = (ev) => {
+            const msg = ev.data || {};
+            if (msg.pcm) handleVoiceFrame(new Float32Array(msg.pcm), msg.seq);
+          };
+          micSourceNode.connect(voiceWorkletNode);
+          voiceWorkletNode.connect(micMuteGain);
+          voiceCaptureReady = true;
+          try { window.adionAPI.log('[Voice UI] AudioWorklet capture active (gap-tracked, 4096-sample blocks)'); } catch(_) {}
+        } catch (workletErr) {
+          try { window.adionAPI.log('[Voice UI] AudioWorklet unavailable, ScriptProcessor fallback: ' + (workletErr && workletErr.message ? workletErr.message : workletErr)); } catch(_) {}
+          voiceWorkletNode = null;
+        }
+      }
+      if (!voiceCaptureReady) {
+        // Legacy fallback: deprecated ScriptProcessorNode on the main thread.
+        // Glitches under UI load (dropped/duplicated chunks garble Whisper).
+        scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+        scriptProcessor.onaudioprocess = (e) => handleVoiceFrame(e.inputBuffer.getChannelData(0));
+        micSourceNode.connect(scriptProcessor);
+        scriptProcessor.connect(micMuteGain);
+      }
+      micMuteGain.connect(audioContext.destination);
 
       if (recognition) {
         try { recognition.start(); } catch(e){}
       }
     } catch (err) {
       const errMsg = err && err.message ? err.message : String(err);
-      try { window.adionAPI.log('[Voice UI] ❌ getUserMedia() FAILED: ' + errMsg); } catch(_) {}
+      try { window.adionAPI.log('[Voice UI] [ERROR] getUserMedia() FAILED: ' + errMsg); } catch(_) {}
       console.warn('[Microphone Stream] Error accessing microphone:', err);
       isListening = false;
       if (btnVoiceAgent) btnVoiceAgent.classList.remove('listening');
       const omnibox = document.querySelector('.omnibox-wrapper');
       if (omnibox) omnibox.classList.remove('voice-active');
-      const btnJarvisVoiceEl = document.getElementById('btnJarvisVoice');
-      if (btnJarvisVoiceEl) btnJarvisVoiceEl.classList.remove('listening');
+      const btnAdionVoiceEl = document.getElementById('btnAdionVoice');
+      if (btnAdionVoiceEl) btnAdionVoiceEl.classList.remove('listening');
       showOmniboxVoiceStatus(false);
-      showJarvisToast('Microphone access denied or busy. Check system settings.', 'error');
+      showAdionToast('Microphone access denied or busy. Check system settings.', 'error');
       showAgentHud('WARNING', 'Microphone unavailable. Type in chat instead.');
     } finally {
       isStartingMicrophone = false;
@@ -1925,11 +2437,12 @@ document.addEventListener('DOMContentLoaded', () => {
   function stopMicrophoneStream(transcript = '') {
     if (!isListening) return;
     isListening = false;
+    if (btnStopListening) btnStopListening.classList.remove('visible');
     if (btnVoiceAgent) btnVoiceAgent.classList.remove('listening');
     const omnibox = document.querySelector('.omnibox-wrapper');
     if (omnibox) omnibox.classList.remove('voice-active');
-    const btnJarvisVoiceEl = document.getElementById('btnJarvisVoice');
-    if (btnJarvisVoiceEl) btnJarvisVoiceEl.classList.remove('listening');
+    const btnAdionVoiceEl = document.getElementById('btnAdionVoice');
+    if (btnAdionVoiceEl) btnAdionVoiceEl.classList.remove('listening');
 
     showOmniboxVoiceStatus(false);
     playAudioFeedbackCue(false);
@@ -1940,11 +2453,21 @@ document.addEventListener('DOMContentLoaded', () => {
     if (agentTranscriptPreview) {
       agentTranscriptPreview.classList.remove('has-text');
     }
+    // Voice subtitles: keep a fresh final caption on screen; only clear a
+    // stale "Listening…" prompt (it would otherwise stick around forever).
+    try { if (voiceSubtitleBar && voiceSubtitleBar.classList.contains('listening')) hideVoiceSubtitle(); } catch (_) {}
 
+    if (typeof voiceWorkletNode !== 'undefined' && voiceWorkletNode) {
+      try { voiceWorkletNode.disconnect(); } catch (_) {}
+      try { voiceWorkletNode.port.close(); } catch (_) {}
+      voiceWorkletNode = null;
+    }
     if (scriptProcessor) {
       try { scriptProcessor.disconnect(); } catch (_) {}
       scriptProcessor = null;
     }
+    micSourceNode = null;
+    zeroLevelFrames = 0;
     if (audioContext && audioContext.state !== 'closed') {
       try { audioContext.close(); } catch (_) {}
       audioContext = null;
@@ -2012,16 +2535,29 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Dedicated stop-listening control: kills the mic stream without cancelling
+  // any in-flight agent task (unlike the cancel button).
+  if (btnStopListening) {
+    btnStopListening.addEventListener('click', (e) => {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      stopMicrophoneStream();
+      showOmniboxVoiceStatus(true, 'STOPPED');
+      setTimeout(() => showOmniboxVoiceStatus(false), 1200);
+      showAgentHud('IDLE', 'Microphone off. Adion is standing by.', false);
+    });
+  }
+
   // Bind Decoupled Control Plane Event Listeners
   if (window.adionAPI && window.adionAPI.agent) {
     window.adionAPI.agent.onTranscript((data) => {
       if (data && data.text) {
         showAgentHud('PROCESSING', `Heard: "${data.text}"`);
-        showJarvisToast(`Voice command: "${data.text}"`, 'success');
+        showAdionToast(`Voice command: "${data.text}"`, 'success');
         if (agentTranscriptPreview) {
           agentTranscriptPreview.innerText = `"${data.text}"`;
           agentTranscriptPreview.classList.add('has-text');
         }
+        showVoiceSubtitle(data.text, { label: 'YOU', dwellMs: 7000 });
         // Continuous hands-free voice mode: keep microphone open for consecutive commands
       }
     });
@@ -2029,6 +2565,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.adionAPI.agent.onStateChange((data) => {
       if (data.state === 'LISTENING') {
         showAgentHud('LISTENING', isListening ? 'Ready for next voice command... (listening)' : 'Listening...', true);
+        showListeningSubtitle();
       } else if (data.state === 'IDLE') {
         showAgentHud('IDLE', 'Standing by', false);
       } else {
@@ -2080,6 +2617,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (data.action === 'SHOW_METRICS_OVERLAY') {
         toggleTelemetryOverlay(true);
       }
+      if (data.action === 'THEME_SET' && data.theme && window.AdionTheme) {
+        window.AdionTheme.apply(data.theme);
+      }
+      if (data.action === 'THEME_TOGGLE' && window.AdionTheme) {
+        window.AdionTheme.toggle();
+      }
       if (data.action === 'BOOKMARK_TOGGLED') {
         if (data.isBookmarked) {
           btnBookmark.classList.add('bookmarked');
@@ -2095,91 +2638,92 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ==========================================================================
-  // JARVIS INTERACTIVE ASSISTANT & DYNAMIC ANIMATED SPHERE ENGINE
+  // ADION INTERACTIVE ASSISTANT & DYNAMIC ANIMATED SPHERE ENGINE
   // ==========================================================================
 
-  const btnToggleJarvis = document.getElementById('btnToggleJarvis');
-  const jarvisContainer = document.getElementById('jarvisContainer');
-  const jarvisCanvas = document.getElementById('jarvisCanvas');
-  const jarvisToast = document.getElementById('jarvisToast');
-  const jarvisToastText = document.getElementById('jarvisToastText');
-  const jarvisStateDot = document.getElementById('jarvisStateDot');
-  const jarvisPanelOverlay = document.getElementById('jarvisPanelOverlay');
-  const btnCloseJarvis = document.getElementById('btnCloseJarvis');
+  const btnToggleAdion = document.getElementById('btnToggleAdion');
+  const adionContainer = document.getElementById('adionContainer');
+  const adionCanvas = document.getElementById('adionCanvas');
+  const adionToast = document.getElementById('adionToast');
+  const adionToastText = document.getElementById('adionToastText');
+  const adionStateDot = document.getElementById('adionStateDot');
+  const adionPanelOverlay = document.getElementById('adionPanelOverlay');
+  const btnCloseAdion = document.getElementById('btnCloseAdion');
   const btnNewSession = document.getElementById('btnNewSession');
-  const jarvisSessionId = document.getElementById('jarvisSessionId');
-  const jarvisInteractionCount = document.getElementById('jarvisInteractionCount');
-  const jarvisTimeline = document.getElementById('jarvisTimeline');
-  const jarvisEmptyState = document.getElementById('jarvisEmptyState');
-  const jarvisChatInput = document.getElementById('jarvisChatInput');
-  const btnJarvisSend = document.getElementById('btnJarvisSend');
-  const btnJarvisVoice = document.getElementById('btnJarvisVoice');
+  const adionSessionId = document.getElementById('adionSessionId');
+  const adionInteractionCount = document.getElementById('adionInteractionCount');
+  const adionTimeline = document.getElementById('adionTimeline');
+  const adionEmptyState = document.getElementById('adionEmptyState');
+  const adionChatInput = document.getElementById('adionChatInput');
+  const btnAdionSend = document.getElementById('btnAdionSend');
+  const btnAdionVoice = document.getElementById('btnAdionVoice');
+  const btnAdionWakeMode = document.getElementById('btnAdionWakeMode');
   const btnToggleMcp = document.getElementById('btnToggleMcp');
-  const jarvisMcpStatus = document.getElementById('jarvisMcpStatus');
+  const adionMcpStatus = document.getElementById('adionMcpStatus');
   const btnToggleDiagnostics = document.getElementById('btnToggleDiagnostics');
-  const jarvisDiagStatus = document.getElementById('jarvisDiagStatus');
+  const adionDiagStatus = document.getElementById('adionDiagStatus');
 
   // Standalone Local PC Terminal Bridge UI Elements
   const btnToggleTerminal = document.getElementById('btnToggleTerminal');
-  const jarvisTerminalStatus = document.getElementById('jarvisTerminalStatus');
+  const adionTerminalStatus = document.getElementById('adionTerminalStatus');
   const btnToggleTerminalBridge = document.getElementById('btnToggleTerminalBridge');
   const copilotTerminalPill = document.getElementById('copilotTerminalPill');
   const copilotTerminalDot = document.getElementById('copilotTerminalDot');
   const copilotTerminalLabel = document.getElementById('copilotTerminalLabel');
   const settingTerminalBridge = document.getElementById('settingTerminalBridge');
 
-  let jarvisState = 'IDLE'; // IDLE | LISTENING | THINKING | EXECUTING | SUCCESS | ALERT
-  let jarvisAudioLevel = 0;
-  let jarvisToastTimer = null;
+  let adionState = 'IDLE'; // IDLE | LISTENING | THINKING | EXECUTING | SUCCESS | ALERT
+  let adionAudioLevel = 0;
+  let adionToastTimer = null;
 
-  // --- Real-Time Jarvis Toast Confirmation & Alert System ---
-  function showJarvisToast(message, type = 'success', durationMs = 4500) {
-    if (!jarvisToast || !jarvisToastText) return;
-    if (jarvisToastTimer) clearTimeout(jarvisToastTimer);
+  // --- Real-Time Adion Toast Confirmation & Alert System ---
+  function showAdionToast(message, type = 'success', durationMs = 4500) {
+    if (!adionToast || !adionToastText) return;
+    if (adionToastTimer) clearTimeout(adionToastTimer);
 
-    jarvisToastText.innerText = message;
+    adionToastText.innerText = message;
     if (type === 'alert' || type === 'error') {
-      jarvisToast.classList.add('toast-alert');
+      adionToast.classList.add('toast-alert');
     } else {
-      jarvisToast.classList.remove('toast-alert');
+      adionToast.classList.remove('toast-alert');
     }
 
-    jarvisToast.classList.add('visible');
-    jarvisToastTimer = setTimeout(() => {
-      jarvisToast.classList.remove('visible');
+    adionToast.classList.add('visible');
+    adionToastTimer = setTimeout(() => {
+      adionToast.classList.remove('visible');
     }, durationMs);
   }
 
-  // --- Jarvis State Synchronizer ---
-  function setJarvisState(state, level = 'info') {
-    jarvisState = state;
-    if (!jarvisStateDot) return;
+  // --- Adion State Synchronizer ---
+  function setAdionState(state, level = 'info') {
+    adionState = state;
+    if (!adionStateDot) return;
 
     if (state === 'LISTENING') {
-      jarvisStateDot.style.background = '#10b981';
-      jarvisStateDot.style.boxShadow = '0 0 10px #10b981';
-      if (btnJarvisVoice) btnJarvisVoice.classList.add('active');
+      adionStateDot.style.background = '#10b981';
+      adionStateDot.style.boxShadow = '0 0 10px #10b981';
+      if (btnAdionVoice) btnAdionVoice.classList.add('active');
     } else if (state === 'THINKING' || state === 'PARSING_INTENT') {
-      jarvisStateDot.style.background = '#00f2fe';
-      jarvisStateDot.style.boxShadow = '0 0 12px #00f2fe';
+      adionStateDot.style.background = '#00f2fe';
+      adionStateDot.style.boxShadow = '0 0 12px #00f2fe';
     } else if (state === 'EXECUTING_ACTION' || state === 'EXECUTING') {
-      jarvisStateDot.style.background = '#4facfe';
-      jarvisStateDot.style.boxShadow = '0 0 12px #4facfe';
+      adionStateDot.style.background = '#4facfe';
+      adionStateDot.style.boxShadow = '0 0 12px #4facfe';
     } else if (state === 'ERROR' || level === 'error') {
-      jarvisStateDot.style.background = '#ff4b4b';
-      jarvisStateDot.style.boxShadow = '0 0 12px #ff4b4b';
+      adionStateDot.style.background = '#ff4b4b';
+      adionStateDot.style.boxShadow = '0 0 12px #ff4b4b';
     } else {
-      jarvisStateDot.style.background = '#00f2fe';
-      jarvisStateDot.style.boxShadow = '0 0 8px #00f2fe';
-      if (btnJarvisVoice) btnJarvisVoice.classList.remove('active');
+      adionStateDot.style.background = '#00f2fe';
+      adionStateDot.style.boxShadow = '0 0 8px #00f2fe';
+      if (btnAdionVoice) btnAdionVoice.classList.remove('active');
     }
   }
 
-  // --- Dynamic 3D Animated Jarvis Sphere Engine (Floating Widget & Assistant Overlay) ---
-  const ctxJarvis = jarvisCanvas && jarvisCanvas.getContext ? jarvisCanvas.getContext('2d') : null;
+  // --- Dynamic 3D Animated Adion Sphere Engine (Floating Widget & Assistant Overlay) ---
+  const ctxAdion = adionCanvas && adionCanvas.getContext ? adionCanvas.getContext('2d') : null;
   const ctxHud = agentHudSphereCanvas && agentHudSphereCanvas.getContext ? agentHudSphereCanvas.getContext('2d') : null;
 
-  if (ctxJarvis || ctxHud) {
+  if (ctxAdion || ctxHud) {
     let angleY = 0;
     let angleX = 0.25;
     let pulseTime = 0;
@@ -2192,11 +2736,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const cx = canvas.width / 2;
       const cy = canvas.height / 2;
-      const baseRadius = (canvas.width * 0.3) + (jarvisAudioLevel * 14 * scale);
+      const baseRadius = (canvas.width * 0.3) + (adionAudioLevel * 14 * scale);
 
       // 1. Central Pulsing Holographic Core
       const corePulse = Math.sin(pulseTime * 2.5) * (2.5 * scale);
-      const coreRadius = Math.max(3 * scale, (8 * scale) + corePulse + (jarvisAudioLevel * 10 * scale));
+      const coreRadius = Math.max(3 * scale, (8 * scale) + corePulse + (adionAudioLevel * 10 * scale));
       const coreGrad = ctx.createRadialGradient(cx, cy, 2, cx, cy, coreRadius);
       coreGrad.addColorStop(0, '#ffffff');
       coreGrad.addColorStop(0.4, primaryColor);
@@ -2258,33 +2802,33 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.globalAlpha = 1.0;
     }
 
-    function renderJarvisSphere() {
+    function renderAdionSphere() {
       pulseTime += 0.04;
-      const spinMultiplier = (jarvisState === 'THINKING' || jarvisState === 'PARSING_INTENT') ? 2.5 : 1.0;
+      const spinMultiplier = (adionState === 'THINKING' || adionState === 'PARSING_INTENT') ? 2.5 : 1.0;
       angleY += 0.02 * spinMultiplier;
 
       // Color scheme based on status
       primaryColor = '#00f2fe';
       accentColor = '#4facfe';
-      if (jarvisState === 'LISTENING') {
+      if (adionState === 'LISTENING') {
         primaryColor = '#10b981';
         accentColor = '#00f2fe';
-      } else if (jarvisState === 'ALERT' || jarvisState === 'ERROR') {
+      } else if (adionState === 'ALERT' || adionState === 'ERROR') {
         primaryColor = '#ff4b4b';
         accentColor = '#ff8888';
       }
 
-      if (ctxJarvis) {
-        drawSphereOnCanvas(jarvisCanvas, ctxJarvis, 1.0);
+      if (ctxAdion) {
+        drawSphereOnCanvas(adionCanvas, ctxAdion, 1.0);
       }
       if (ctxHud) {
         drawSphereOnCanvas(agentHudSphereCanvas, ctxHud, 0.72);
       }
 
-      requestAnimationFrame(renderJarvisSphere);
+      requestAnimationFrame(renderAdionSphere);
     }
 
-    renderJarvisSphere();
+    renderAdionSphere();
   }
 
   // --- Session Memory Loader & Timeline Renderer ---
@@ -2294,30 +2838,34 @@ document.addEventListener('DOMContentLoaded', () => {
       const history = await window.adionAPI.session.getHistory();
       if (!history) return;
 
-      if (jarvisSessionId) {
-        jarvisSessionId.innerText = `Session: ${history.sessionId || 'Active'}`;
+      if (adionSessionId) {
+        adionSessionId.innerText = `Session: ${history.sessionId || 'Active'}`;
       }
-      if (jarvisInteractionCount) {
-        jarvisInteractionCount.innerText = `${history.totalInteractions || 0} Exchanges`;
+      if (adionInteractionCount) {
+        adionInteractionCount.innerText = `${history.totalInteractions || 0} Exchanges`;
       }
 
-      if (!jarvisTimeline) return;
+      if (!adionTimeline) return;
 
       if (!history.interactions || history.interactions.length === 0) {
-        jarvisTimeline.innerHTML = `
-          <div class="jarvis-empty-state" id="jarvisEmptyState">
-            <div class="empty-icon">⚡</div>
+        adionTimeline.innerHTML = `
+          <div class="adion-empty-state" id="adionEmptyState">
+            <div class="empty-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#00f2fe" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+            </div>
             <div class="empty-title">Session Memory Initialized</div>
-            <p>No commands executed yet in this session. Speak hands-free or enter a prompt below to interact with JARVIS.</p>
+            <p>No commands executed yet in this session. Speak hands-free or enter a prompt below to interact with ADION.</p>
           </div>
         `;
         return;
       }
 
-      jarvisTimeline.innerHTML = '';
+      adionTimeline.innerHTML = '';
       history.interactions.forEach((item) => {
         const card = document.createElement('div');
-        card.className = 'jarvis-interaction-card';
+        card.className = 'adion-interaction-card';
 
         const timeStr = item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
         const sourceBadge = item.source ? item.source.toUpperCase() : 'VOICE';
@@ -2327,54 +2875,54 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let actionTags = '';
         if (Array.isArray(item.response?.actions) && item.response.actions.length > 0) {
-          actionTags = item.response.actions.map(a => `<span class="jarvis-action-tag">${a.type || 'ACTION'}</span>`).join(' ');
+          actionTags = item.response.actions.map(a => `<span class="adion-action-tag">${a.type || 'ACTION'}</span>`).join(' ');
         }
 
         card.innerHTML = `
-          <div class="jarvis-card-header">
-            <span class="jarvis-source-badge">${sourceBadge}</span>
+          <div class="adion-card-header">
+            <span class="adion-source-badge">${sourceBadge}</span>
             <span>${timeStr}</span>
           </div>
-          <div class="jarvis-prompt-row">
-            <span class="jarvis-user-label">USER</span>
-            <span class="jarvis-prompt-text">${rawPrompt}</span>
+          <div class="adion-prompt-row">
+            <span class="adion-user-label">USER</span>
+            <span class="adion-prompt-text">${rawPrompt}</span>
           </div>
-          <div class="jarvis-response-row" style="${isError ? 'border-left-color:#ff4b4b;' : ''}">
-            <span class="jarvis-bot-label" style="${isError ? 'color:#ff4b4b;' : ''}">JARVIS</span>
+          <div class="adion-response-row" style="${isError ? 'border-left-color:#ff4b4b;' : ''}">
+            <span class="adion-bot-label" style="${isError ? 'color:#ff4b4b;' : ''}">ADION</span>
             <div>
-              <div class="jarvis-thought-text">${thought}</div>
+              <div class="adion-thought-text">${thought}</div>
               ${actionTags}
             </div>
           </div>
         `;
-        jarvisTimeline.appendChild(card);
+        adionTimeline.appendChild(card);
       });
 
       // Scroll to bottom of timeline
-      jarvisTimeline.scrollTop = jarvisTimeline.scrollHeight;
+      adionTimeline.scrollTop = adionTimeline.scrollHeight;
     } catch (err) {
-      console.warn('[Jarvis UI] Could not load session history:', err);
+      console.warn('[Adion UI] Could not load session history:', err);
     }
   }
 
-  // --- Toggle Jarvis Panel ---
-  if (btnToggleJarvis && jarvisPanelOverlay) {
-    btnToggleJarvis.addEventListener('click', (e) => {
+  // --- Toggle Adion Panel ---
+  if (btnToggleAdion && adionPanelOverlay) {
+    btnToggleAdion.addEventListener('click', (e) => {
       if (e) e.stopPropagation();
-      const isOpen = jarvisPanelOverlay.classList.toggle('open');
+      const isOpen = adionPanelOverlay.classList.toggle('open');
       if (isOpen) {
-        closeAllModalsExcept('jarvis');
+        closeAllModalsExcept('adion');
         loadSessionHistory();
-        if (jarvisChatInput) jarvisChatInput.focus();
+        if (adionChatInput) adionChatInput.focus();
       }
       updateOverlayState();
     });
   }
 
-  if (btnCloseJarvis && jarvisPanelOverlay) {
-    btnCloseJarvis.addEventListener('click', (e) => {
+  if (btnCloseAdion && adionPanelOverlay) {
+    btnCloseAdion.addEventListener('click', (e) => {
       if (e) e.stopPropagation();
-      jarvisPanelOverlay.classList.remove('open');
+      adionPanelOverlay.classList.remove('open');
       updateOverlayState();
     });
   }
@@ -2384,59 +2932,354 @@ document.addEventListener('DOMContentLoaded', () => {
     btnNewSession.addEventListener('click', async () => {
       if (window.adionAPI && window.adionAPI.session) {
         await window.adionAPI.session.clearSession();
-        showJarvisToast('Session memory cleared. Fresh session started.', 'success');
+        showAdionToast('Session memory cleared. Fresh session started.', 'success');
         loadSessionHistory();
       }
     });
   }
 
-  // --- Jarvis Quick Chat & Command Submission ---
-  async function submitJarvisChat() {
-    if (!jarvisChatInput) return;
-    const val = jarvisChatInput.value.trim();
+  // --- Adion Quick Chat & Command Submission ---
+  async function submitAdionChat() {
+    if (!adionChatInput) return;
+    const val = adionChatInput.value.trim();
     if (!val) return;
 
-    jarvisChatInput.value = '';
-    setJarvisState('THINKING');
-    showJarvisToast(`JARVIS: Coordinating "${val.slice(0, 35)}..."`, 'success');
+    // Zero-latency preprocessing + reflex-style decision (fast-path routing)
+    const processed = preprocessCommand(val);
+    const reflexDecision = ReflexDecisionEngine.decide(processed.command);
+    
+    adionChatInput.value = '';
+    setAdionState('THINKING');
+    showAdionToast(`ADION: Coordinating "${processed.text.slice(0, 35)}..."`, 'success');
 
+    // Record user message in local session history before sending
+    appendCopilotMessage('user', processed.text, false);
+    
     if (window.adionAPI && window.adionAPI.session) {
       try {
-        await window.adionAPI.session.sendChat(val);
+        // If reflex has high confidence, use its decision directly
+        if (reflexDecision.confidence >= 0.8) {
+          await executeReflexDecision(reflexDecision);
+        } else {
+          // Fall back to agent runtime for complex decisions
+          await window.adionAPI.session.sendChat(processed.command);
+        }
         await loadSessionHistory();
+        
+        // Refresh Copilot panel with new interaction
+        setTimeout(() => {
+          updateCopilotPanel();
+        }, 500);
       } catch (err) {
-        showJarvisToast('The system is adapting to your command.', 'alert');
+        console.error('[Ask Adion] Error executing chat:', err);
+        appendCopilotMessage('agent', 'Error: The system is adapting to your command.', true);
+        showAdionToast('The system is adapting to your command.', 'alert');
       }
     }
   }
 
-  if (btnJarvisSend) {
-    btnJarvisSend.addEventListener('click', submitJarvisChat);
+  // Reflex Decision Engine - Fast classifier-based decisions (like D:\help Jev)
+  const ReflexDecisionEngine = {
+    // Intent definitions with confidence thresholds
+    INTENTS: {
+      NAVIGATE_DOMAIN: { confidence: 0.75, keywords: ['open', 'go to', 'navigate to', 'visit'] },
+      SEARCH_WEB: { confidence: 0.7, keywords: ['search for', 'google', 'look up', 'find'] },
+      BROWSER_NAV: { confidence: 0.8, keywords: ['back', 'forward', 'refresh', 'reload', 'new tab', 'close tab'] },
+      SCROLL: { confidence: 0.8, keywords: ['scroll', 'up', 'down', 'top', 'bottom'] },
+      CLICK: { confidence: 0.6, keywords: ['click', 'press', 'tap', 'hit', 'open', 'view'] },
+      TYPE_TEXT: { confidence: 0.75, keywords: ['type', 'write', 'enter', 'fill'] },
+      THEME: { confidence: 0.85, keywords: ['dark mode', 'light mode', 'theme'] },
+      COPY_PASTE: { confidence: 0.8, keywords: ['copy', 'paste', 'cut', 'select all'] },
+      PROJECT_OPEN: { confidence: 0.85, keywords: ['open', 'click', 'view', 'go to', 'find'] }
+    },
+    
+    decide(text) {
+      const lower = String(text || '').toLowerCase().trim();
+      
+      // Check each intent type
+      for (const [intentName, intentData] of Object.entries(this.INTENTS)) {
+        for (const keyword of intentData.keywords) {
+          if (lower.includes(keyword)) {
+            // Project-specific patterns (high confidence)
+            if (intentName === 'PROJECT_OPEN') {
+              // Pattern: "open [project name]", "click [project name]", etc.
+              // Handle single and multi-word project names
+              const projectMatch = lower.match(/(?:open|click|view|go to|find)\s+(.+)$/i);
+              if (projectMatch) {
+                const projectName = projectMatch[1].trim();
+                // Skip if too short or just a keyword
+                if (projectName.length > 2 && !['it', 'this', 'that', 'one', 'the', 'a', 'an'].includes(projectName)) {
+                  return {
+                    intent: 'PROJECT_OPEN',
+                    confidence: 0.92,
+                    text: lower,
+                    action: this.getProjectOpenAction(projectName)
+                  };
+                }
+              }
+            }
+            return {
+              intent: intentName,
+              confidence: intentData.confidence,
+              text: lower,
+              action: this.getIntentAction(intentName, lower)
+            };
+          }
+        }
+      }
+      
+      // No reflex decision - will go to full agent
+      return { intent: 'NONE', confidence: 0, text: lower, action: null };
+    },
+    
+    getIntentAction(intent, text) {
+      switch (intent) {
+        case 'NAVIGATE_DOMAIN': {
+          const domainMatch = text.match(/(?:open|go to|navigate to|visit)\s+([a-zA-Z0-9][a-zA-Z0-9.\-]*\.[a-zA-Z]{2,})/i);
+          if (domainMatch) {
+            const domain = domainMatch[1].toLowerCase();
+            if (domain.includes('canva')) return { type: 'NAVIGATE', url: 'https://www.canva.com' };
+            if (domain.includes('github')) return { type: 'NAVIGATE', url: 'https://github.com' };
+            if (domain.includes('youtube')) return { type: 'NAVIGATE', url: 'https://www.youtube.com' };
+            if (domain.includes('google')) return { type: 'NAVIGATE', url: 'https://www.google.com' };
+            return { type: 'NAVIGATE', url: `https://${domain}` };
+          }
+          break;
+        }
+        case 'SEARCH_WEB': {
+          const searchMatch = text.match(/(?:search for|google|look up|find)\s+(.+)/i);
+          if (searchMatch) {
+            const query = searchMatch[1].trim();
+            return { type: 'NAVIGATE', url: `https://search.brave.com/search?q=${encodeURIComponent(query)}` };
+          }
+          break;
+        }
+        case 'BROWSER_NAV': {
+          if (text.includes('back')) return { type: 'GO_BACK' };
+          if (text.includes('forward')) return { type: 'GO_FORWARD' };
+          if (text.includes('refresh') || text.includes('reload')) return { type: 'RELOAD' };
+          if (text.includes('new tab')) return { type: 'NEW_TAB' };
+          if (text.includes('close tab')) return { type: 'CLOSE_TAB' };
+          break;
+        }
+        case 'SCROLL': {
+          if (text.includes('top') || text.includes('home')) return { type: 'SCROLL', direction: 'top' };
+          if (text.includes('bottom') || text.includes('end')) return { type: 'SCROLL', direction: 'bottom' };
+          if (text.includes('up')) return { type: 'SCROLL', direction: 'up', amount: -450 };
+          if (text.includes('down')) return { type: 'SCROLL', direction: 'down', amount: 450 };
+          break;
+        }
+        case 'CLICK': {
+          // Extract target after "click on"
+          const clickMatch = text.match(/(?:click on|click|press|tap|hit)\s+(.+)/i);
+          if (clickMatch) {
+            const target = clickMatch[1].trim().replace(/[\?\!\.,]+$/, '');
+            return { type: 'CLICK_SELECTOR', target };
+          }
+          break;
+        }
+        case 'PROJECT_OPEN': {
+          // Already handled in decide() - return null here
+          break;
+        }
+        case 'TYPE_TEXT': {
+          // Extract text after "type"
+          const typeMatch = text.match(/(?:type|write|enter|fill)\s+(.+)/i);
+          if (typeMatch) {
+            return { type: 'INPUT_TEXT', selector: 'active', text: typeMatch[1].trim() };
+          }
+          break;
+        }
+        case 'THEME': {
+          if (text.includes('dark')) return { type: 'THEME_SET', theme: 'dark' };
+          if (text.includes('light')) return { type: 'THEME_SET', theme: 'light' };
+          return { type: 'THEME_TOGGLE' };
+        }
+        case 'COPY_PASTE': {
+          if (text.includes('select all')) return { type: 'EXECUTE_SCRIPT', code: 'document.execCommand("selectAll");' };
+          if (text.includes('copy')) return { type: 'EXECUTE_SCRIPT', code: 'document.execCommand("copy");' };
+          if (text.includes('paste')) return { type: 'EXECUTE_SCRIPT', code: 'document.execCommand("paste");' };
+          if (text.includes('cut')) return { type: 'EXECUTE_SCRIPT', code: 'document.execCommand("cut");' };
+          break;
+        }
+      }
+      return null;
+    },
+    
+    getProjectOpenAction(projectName) {
+      // Canva-specific: Search for project and click the first match
+      if (projectName) {
+        return {
+          type: 'PROJECT_OPEN_CANVA',
+          projectName: projectName,
+          searchSelector: 'input[aria-label*="search" i]',
+          projectSelector: '[role="list"] [role="listitem"] a, [role="list"] [role="link"]'
+        };
+      }
+      return null;
+    }
+  };
+
+  async function executeReflexDecision(decision) {
+    // Fast-path execution for high-confidence reflex decisions
+    if (decision.action) {
+      setAdionState('EXECUTING');
+
+      if (decision.action.type === 'THEME_SET') {
+        if (window.AdionTheme) window.AdionTheme.apply(decision.action.theme);
+        showAdionToast(`Theme set to ${decision.action.theme}`, 'success');
+        setAdionState('IDLE');
+        return { executed: true, decision };
+      }
+      if (decision.action.type === 'THEME_TOGGLE') {
+        if (window.AdionTheme) window.AdionTheme.toggle();
+        showAdionToast('Theme toggled', 'success');
+        setAdionState('IDLE');
+        return { executed: true, decision };
+      }
+      
+      // Handle Canva project open specifically
+      if (decision.action.type === 'PROJECT_OPEN_CANVA') {
+        const { projectName, searchSelector, projectSelector } = decision.action;
+        
+        // Try to find and click the project in Canva
+        const clickAction = {
+          type: 'CLICK',
+          target: projectName,
+          clickMethod: 'semantic', // Use semantic grounding (accessibility, aria-label, text content)
+          maxSearchDepth: 3,
+          verifySelector: `[aria-label*="${projectName}" i], [title*="${projectName}" i], a[href*="${projectName}" i]`
+        };
+        
+        if (window.adionAPI && window.adionAPI.agent && typeof window.adionAPI.agent.sendCommand === 'function') {
+          await window.adionAPI.agent.sendCommand(JSON.stringify(clickAction));
+          showAdionToast(`Reflex: Opening Canva project "${projectName}"`, 'success');
+          return { executed: true, decision };
+        }
+      }
+      
+      // Handle other reflex actions
+      if (window.adionAPI && window.adionAPI.agent && typeof window.adionAPI.agent.sendCommand === 'function') {
+        await window.adionAPI.agent.sendCommand(JSON.stringify(decision.action));
+      }
+      showAdionToast(`Reflex: ${decision.intent} executed`, 'success');
+      return { executed: true, decision };
+    }
+    return { executed: false, reason: 'No action found' };
   }
 
-  if (jarvisChatInput) {
-    jarvisChatInput.addEventListener('keydown', (e) => {
+  if (btnAdionSend) {
+    btnAdionSend.addEventListener('click', submitAdionChat);
+  }
+
+  if (adionChatInput) {
+    adionChatInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
-        submitJarvisChat();
+        submitAdionChat();
       }
     });
   }
 
-  // --- Jarvis Mic Button Sync ---
-  if (btnJarvisVoice) {
-    btnJarvisVoice.addEventListener('click', handleVoiceButtonClick);
+  // --- Adion Mic Button Sync ---
+  if (btnAdionVoice) {
+    btnAdionVoice.addEventListener('click', handleVoiceButtonClick);
   }
 
-  // --- IPC Event Listeners for Jarvis & Session Updates ---
+  // --- Browser Profiles (multi-account) ---
+  const btnProfile = document.getElementById('btnProfile');
+  const profileMenu = document.getElementById('profileMenu');
+  const profileMenuList = document.getElementById('profileMenuList');
+  const profileAvatar = document.getElementById('profileAvatar');
+  const profileNewName = document.getElementById('profileNewName');
+  const btnProfileCreate = document.getElementById('btnProfileCreate');
+
+  async function refreshProfiles() {
+    try {
+      const data = await window.adionAPI.profile.list();
+      const active = data.profiles.find(p => p.active) || data.profiles[0];
+      if (profileAvatar && active) {
+        profileAvatar.textContent = (active.name || 'P').trim().charAt(0).toUpperCase();
+        profileAvatar.style.background = `linear-gradient(135deg, ${active.color}, #7c4dff)`;
+      }
+      if (profileMenuList) {
+        profileMenuList.innerHTML = '';
+        for (const p of data.profiles) {
+          const item = document.createElement('div');
+          item.className = 'profile-item' + (p.active ? ' active' : '');
+          item.innerHTML = `<span class="profile-dot" style="background:${p.color}"></span><span class="grow">${p.name.replace(/</g, '&lt;')}</span>${data.profiles.length > 1 ? '<span class="del" title="Delete profile">×</span>' : ''}`;
+          item.addEventListener('click', async (e) => {
+            if (e.target.classList.contains('del')) {
+              e.stopPropagation();
+              await window.adionAPI.profile.remove(p.id);
+              return;
+            }
+            if (!p.active) await window.adionAPI.profile.switch(p.id);
+            profileMenu.classList.remove('open');
+          });
+          profileMenuList.appendChild(item);
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (btnProfile && profileMenu) {
+    btnProfile.addEventListener('click', (e) => {
+      e.stopPropagation();
+      profileMenu.classList.toggle('open');
+      if (profileMenu.classList.contains('open')) refreshProfiles();
+    });
+    document.addEventListener('click', (e) => {
+      if (!profileMenu.contains(e.target) && e.target !== btnProfile) profileMenu.classList.remove('open');
+    });
+    if (btnProfileCreate) {
+      btnProfileCreate.addEventListener('click', async () => {
+        const name = (profileNewName.value || '').trim();
+        if (!name) return;
+        await window.adionAPI.profile.create(name);
+        profileNewName.value = '';
+        refreshProfiles();
+      });
+    }
+    if (window.adionAPI.profile.onUpdated) window.adionAPI.profile.onUpdated(() => refreshProfiles());
+    refreshProfiles();
+  }
+
+  // Wake-word mode toggle: OFF = push-to-talk (speak directly after tapping mic);
+  // ON = hands-free always-listening gated by the "Adion" wake word.
+  if (btnAdionWakeMode) {
+    btnAdionWakeMode.addEventListener('click', (e) => {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      adionWakeModeEnabled = !adionWakeModeEnabled;
+      // Disable convo mode when wake mode is toggled (mutually exclusive)
+      if (adionWakeModeEnabled && adionConvoModeEnabled) {
+        adionConvoModeEnabled = false;
+        if (btnSidePanelConvoToggle) btnSidePanelConvoToggle.classList.remove('active');
+      }
+      // Disable Jarvis mode when wake mode is toggled (mutually exclusive)
+      if (adionWakeModeEnabled && adionJarvisModeEnabled) {
+        adionJarvisModeEnabled = false;
+        if (btnSidePanelJarvisToggle) btnSidePanelJarvisToggle.classList.remove('active');
+      }
+      btnAdionWakeMode.classList.toggle('active', adionWakeModeEnabled);
+      btnAdionWakeMode.title = adionWakeModeEnabled
+        ? "Wake-word mode ON: hands-free — Adion only responds after you say 'Adion'."
+        : "Wake-word mode OFF: push-to-talk — speak commands directly after tapping the mic.";
+      showAdionToast(adionWakeModeEnabled
+        ? "Wake mode ON — say 'Adion' before each command."
+        : 'Push-to-talk mode — commands run directly, no wake word needed.', 'info');
+    });
+  }
+
+  // --- IPC Event Listeners for Adion & Session Updates ---
   if (window.adionAPI && window.adionAPI.session) {
     window.adionAPI.session.onNotification((data) => {
       if (data && data.message) {
-        showJarvisToast(data.message, data.type || 'success');
+        showAdionToast(data.message, data.type || 'success');
       }
     });
 
     window.adionAPI.session.onUpdated(() => {
-      if (jarvisPanelOverlay && jarvisPanelOverlay.classList.contains('open')) {
+      if (adionPanelOverlay && adionPanelOverlay.classList.contains('open')) {
         loadSessionHistory();
       }
     });
@@ -2448,17 +3291,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (window.adionAPI && window.adionAPI.agent) {
     window.adionAPI.agent.onStateChange((data) => {
-      setJarvisState(data.state);
+      setAdionState(data.state);
     });
 
     window.adionAPI.agent.onAudioLevel((data) => {
-      jarvisAudioLevel = data.rms || 0;
+      adionAudioLevel = data.rms || 0;
     });
 
     window.adionAPI.agent.onFeedback((data) => {
       if (data && data.message) {
         const isAlert = data.level === 'warning' || data.level === 'error';
-        showJarvisToast(data.message, isAlert ? 'alert' : 'success');
+        showAdionToast(data.message, isAlert ? 'alert' : 'success');
         if (sidePanelTimeline) {
           appendCopilotMessage('agent', data.message, data.level === 'info');
         }
@@ -2473,13 +3316,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const card = document.createElement('div');
         card.className = 'copilot-inspector-card';
         card.innerHTML = `
-          <div class="copilot-inspector-badge">⚡ Live Element Inspector: ${(data.action || 'INSPECT').toUpperCase()}</div>
+          <div class="copilot-inspector-badge">Live Element Inspector: ${(data.action || 'INSPECT').toUpperCase()}</div>
           <div class="copilot-inspector-header">
             <div><span class="copilot-inspector-tag">&lt;${data.tag || 'el'}&gt;</span><span class="copilot-inspector-classes">${data.classes || ''}</span></div>
             <div class="copilot-inspector-dims">${data.dimensions || ''}</div>
           </div>
           <div class="copilot-inspector-acc">
-            <div><strong style="color:#5f6368;">Role:</strong> ${data.role || 'generic'} &nbsp;|&nbsp; <strong style="color:#5f6368;">Focusable:</strong> ✓ true</div>
+            <div><strong style="color:#5f6368;">Role:</strong> ${data.role || 'generic'} &nbsp;|&nbsp; <strong style="color:#5f6368;">Focusable:</strong> true</div>
             <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><strong style="color:#5f6368;">Name:</strong> "${data.name || ''}"</div>
           </div>
         `;
@@ -2538,7 +3381,7 @@ document.addEventListener('DOMContentLoaded', () => {
       copyBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         navigator.clipboard.writeText(outputText);
-        showJarvisToast('Terminal output copied to clipboard', 'success');
+        showAdionToast('Terminal output copied to clipboard', 'success');
       });
     }
 
@@ -2555,13 +3398,13 @@ document.addEventListener('DOMContentLoaded', () => {
         btnToggleMcp.classList.remove('active');
       }
     }
-    if (jarvisMcpStatus) {
+    if (adionMcpStatus) {
       if (running) {
-        jarvisMcpStatus.innerHTML = `<span class="status-dot dot-on"></span> Online (:${port})`;
-        jarvisMcpStatus.style.color = '#10b981';
+        adionMcpStatus.innerHTML = `<span class="status-dot dot-on"></span> Online (:${port})`;
+        adionMcpStatus.style.color = '#10b981';
       } else {
-        jarvisMcpStatus.innerHTML = `<span class="status-dot dot-off"></span> Standby`;
-        jarvisMcpStatus.style.color = 'var(--text-muted)';
+        adionMcpStatus.innerHTML = `<span class="status-dot dot-off"></span> Standby`;
+        adionMcpStatus.style.color = 'var(--text-muted)';
       }
     }
     if (settingMcpServer) {
@@ -2577,13 +3420,13 @@ document.addEventListener('DOMContentLoaded', () => {
         btnToggleDiagnostics.classList.remove('active');
       }
     }
-    if (jarvisDiagStatus) {
+    if (adionDiagStatus) {
       if (active) {
-        jarvisDiagStatus.innerHTML = `<span class="status-dot dot-on"></span> Active`;
-        jarvisDiagStatus.style.color = '#10b981';
+        adionDiagStatus.innerHTML = `<span class="status-dot dot-on"></span> Active`;
+        adionDiagStatus.style.color = '#10b981';
       } else {
-        jarvisDiagStatus.innerHTML = `<span class="status-dot dot-off"></span> Paused`;
-        jarvisDiagStatus.style.color = 'var(--text-muted)';
+        adionDiagStatus.innerHTML = `<span class="status-dot dot-off"></span> Paused`;
+        adionDiagStatus.style.color = 'var(--text-muted)';
       }
     }
     if (settingDiagnosticLogging) {
@@ -2599,12 +3442,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const res = await window.adionAPI.mcp.toggle();
         updateMcpUI(res.running, res.port);
         if (res.running) {
-          showJarvisToast(`MCP Server online on port ${res.port} (Claude/Agents connected)`, 'success');
+          showAdionToast(`MCP Server online on port ${res.port} (Claude/Agents connected)`, 'success');
         } else {
-          showJarvisToast('MCP Server offline. Browser running in lightweight standalone mode.', 'alert');
+          showAdionToast('MCP Server offline. Browser running in lightweight standalone mode.', 'alert');
         }
       } catch (err) {
-        showJarvisToast('MCP toggle failed: ' + err.message, 'alert');
+        showAdionToast('MCP toggle failed: ' + err.message, 'alert');
       }
     });
   }
@@ -2618,9 +3461,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const nextState = !cfg.diagnosticLogging;
         const res = await window.adionAPI.diagnostics.updateConfig({ diagnosticLogging: nextState });
         updateDiagUI(res.diagnosticLogging);
-        showJarvisToast(`Continuous diagnostics ${res.diagnosticLogging ? 'active & persisted' : 'paused'}`, 'success');
+        showAdionToast(`Continuous diagnostics ${res.diagnosticLogging ? 'active & persisted' : 'paused'}`, 'success');
       } catch (err) {
-        showJarvisToast('Diagnostics toggle failed: ' + err.message, 'alert');
+        showAdionToast('Diagnostics toggle failed: ' + err.message, 'alert');
       }
     });
   }
@@ -2632,13 +3475,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (isConn) btnToggleTerminal.classList.add('active');
       else btnToggleTerminal.classList.remove('active');
     }
-    if (jarvisTerminalStatus) {
+    if (adionTerminalStatus) {
       if (isConn) {
-        jarvisTerminalStatus.innerHTML = `<span class="status-dot dot-on"></span> Online (:${port})`;
-        jarvisTerminalStatus.style.color = '#10b981';
+        adionTerminalStatus.innerHTML = `<span class="status-dot dot-on"></span> Online (:${port})`;
+        adionTerminalStatus.style.color = '#10b981';
       } else {
-        jarvisTerminalStatus.innerHTML = `<span class="status-dot dot-off"></span> Standby`;
-        jarvisTerminalStatus.style.color = 'var(--text-muted)';
+        adionTerminalStatus.innerHTML = `<span class="status-dot dot-off"></span> Standby`;
+        adionTerminalStatus.style.color = 'var(--text-muted)';
       }
     }
 
@@ -2672,12 +3515,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await window.adionAPI.terminal.toggle();
       updateTerminalUI(res.connected, res.shell, res.port);
       if (res.connected) {
-        showJarvisToast(`Local PC Terminal Bridge connected on port ${res.port} (${res.shell})`, 'success');
+        showAdionToast(`Local PC Terminal Bridge connected on port ${res.port} (${res.shell})`, 'success');
       } else {
-        showJarvisToast('Terminal Bridge disconnected. Agent running in browser sandbox.', 'alert');
+        showAdionToast('Terminal Bridge disconnected. Agent running in browser sandbox.', 'alert');
       }
     } catch (err) {
-      showJarvisToast('Terminal toggle error: ' + err.message, 'alert');
+      showAdionToast('Terminal toggle error: ' + err.message, 'alert');
     }
   }
 
@@ -2694,12 +3537,349 @@ document.addEventListener('DOMContentLoaded', () => {
         const res = await window.adionAPI.terminal.toggle(settingTerminalBridge.checked);
         updateTerminalUI(res.connected, res.shell, res.port);
       } catch (err) {
-        showJarvisToast('Terminal toggle error: ' + err.message, 'alert');
+        showAdionToast('Terminal toggle error: ' + err.message, 'alert');
       }
     });
   }
 
+  // --- Gemini Task Mode: Live Work Panel, Status Toggles & Takeover Handling ---
+  const copilotTaskModePill = document.getElementById('copilotTaskModePill');
+  const copilotTaskModeDot = document.getElementById('copilotTaskModeDot');
+  const copilotTaskModeLabel = document.getElementById('copilotTaskModeLabel');
+  const btnToggleTaskMode = document.getElementById('btnToggleTaskMode');
+  const btnSidePanelTaskToggle = document.getElementById('btnSidePanelTaskToggle');
+
+  const taskWorkPanel = document.getElementById('taskWorkPanel');
+  const taskStatePill = document.getElementById('taskStatePill');
+  const taskWorkGoal = document.getElementById('taskWorkGoal');
+  const taskProgressBarFill = document.getElementById('taskProgressBarFill');
+
+  const taskCheckpointBanner = document.getElementById('taskCheckpointBanner');
+  const taskCheckpointReason = document.getElementById('taskCheckpointReason');
+  const btnTaskApprove = document.getElementById('btnTaskApprove');
+  const btnTaskTakeover = document.getElementById('btnTaskTakeover');
+  const btnTaskResume = document.getElementById('btnTaskResume');
+  const btnTaskStop = document.getElementById('btnTaskStop');
+
+  const taskCurrentStepCard = document.getElementById('taskCurrentStepCard');
+  const taskCurrentStepName = document.getElementById('taskCurrentStepName');
+  const taskCurrentStepTarget = document.getElementById('taskCurrentStepTarget');
+  const taskCurrentStepOutcome = document.getElementById('taskCurrentStepOutcome');
+
+  const taskStepsAccordion = document.getElementById('taskStepsAccordion');
+  const btnToggleStepsList = document.getElementById('btnToggleStepsList');
+  const taskStepsCount = document.getElementById('taskStepsCount');
+  const taskStepsChevron = document.getElementById('taskStepsChevron');
+  const taskStepsList = document.getElementById('taskStepsList');
+
+  const taskResourcesRow = document.getElementById('taskResourcesRow');
+  const taskResourcesBadges = document.getElementById('taskResourcesBadges');
+
+  const btnTaskLiveTakeover = document.getElementById('btnTaskLiveTakeover');
+  const btnTaskLiveResume = document.getElementById('btnTaskLiveResume');
+  const btnTaskLiveStop = document.getElementById('btnTaskLiveStop');
+
+  let taskModeActiveState = true;
+  let stepsListExpanded = true;
+
+  function updateTaskModeToggleUI(enabled) {
+    taskModeActiveState = Boolean(enabled);
+    if (btnToggleTaskMode) {
+      if (taskModeActiveState) btnToggleTaskMode.classList.add('active');
+      else btnToggleTaskMode.classList.remove('active');
+    }
+    if (copilotTaskModePill) {
+      if (taskModeActiveState) copilotTaskModePill.classList.add('active');
+      else copilotTaskModePill.classList.remove('active');
+    }
+    if (copilotTaskModeDot) {
+      copilotTaskModeDot.className = taskModeActiveState ? 'task-mode-status-dot dot-on' : 'task-mode-status-dot dot-off';
+    }
+    if (copilotTaskModeLabel) {
+      copilotTaskModeLabel.textContent = taskModeActiveState ? 'Task Mode' : 'One-Shot';
+    }
+    if (btnSidePanelTaskToggle) {
+      if (taskModeActiveState) {
+        btnSidePanelTaskToggle.classList.add('active');
+        btnSidePanelTaskToggle.title = 'Gemini Task Mode: Active (Stateful loop with Work Panel & checkpoints)';
+      } else {
+        btnSidePanelTaskToggle.classList.remove('active');
+        btnSidePanelTaskToggle.title = 'Gemini Task Mode: Inactive (Click to enable)';
+      }
+    }
+  }
+
+  async function handleTaskModeToggle(e) {
+    if (e) e.stopPropagation();
+    if (!window.adionAPI || !window.adionAPI.taskMode) return;
+    try {
+      const res = await window.adionAPI.taskMode.toggle();
+      updateTaskModeToggleUI(res.enabled);
+      if (res.enabled) {
+        showAdionToast('Gemini Task Mode enabled: Stateful execution loop with Work Panel & checkpoints', 'success');
+      } else {
+        showAdionToast('Task Mode disabled: Fast one-shot action execution', 'alert');
+      }
+    } catch (err) {
+      showAdionToast('Task mode toggle error: ' + err.message, 'alert');
+    }
+  }
+
+  if (btnToggleTaskMode) {
+    btnToggleTaskMode.addEventListener('click', handleTaskModeToggle);
+  }
+  if (copilotTaskModePill) {
+    copilotTaskModePill.addEventListener('click', handleTaskModeToggle);
+  }
+  if (btnSidePanelTaskToggle) {
+    btnSidePanelTaskToggle.addEventListener('click', handleTaskModeToggle);
+  }
+
+  // Toggle Steps List accordion
+  if (btnToggleStepsList) {
+    btnToggleStepsList.addEventListener('click', () => {
+      stepsListExpanded = !stepsListExpanded;
+      if (taskStepsList) {
+        taskStepsList.style.display = stepsListExpanded ? 'flex' : 'none';
+      }
+      if (taskStepsChevron) {
+        taskStepsChevron.style.transform = stepsListExpanded ? 'rotate(0deg)' : 'rotate(-90deg)';
+      }
+    });
+  }
+
+  // Human-in-the-Loop & Live Control Actions
+  async function dispatchTaskUserAction(action, data = {}) {
+    if (!window.adionAPI || !window.adionAPI.taskMode) return;
+    try {
+      await window.adionAPI.taskMode.userAction(action, data);
+    } catch (err) {
+      showAdionToast('Task action error: ' + err.message, 'alert');
+    }
+  }
+
+  if (btnTaskApprove) {
+    btnTaskApprove.addEventListener('click', () => dispatchTaskUserAction('approve'));
+  }
+  if (btnTaskTakeover) {
+    btnTaskTakeover.addEventListener('click', () => dispatchTaskUserAction('takeover'));
+  }
+  if (btnTaskResume) {
+    btnTaskResume.addEventListener('click', () => dispatchTaskUserAction('resume'));
+  }
+  if (btnTaskStop) {
+    btnTaskStop.addEventListener('click', () => dispatchTaskUserAction('stop'));
+  }
+  if (btnTaskLiveTakeover) {
+    btnTaskLiveTakeover.addEventListener('click', () => dispatchTaskUserAction('takeover'));
+  }
+  if (btnTaskLiveResume) {
+    btnTaskLiveResume.addEventListener('click', () => dispatchTaskUserAction('resume'));
+  }
+  if (btnTaskLiveStop) {
+    btnTaskLiveStop.addEventListener('click', () => dispatchTaskUserAction('stop'));
+  }
+
+  function renderTaskWorkPanel(task) {
+    if (!taskWorkPanel) return;
+
+    if (!task || task.status === 'IDLE' || !taskModeActiveState) {
+      taskWorkPanel.style.display = 'none';
+      return;
+    }
+
+    // Show Work Panel
+    taskWorkPanel.style.display = 'flex';
+
+    // 1. Goal
+    if (taskWorkGoal) {
+      taskWorkGoal.textContent = task.goal || 'Autonomous Web Task';
+    }
+
+    // 2. Status Pill
+    if (taskStatePill) {
+      const status = task.status || 'EXECUTING';
+      taskStatePill.textContent = status.replace(/_/g, ' ');
+      taskStatePill.className = 'task-state-pill';
+      if (status === 'PLANNING_NEXT') taskStatePill.classList.add('pill-planning');
+      else if (status === 'EXECUTING') taskStatePill.classList.add('pill-executing');
+      else if (status === 'VERIFYING') taskStatePill.classList.add('pill-verifying');
+      else if (status === 'PAUSED_FOR_USER') taskStatePill.classList.add('pill-paused');
+      else if (status === 'COMPLETED') taskStatePill.classList.add('pill-completed');
+      else if (status === 'FAILED' || status === 'STOPPED') taskStatePill.classList.add('pill-failed');
+    }
+
+    // 3. Progress Bar Fill
+    if (taskProgressBarFill) {
+      const completedCount = Array.isArray(task.completedSteps) ? task.completedSteps.length : 0;
+      const remainingCount = Array.isArray(task.remainingSteps) ? task.remainingSteps.length : 0;
+      const totalEstimated = completedCount + remainingCount + (task.currentStep ? 1 : 0);
+      const pct = totalEstimated > 0 ? Math.min(100, Math.round((completedCount / totalEstimated) * 100)) : 0;
+      taskProgressBarFill.style.width = (task.status === 'COMPLETED' ? 100 : Math.max(10, pct)) + '%';
+    }
+
+    // 4. Checkpoint / Takeover Banner
+    if (taskCheckpointBanner) {
+      const isPaused = task.status === 'PAUSED_FOR_USER' || Boolean(task.pendingApproval);
+      if (isPaused) {
+        taskCheckpointBanner.style.display = 'block';
+        if (taskCheckpointReason) {
+          taskCheckpointReason.textContent = task.pendingApproval?.reason || task.pauseReason || 'Sensitive action requires approval before continuing.';
+        }
+        if (task.takeoverActive) {
+          if (btnTaskResume) btnTaskResume.style.display = 'inline-flex';
+          if (btnTaskTakeover) btnTaskTakeover.style.display = 'none';
+        } else {
+          if (btnTaskResume) btnTaskResume.style.display = 'none';
+          if (btnTaskTakeover) btnTaskTakeover.style.display = 'inline-flex';
+        }
+      } else {
+        taskCheckpointBanner.style.display = 'none';
+      }
+    }
+
+    // 5. Current Step In-Flight Card
+    if (taskCurrentStepCard) {
+      if (task.currentStep && task.status !== 'COMPLETED' && task.status !== 'FAILED') {
+        taskCurrentStepCard.style.display = 'block';
+        if (taskCurrentStepName) {
+          taskCurrentStepName.textContent = `Step ${task.currentStep.number || task.stepNumber || 1}: ${task.currentStep.action || 'Executing...'}`;
+        }
+        if (taskCurrentStepTarget) {
+          const tgt = task.currentStep.target || task.currentStep.selector || task.currentStep.url || '';
+          if (tgt) {
+            taskCurrentStepTarget.style.display = 'block';
+            taskCurrentStepTarget.textContent = `Target: ${tgt}`;
+          } else {
+            taskCurrentStepTarget.style.display = 'none';
+          }
+        }
+        if (taskCurrentStepOutcome) {
+          taskCurrentStepOutcome.textContent = `Expected: ${task.currentStep.expectedOutcome || 'UI state transition & verification'}`;
+        }
+      } else {
+        taskCurrentStepCard.style.display = 'none';
+      }
+    }
+
+    // 6. Steps List & Counter
+    const completed = Array.isArray(task.completedSteps) ? task.completedSteps : [];
+    const remaining = Array.isArray(task.remainingSteps) ? task.remainingSteps : [];
+    if (taskStepsCount) {
+      taskStepsCount.textContent = `${completed.length} completed`;
+    }
+
+    if (taskStepsList) {
+      let html = '';
+      completed.forEach((st, idx) => {
+        html += `
+          <div class="task-step-row step-completed">
+            <span class="step-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+            <div class="step-info">
+              <span class="step-title">${escapeHTML(st.action || `Action #${idx + 1}`)}</span>
+              ${st.target ? `<span class="step-target">${escapeHTML(st.target)}</span>` : ''}
+              ${st.outcome ? `<span class="step-outcome">${escapeHTML(st.outcome)}</span>` : ''}
+            </div>
+            ${st.durationMs ? `<span class="step-meta">${st.durationMs}ms</span>` : ''}
+          </div>
+        `;
+      });
+
+      if (task.currentStep && task.status !== 'COMPLETED' && task.status !== 'FAILED') {
+        html += `
+          <div class="task-step-row step-in-flight">
+            <span class="step-icon step-spinner"></span>
+            <div class="step-info">
+              <span class="step-title">${escapeHTML(task.currentStep.action || 'In progress')}</span>
+              ${task.currentStep.target ? `<span class="step-target">${escapeHTML(task.currentStep.target)}</span>` : ''}
+            </div>
+            <span class="step-meta">In flight</span>
+          </div>
+        `;
+      }
+
+      remaining.forEach((rem, idx) => {
+        html += `
+          <div class="task-step-row step-pending">
+            <span class="step-icon">○</span>
+            <div class="step-info">
+              <span class="step-title">${escapeHTML(rem.action || `Planned step #${completed.length + idx + 2}`)}</span>
+            </div>
+            <span class="step-meta">Planned</span>
+          </div>
+        `;
+      });
+
+      if (!html) {
+        html = '<div class="task-steps-empty">Initializing stateful task plan...</div>';
+      }
+      taskStepsList.innerHTML = html;
+    }
+
+    // 7. Touched Resources / URLs
+    if (taskResourcesRow && taskResourcesBadges) {
+      const urls = Array.isArray(task.touchedUrls) ? task.touchedUrls : [];
+      if (urls.length > 0) {
+        taskResourcesRow.style.display = 'flex';
+        taskResourcesBadges.innerHTML = urls.map(u => {
+          let host = u;
+          try { host = new URL(u).hostname; } catch (_) {}
+          return `<span class="resource-badge" title="${escapeHTML(u)}">${escapeHTML(host)}</span>`;
+        }).join('');
+      } else {
+        taskResourcesRow.style.display = 'none';
+      }
+    }
+
+    // 8. Live Takeover / Resume Buttons in Work Panel
+    if (btnTaskLiveResume && btnTaskLiveTakeover) {
+      if (task.takeoverActive || task.status === 'PAUSED_FOR_USER') {
+        btnTaskLiveResume.style.display = 'inline-flex';
+        btnTaskLiveTakeover.style.display = 'none';
+      } else {
+        btnTaskLiveResume.style.display = 'none';
+        btnTaskLiveTakeover.style.display = 'inline-flex';
+      }
+    }
+  }
+
   async function initComponentToggles() {
+    if (window.adionAPI && window.adionAPI.taskMode) {
+      try {
+        const taskStatus = await window.adionAPI.taskMode.getStatus();
+        updateTaskModeToggleUI(taskStatus.enabled);
+        if (taskStatus.currentTask) {
+          renderTaskWorkPanel(taskStatus.currentTask);
+        }
+        window.adionAPI.taskMode.onStatusChange((status) => {
+          updateTaskModeToggleUI(status.enabled);
+        });
+        window.adionAPI.taskMode.onUpdate((task) => {
+          renderTaskWorkPanel(task);
+        });
+        window.adionAPI.taskMode.onPaused((data) => {
+          if (data && data.task) renderTaskWorkPanel(data.task);
+          showAdionToast(`Task Checkpoint: ${data?.reason || 'User confirmation required'}`, 'alert', 8000);
+        });
+        window.adionAPI.taskMode.onResumed((data) => {
+          if (data && data.task) renderTaskWorkPanel(data.task);
+          showAdionToast('Task resumed by user', 'success');
+        });
+        window.adionAPI.taskMode.onCompleted((data) => {
+          if (data && data.task) renderTaskWorkPanel(data.task);
+          if (data.status === 'COMPLETED') {
+            showAdionToast('Gemini Task completed successfully!', 'success', 5000);
+          } else {
+            showAdionToast(`Task ${data.status.toLowerCase()}: ${data.error || 'Stopped'}`, 'alert', 5000);
+          }
+          setTimeout(() => {
+            if (taskWorkPanel && (!data.task || data.task.status === 'COMPLETED' || data.task.status === 'FAILED')) {
+              taskWorkPanel.style.display = 'none';
+            }
+          }, 10000);
+        });
+      } catch (_) {}
+    }
     if (window.adionAPI && window.adionAPI.mcp) {
       try {
         const mcpStatus = await window.adionAPI.mcp.getStatus();
@@ -2726,10 +3906,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
   initComponentToggles();
+  updatePageSharingContext();
 
   // Initial toast greeting on startup
   setTimeout(() => {
-    showJarvisToast('JARVIS Online • Browser Autonomous Control Plane Active', 'success', 5000);
+    showAdionToast('ADION Online • Browser Autonomous Control Plane Active', 'success', 5000);
   }, 1200);
 });
 

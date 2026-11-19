@@ -15,6 +15,7 @@ class ContextEngine {
     };
     this.tabClusters = new Map(); // clusterName -> [tabIds]
     this.pageTextIndex = new Map(); // url -> text summary
+    this.MAX_INDEXED_PAGES = 200;   // bound memory: evict oldest beyond this
     this.ensureStorage();
   }
 
@@ -29,33 +30,60 @@ class ContextEngine {
   }
 
   /**
-   * Record a navigation event in the episodic session graph
+   * Record a navigation event in the episodic session graph.
+   * Also builds transition edges between domains for predictive suggestions.
    */
   recordNavigation(tabId, url, title) {
     if (!url || url.startsWith('adion://') || url.startsWith('file://')) return;
 
+    let domain;
     try {
       const parsed = new URL(url);
-      const domain = parsed.hostname;
-      const nodeKey = domain;
-
-      if (!this.sessionGraph.nodes.has(nodeKey)) {
-        this.sessionGraph.nodes.set(nodeKey, {
-          domain,
-          sampleTitle: title,
-          visitCount: 1,
-          firstSeen: Date.now(),
-          lastSeen: Date.now()
-        });
-      } else {
-        const node = this.sessionGraph.nodes.get(nodeKey);
-        node.visitCount++;
-        node.lastSeen = Date.now();
-        if (title) node.sampleTitle = title;
-      }
+      domain = parsed.hostname;
     } catch (e) {
-      // Ignore invalid URL parse
+      return; // Ignore invalid URL parse
     }
+
+    const nodeKey = domain;
+    if (!this.sessionGraph.nodes.has(nodeKey)) {
+      this.sessionGraph.nodes.set(nodeKey, {
+        domain,
+        sampleTitle: title,
+        visitCount: 1,
+        firstSeen: Date.now(),
+        lastSeen: Date.now()
+      });
+    } else {
+      const node = this.sessionGraph.nodes.get(nodeKey);
+      node.visitCount++;
+      node.lastSeen = Date.now();
+      if (title) node.sampleTitle = title;
+    }
+
+    // Build transition edge from the last visited domain to this one.
+    // This powers predictive suggestions (getPredictiveSuggestions).
+    if (this._lastDomain && this._lastDomain !== domain) {
+      const existing = this.sessionGraph.edges.find(
+        e => e.from === this._lastDomain && e.to === domain
+      );
+      if (existing) {
+        existing.count++;
+        existing.lastTransition = Date.now();
+      } else {
+        this.sessionGraph.edges.push({
+          from: this._lastDomain,
+          to: domain,
+          count: 1,
+          lastTransition: Date.now()
+        });
+      }
+      // Cap edges to avoid unbounded growth
+      if (this.sessionGraph.edges.length > 2000) {
+        this.sessionGraph.edges.sort((a, b) => b.count - a.count || b.lastTransition - a.lastTransition);
+        this.sessionGraph.edges.length = 1500;
+      }
+    }
+    this._lastDomain = domain;
   }
 
   /**
@@ -64,6 +92,14 @@ class ContextEngine {
   indexPageContent(url, textContent) {
     if (!url || !textContent) return;
     const clean = textContent.replace(/\s+/g, ' ').slice(0, 4000);
+    // Evict oldest entries when over cap — Map preserves insertion order, so
+    // the first key is the oldest. Keeps session memory bounded.
+    while (this.pageTextIndex.size >= this.MAX_INDEXED_PAGES && !this.pageTextIndex.has(url)) {
+      const oldest = this.pageTextIndex.keys().next().value;
+      if (oldest === undefined) break;
+      this.pageTextIndex.delete(oldest);
+    }
+    this.pageTextIndex.delete(url); // refresh insertion order on re-visit
     this.pageTextIndex.set(url, {
       text: clean,
       timestamp: Date.now()

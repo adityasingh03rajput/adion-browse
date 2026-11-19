@@ -41,7 +41,7 @@ class QueryPreprocessor {
 
     // 1. Strip conversational filler preambles & politeness affixes
     let cleaned = raw
-      .replace(/^(can\s+you\s+(?:please\s+)?|could\s+you\s+(?:please\s+)?|please\s+|hey\s+adion\s*,?\s*|jarvis\s*,?\s*|i\s+want\s+you\s+to\s+|would\s+you\s+mind\s+|tell\s+me\s+to\s+|help\s+me\s+to\s+|go\s+ahead\s+and\s+)/i, '')
+      .replace(/^(can\s+you\s+(?:please\s+)?|could\s+you\s+(?:please\s+)?|please\s+|hey\s+adion\s*,?\s*|adion\s*,?\s*|i\s+want\s+you\s+to\s+|would\s+you\s+mind\s+|tell\s+me\s+to\s+|help\s+me\s+to\s+|go\s+ahead\s+and\s+)/i, '')
       .replace(/^(um+|uh+|okay\s+fine\s*,?\s*|ok\s+fine\s*,?\s*|okay\s*,?\s*|ok\s*,?\s*|alright\s*,?\s*|so\s*,?\s*|well\s*,?\s*)/i, '')
       .trim();
 
@@ -333,7 +333,7 @@ class QueryPreprocessor {
 
     // 3.8 SITE_FOLLOWUPS: resolve follow-ups against the current/last site instead of
     // blindly Brave-searching ("open messages" on instagram = DMs, not a web search).
-    (() => {})(); // noop to keep structure
+    let __siteFollowup = null;
     {
       const __siteUrl = String((pageContext && pageContext.url) || '').toLowerCase();
       const __recent = String((pageContext && pageContext.recentUsers) || '').toLowerCase();
@@ -341,25 +341,23 @@ class QueryPreprocessor {
       const __onWA = __siteUrl.includes('whatsapp.com') || /\bwhatsapp\b/.test(__recent);
       const __onYT = __siteUrl.includes('youtube.com') || /\byoutube\b/.test(__recent);
       const __onX = __siteUrl.includes('x.com') || __siteUrl.includes('twitter.com');
-      // NOTE: cannot return from inside a block, so set a marker consumed below.
-      globalThis.__siteFollowup = null;
       if (__onInsta && /^(?:open|go\s+to|show|view)\s+(?:my\s+|the\s+)?(messages?|dms?|direct(?:\s+messages?)?|inbox|chats?)\s*$/.test(lower)) {
-        globalThis.__siteFollowup = { type: ActionType.NAVIGATE, url: 'https://www.instagram.com/direct/inbox/', thought: 'Open Instagram messages (DM inbox) in context of Instagram' };
+        __siteFollowup = { type: ActionType.NAVIGATE, url: 'https://www.instagram.com/direct/inbox/', thought: 'Open Instagram messages (DM inbox) in context of Instagram' };
       } else if (__onInsta && /^(?:open\s+)?(home|feed|reels|explore|notifications?|profile)\s*$/.test(lower)) {
         const __m = lower.match(/^(?:open\s+)?(home|feed|reels|explore|notifications?|profile)\s*$/);
         const __dest = { home: 'https://www.instagram.com/', feed: 'https://www.instagram.com/', reels: 'https://www.instagram.com/reels/', explore: 'https://www.instagram.com/explore/', notification: 'https://www.instagram.com/', notifications: 'https://www.instagram.com/', profile: 'https://www.instagram.com/' }[__m[1]] || 'https://www.instagram.com/';
-        globalThis.__siteFollowup = { type: ActionType.NAVIGATE, url: __dest, thought: 'Open Instagram ' + __m[1] };
+        __siteFollowup = { type: ActionType.NAVIGATE, url: __dest, thought: 'Open Instagram ' + __m[1] };
       } else if (__onWA && /^(?:open\s+)?(messages?|chats?|unread)\s*$/.test(lower)) {
-        globalThis.__siteFollowup = { type: 'WHATSAPP_UNREAD_CLICK', thought: 'Open unread chats on WhatsApp Web (site context)' };
+        __siteFollowup = { type: 'WHATSAPP_UNREAD_CLICK', thought: 'Open unread chats on WhatsApp Web (site context)' };
       } else if (__onYT && /^(?:open\s+)?(subscriptions?|history|library|trending)\s*$/.test(lower)) {
         const __m = lower.match(/^(?:open\s+)?(subscriptions?|history|library|trending)\s*$/);
         const __dest = { subscription: 'https://www.youtube.com/feed/subscriptions', subscriptions: 'https://www.youtube.com/feed/subscriptions', history: 'https://www.youtube.com/feed/history', library: 'https://www.youtube.com/feed/library', trending: 'https://www.youtube.com/feed/trending' }[__m[1]];
-        if (__dest) globalThis.__siteFollowup = { type: ActionType.NAVIGATE, url: __dest, thought: 'Open YouTube ' + __m[1] };
+        if (__dest) __siteFollowup = { type: ActionType.NAVIGATE, url: __dest, thought: 'Open YouTube ' + __m[1] };
       } else if (__onX && /^(?:open\s+)?(messages?|dms?|inbox)\s*$/.test(lower)) {
-        globalThis.__siteFollowup = { type: ActionType.NAVIGATE, url: 'https://x.com/messages', thought: 'Open X messages' };
+        __siteFollowup = { type: ActionType.NAVIGATE, url: 'https://x.com/messages', thought: 'Open X messages' };
       }
     }
-    if (globalThis.__siteFollowup) return globalThis.__siteFollowup;
+    if (__siteFollowup) return __siteFollowup;
 
     // 4. Standard URL / Domain Navigation: "navigate to example.com", "open github.com"
     const navMatch = lower.match(/(?:navigate\s+to|go\s+to|open)\s+(?:the\s+)?([a-z0-9\.\-_:\/]+)(?:\s+(?:website|page|site|homepage))?$/i);
@@ -405,7 +403,7 @@ class QueryPreprocessor {
             const __curNav = String((pageContext && pageContext.url) || '');
             const __onSiteNav = /^https?:\/\//.test(__curNav) && !__curNav.startsWith('adion://');
             const __isSectionNav = /^(messages?|dms?|direct|inbox|chats?|profile|settings?|history|home|feed|reels|explore|notifications?|subscriptions?|library|trending|dashboard|orders?|cart|checkout|help|support|contacts?|bookmarks?|downloads?|\u0938\u0902\u0926\u0947\u0936|\u092e\u0948\u0938\u0947\u091c|sandesh|\u0916\u094b\u091c|khoj|\u0938\u0930\u094d\u091a|\u092a\u094d\u0930\u094b\u092b\u093c\u093e\u0907\u0932|\u092a\u094d\u0930\u094b\u092b\u093e\u0907\u0932|\u0938\u0947\u091f\u093f\u0902\u0917\u094d\u0938|\u0907\u0924\u093f\u0939\u093e\u0938|\u0939\u093f\u0938\u094d\u091f\u094d\u0930\u0940|\u0939\u094b\u092e|\u092e\u0926\u0926|\u0911\u0930\u094d\u0921\u0930|\u0915\u093e\u0930\u094d\u091f|\u0938\u0942\u091a\u0928\u093e\u090f\u0902)$/i.test(target);
-            if (__onSiteNav && __isSectionNav && !globalThis.__siteFollowup) return null;
+            if (__onSiteNav && __isSectionNav && !__siteFollowup) return null;
                         url = `https://search.brave.com/search?q=${encodeURIComponent(target)}`;
           }
         }
@@ -425,6 +423,8 @@ class QueryPreprocessor {
     if (isWhatsAppContext) {
       let cleaned = lower.trim().replace(/\s+(?:on|in|via)\s+whatsapp(?:\s*[\.\?!])?$/i, '');
       cleaned = cleaned.replace(/[\.\?!]+$/, '').trim();
+      // Clean prefix like "open whatsapp (and|,)? "
+      cleaned = cleaned.replace(/^(?:open\s+(?:my\s+)?whatsapp(?:\s+app|\s+web)?(?:\s*,\s*|\s+and\s+|\s+then\s+|\s+to\s+)?)/i, '').trim();
 
       // Extract secret code / passcode / PIN if specified (e.g. "secret code of hidden chat is 1512", "passcode is 1234", "with secret code 1512")
       let secretCode = null;
@@ -486,16 +486,23 @@ class QueryPreprocessor {
           };
         }
 
+        const isDoc = /(?:\bdoc\b|\bdocument\b|\bfile\b|\battachment\b)/i.test(msg) || /\.(?:js|json|pdf|docx?|xlsx?|txt|png|jpe?g|webp|zip|tar|gz|py|java|c|cpp|cs|ts|html|css|md|csv)\b/i.test(msg);
+        const docFile = isDoc ? msg.replace(/^(?:the\s+)?(?:doc(?:ument)?|file|attachment)\s+/i, '').trim() : null;
+
         // Context-aware or named contact search on WhatsApp Web (supports hidden/locked chats with secret code)
         return {
           type: 'WHATSAPP_CHAT_SEND',
           contact: contact,
           phone: isNumericPhone ? cleanPhone : null,
           message: msg,
+          file: docFile,
+          isDocument: isDoc,
           secretCode: secretCode || null,
-          thought: secretCode
-            ? `Search for hidden contact "${contact}" using secret code "${secretCode}" in WhatsApp and send "${msg}"`
-            : `Search for contact "${contact}" in WhatsApp and send "${msg}"`
+          thought: isDoc
+            ? `Send document "${docFile || msg}" to contact "${contact}" in WhatsApp`
+            : (secretCode
+              ? `Search for hidden contact "${contact}" using secret code "${secretCode}" in WhatsApp and send "${msg}"`
+              : `Search for contact "${contact}" in WhatsApp and send "${msg}"`)
         };
       }
 
@@ -530,8 +537,8 @@ class QueryPreprocessor {
       };
     }
 
-    // Computer Use Slash Commands: /pc, /computer, /workspace
-    const computerUseMatch = text.match(/^(?:\/pc\s+|\/computer\s+|\/workspace\s+)(.+)$/i);
+    // Computer Use Slash Commands: /pc, /pc_use, /computer, /workspace
+    const computerUseMatch = text.match(/^(?:\/pc_use\s+|\/pc\s+|\/computer\s+|\/workspace\s+)(.+)$/i);
     if (computerUseMatch) {
       const sub = computerUseMatch[1].trim();
       // If direct CLI command invocation, fast-path execute in <0.5ms
@@ -544,19 +551,19 @@ class QueryPreprocessor {
         };
       }
 
-      // Check for file creation commands (e.g. "D:\\Jarvis create aditya.html saying hello", "create aditya.html saying hello")
+      // Check for file creation commands (e.g. "D:\\Adion create aditya.html saying hello", "create aditya.html saying hello")
       let targetDir = null;
       let targetFile = null;
       let targetContent = '';
 
-      // Pattern 1: Directory + create file + content (e.g. "D:\\Jarvis create aditya.html saying hello")
+      // Pattern 1: Directory + create file + content (e.g. "D:\\Adion create aditya.html saying hello")
       const m1 = sub.match(/^(?:in\s+)?([a-zA-Z]:[\\\/][^\s]*)\s+(?:create|make|write)\s+(?:file\s+)?([^\s]+)(?:\s+(?:saying|with\s+(?:content|text)?)\s+(.+))?$/i);
       if (m1) {
         targetDir = m1[1];
         targetFile = m1[2];
         targetContent = (m1[3] || '').trim();
       } else {
-        // Pattern 2: Absolute file path in create (e.g. "create D:\\Jarvis\\aditya.html saying hello")
+        // Pattern 2: Absolute file path in create (e.g. "create D:\\Adion\\aditya.html saying hello")
         const m2 = sub.match(/^(?:create|make|write)\s+(?:file\s+)?([a-zA-Z]:[\\\/][^\s]+)(?:\s+(?:saying|with\s+(?:content|text)?)\s+(.+))?$/i);
         if (m2) {
           const full = m2[1];
@@ -681,7 +688,7 @@ class QueryPreprocessor {
     // I. Conversational Courtesy & Ambient Speech Fast-Path (STRICT STANDALONE CHECK ONLY)
     // Prevents hijacking any utterance containing actionable verbs
     const isActionable = /(?:search|open|go|navigate|shut|close|change|set|click|scroll|play|switch|tab|bookmark|type|input|write|enter|fill)/i.test(lower);
-    if (!isActionable && /^(?:thank\s*you|thanks|thx|gracias|merci|danke|hello|hi|hie|hei|hy|heyy|heya|hai|hiya|hey|howdy|yo|greetings|good\s*(?:morning|afternoon|evening)|bye|goodbye|cool|awesome|ok|okay|ok\s+fine|fine|alright)(?:\s*,?\s*jarvis)?[\.\!\?]?$/i.test(lower)) {
+    if (!isActionable && /^(?:thank\s*you|thanks|thx|gracias|merci|danke|hello|hi|hie|hei|hy|heyy|heya|hai|hiya|hey|howdy|yo|greetings|good\s*(?:morning|afternoon|evening)|bye|goodbye|cool|awesome|ok|okay|ok\s+fine|fine|alright)(?:\s*,?\s*adion)?[\.\!\?]?$/i.test(lower)) {
       return {
         type: 'CONVERSATIONAL_ACKNOWLEDGE',
         thought: 'Standing by: ready for your browser commands.',

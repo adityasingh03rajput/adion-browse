@@ -67,6 +67,70 @@ const SEMANTIC_CLUSTERS = {
     antonymCluster: null,
     iconHints: ['close', 'times', 'cross', 'x', 'cancel', 'dismiss'],
     hrefPatterns: []
+  },
+  SUBMIT: {
+    id: 'SUBMIT',
+    label: 'Submit / Confirm',
+    synonyms: ['submit', 'confirm', 'save', 'apply', 'done', 'finish', 'complete', 'ok', 'okay', 'proceed', 'continue', 'next', 'send'],
+    antonymCluster: null,
+    iconHints: ['check', 'checkmark', 'tick', 'save', 'confirm', 'send'],
+    hrefPatterns: ['submit', 'confirm', 'save', 'done']
+  },
+  UPLOAD: {
+    id: 'UPLOAD',
+    label: 'Upload / Import',
+    synonyms: ['upload', 'import', 'attach', 'add file', 'choose file', 'browse file', 'select file', 'pick file', 'drop file'],
+    antonymCluster: 'DOWNLOAD',
+    iconHints: ['upload', 'cloud-upload', 'arrow-up', 'attach', 'paperclip', 'file-plus'],
+    hrefPatterns: ['upload', 'import']
+  },
+  DOWNLOAD: {
+    id: 'DOWNLOAD',
+    label: 'Download / Export',
+    synonyms: ['download', 'export', 'save as', 'save file', 'get file', 'fetch file'],
+    antonymCluster: 'UPLOAD',
+    iconHints: ['download', 'cloud-download', 'arrow-down', 'export', 'save'],
+    hrefPatterns: ['download', 'export']
+  },
+  PLAY: {
+    id: 'PLAY',
+    label: 'Play / Resume Media',
+    synonyms: ['play', 'resume', 'start video', 'watch', 'listen', 'unpause'],
+    antonymCluster: 'PAUSE',
+    iconHints: ['play', 'play-circle', 'play-button', 'resume', 'triangle'],
+    hrefPatterns: ['play', 'watch', 'video']
+  },
+  PAUSE: {
+    id: 'PAUSE',
+    label: 'Pause Media',
+    synonyms: ['pause', 'stop', 'halt', 'freeze'],
+    antonymCluster: 'PLAY',
+    iconHints: ['pause', 'pause-circle', 'stop'],
+    hrefPatterns: []
+  },
+  PROFILE: {
+    id: 'PROFILE',
+    label: 'User Profile / Account',
+    synonyms: ['profile', 'account', 'my profile', 'your profile', 'user', 'avatar', 'me', 'my page'],
+    antonymCluster: null,
+    iconHints: ['user', 'person', 'avatar', 'account', 'profile', 'face'],
+    hrefPatterns: ['profile', 'account', 'me', 'user']
+  },
+  NOTIFICATIONS: {
+    id: 'NOTIFICATIONS',
+    label: 'Notifications',
+    synonyms: ['notifications', 'alerts', 'notify', 'bell', 'updates', 'activity'],
+    antonymCluster: null,
+    iconHints: ['bell', 'notification', 'alert', 'ring'],
+    hrefPatterns: ['notifications', 'alerts', 'activity']
+  },
+  SHARE: {
+    id: 'SHARE',
+    label: 'Share',
+    synonyms: ['share', 'forward', 'send to', 'copy link', 'share link', 'post'],
+    antonymCluster: null,
+    iconHints: ['share', 'forward', 'send', 'export', 'arrow-share'],
+    hrefPatterns: ['share']
   }
 };
 
@@ -243,7 +307,15 @@ function buildDOMGroundingScript(targetQuery, options = {}) {
             if (visible) {
               try {
                 const rect = el.getBoundingClientRect();
-                if (rect && (rect.width > 1 || rect.height > 1)) {
+                // Virtualised-list container protection: containers with massive height (> 2000px or > 2.5x viewport height)
+                // should not hijack clicks. But real interactive buttons, inputs, tabs and cards up to 1200x800 must be grounded.
+                const isExplicitControl = ['BUTTON','A','INPUT','SELECT','TEXTAREA'].includes(el.tagName) ||
+                  ['button','link','tab','menuitem','option','searchbox'].includes(safeGetAttr(el, 'role'));
+                const MAX_GROUND_AREA = isExplicitControl ? (1200 * 800) : (600 * 400);
+                const maxGroundH = (typeof window !== 'undefined' && window.innerHeight) ? window.innerHeight * 2.0 : 2000;
+                if (rect && (rect.width > 1 || rect.height > 1) &&
+                    rect.width * rect.height <= MAX_GROUND_AREA &&
+                    rect.height <= maxGroundH) {
                   elements.push(el);
                 }
               } catch (_) {}
@@ -253,6 +325,13 @@ function buildDOMGroundingScript(targetQuery, options = {}) {
             try {
               if (el.shadowRoot) {
                 elements = elements.concat(getAllElements(el.shadowRoot));
+              }
+            } catch (_) {}
+
+            // Traverse accessible iframe documents
+            try {
+              if (el.tagName === 'IFRAME' && el.contentDocument && el.contentDocument.body) {
+                elements = elements.concat(getAllElements(el.contentDocument.body));
               }
             } catch (_) {}
           }
@@ -272,7 +351,8 @@ function buildDOMGroundingScript(targetQuery, options = {}) {
           const el = document.querySelector(rawQuery);
           if (el) {
             const r = el.getBoundingClientRect();
-            if (r.width > 2 && r.height > 2) {
+            const maxSelH = (typeof window !== 'undefined' && window.innerHeight) ? window.innerHeight * 1.5 : Infinity;
+            if (r.width > 2 && r.height > 2 && r.width * r.height <= 400 * 200 && r.height <= maxSelH) {
               bestMatch = el;
               highestScore = 2000;
             }
@@ -557,14 +637,14 @@ function buildDOMGroundingScript(targetQuery, options = {}) {
 
       // Render Clean Target Focus Reticle
       try {
-        let radar = document.getElementById('__jarvis_radar_root__');
+        let radar = document.getElementById('__adion_radar_root__');
         if (radar) radar.remove();
         radar = document.createElement('div');
-        radar.id = '__jarvis_radar_root__';
+        radar.id = '__adion_radar_root__';
         radar.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483645;overflow:hidden;font-family:Segoe UI,monospace;';
 
         const style = document.createElement('style');
-        style.id = '__jarvis_radar_styles__';
+        style.id = '__adion_radar_styles__';
         style.textContent = '@keyframes targetFocusPulse { 0% { box-shadow: 0 0 0 2px #38bdf8, 0 0 16px rgba(56,189,248,0.5); } 50% { box-shadow: 0 0 0 3px #0284c7, 0 0 24px rgba(2,132,199,0.7); } 100% { box-shadow: 0 0 0 2px #38bdf8, 0 0 16px rgba(56,189,248,0.5); } }';
         document.head.appendChild(style);
 

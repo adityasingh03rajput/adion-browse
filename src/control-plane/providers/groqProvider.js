@@ -59,12 +59,16 @@ class GroqProvider extends BaseProvider {
       if (this._cooldown && (this._cooldown.get(candidateModel) || 0) > Date.now()) continue;
 
       try {
+        const userPromptWithJson = prompt.includes('JSON') || prompt.includes('json')
+          ? prompt
+          : prompt + '\n\nOutput strictly as a valid RAW JSON object.';
+
         const payload = {
           model: candidateModel,
           messages: [
             { role: 'system', content: systemPrompt + '\nRespond strictly with RAW JSON format. No markdown, no prose.' },
             ...this.coalesceMessages(options.history),
-            { role: 'user', content: prompt }
+            { role: 'user', content: userPromptWithJson }
           ],
           response_format: { type: 'json_object' },
           temperature: 0.1,
@@ -109,10 +113,16 @@ class GroqProvider extends BaseProvider {
 
         if ([400, 404, 503, 502, 504, 429].includes(status) || !res) {
           const nextModel = candidates[(attempt + 1) % candidates.length];
-          const delay = Math.round(baseDelayMs * Math.pow(1.5, attempt) + Math.random() * 200);
-          console.warn(`[GroqProvider Backoff] Retryable condition on ${candidateModel}. Failover to candidate: ${nextModel} in ${delay}ms...`);
+          const retryHeader = res?.headers?.get ? res.headers.get('retry-after') : null;
+          const retrySec = retryHeader ? parseFloat(retryHeader) : null;
+          const delay = retrySec && !isNaN(retrySec)
+            ? Math.min(Math.max(Math.round(retrySec * 1000), 400), 3000)
+            : Math.round(baseDelayMs * Math.pow(1.5, attempt) + Math.random() * 200);
+
+          console.warn(`[GroqProvider Backoff] Retryable condition on ${candidateModel} (HTTP ${status}). Failover to candidate: ${nextModel} in ${delay}ms...`);
           if (!this._cooldown) this._cooldown = new Map();
-          this._cooldown.set(candidateModel, Date.now() + 60000); // cooldown until backoff passes
+          // Set cooldown to short window (2-4 seconds), NOT 60 seconds
+          this._cooldown.set(candidateModel, Date.now() + Math.max(delay, 2500));
           await new Promise(r => setTimeout(r, delay));
           continue;
         }

@@ -99,7 +99,7 @@ html[data-theme="light"] .btn-voice-agent.listening {
   background-color: #cc0033 !important;
   box-shadow: 0 0 16px rgba(204, 0, 51, 0.8), 0 0 28px rgba(204, 0, 51, 0.4) !important;
 }
-html[data-theme="light"] .btn-jarvis-mic.listening {
+html[data-theme="light"] .btn-adion-mic.listening {
   color: #121212 !important;
   background-color: #cc0033 !important;
   box-shadow: 0 0 14px rgba(204, 0, 51, 0.7) !important;
@@ -212,115 +212,115 @@ html[data-theme="light"] .telemetry-query-result {
   background: #eaeff5;
   color: #0c1319;
 }
-html[data-theme="light"] .jarvis-toast {
+html[data-theme="light"] .adion-toast {
   background: rgba(232, 236, 242, 0.95);
   border: 1px solid rgba(1, 243, 255, 0.4);
   box-shadow: 0 10px 30px rgba(240, 240, 240, 0.6), 0 0 20px rgba(1, 243, 255, 0.25);
 }
-html[data-theme="light"] .jarvis-toast.toast-alert {
+html[data-theme="light"] .adion-toast.toast-alert {
   border-color: rgba(180, 0, 0, 0.6);
   box-shadow: 0 10px 30px rgba(240, 240, 240, 0.6), 0 0 20px rgba(180, 0, 0, 0.3);
 }
-html[data-theme="light"] .jarvis-toast-badge {
+html[data-theme="light"] .adion-toast-badge {
   background: linear-gradient(135deg, #01f3ff, #015eb0);
   color: #e8ecf2;
 }
-html[data-theme="light"] .jarvis-toast.toast-alert .jarvis-toast-badge {
+html[data-theme="light"] .adion-toast.toast-alert .adion-toast-badge {
   background: linear-gradient(135deg, #b40000, #840000);
   color: #121212;
 }
-html[data-theme="light"] .jarvis-toast-text {
+html[data-theme="light"] .adion-toast-text {
   color: #06121e;
 }
-html[data-theme="light"] .jarvis-orb-wrapper {
+html[data-theme="light"] .adion-orb-wrapper {
   filter: drop-shadow(0 0 16px rgba(1, 243, 255, 0.4));
 }
-html[data-theme="light"] .jarvis-orb-wrapper:hover {
+html[data-theme="light"] .adion-orb-wrapper:hover {
   filter: drop-shadow(0 0 24px rgba(1, 243, 255, 0.65));
 }
-html[data-theme="light"] .jarvis-ring-outer {
+html[data-theme="light"] .adion-ring-outer {
   border: 1.5px dashed rgba(1, 243, 255, 0.5);
 }
-html[data-theme="light"] .jarvis-ring-inner {
+html[data-theme="light"] .adion-ring-inner {
   border: 1px dotted rgba(1, 94, 176, 0.65);
 }
-html[data-theme="light"] .jarvis-ring-pulse {
+html[data-theme="light"] .adion-ring-pulse {
   border: 1px solid rgba(1, 243, 255, 0.25);
 }
-html[data-theme="light"] .jarvis-core-glow {
+html[data-theme="light"] .adion-core-glow {
   background: radial-gradient(circle, rgba(1, 243, 255, 0.4) 0%, rgba(1, 94, 176, 0.15) 50%, transparent 75%);
 }
-html[data-theme="light"] .jarvis-state-dot {
+html[data-theme="light"] .adion-state-dot {
   background: #46efb7;
   border: 2px solid #e8ecf2;
   box-shadow: 0 0 8px #46efb7;
 }
-html[data-theme="light"] .jarvis-panel {
+html[data-theme="light"] .adion-panel {
   background: linear-gradient(165deg, rgba(221, 227, 239, 0.96) 0%, rgba(233, 237, 246, 0.98) 100%);
   border: 1px solid rgba(18, 18, 18, 0.1);
   border-top: 1px solid rgba(1, 243, 255, 0.4);
   box-shadow: 0 24px 64px -12px rgba(240, 240, 240, 0.85), 0 0 35px rgba(1, 243, 255, 0.12), inset 0 1px 0 rgba(18, 18, 18, 0.12);
 }
-html[data-theme="light"] .jarvis-panel-header {
+html[data-theme="light"] .adion-panel-header {
   border-bottom: 1px solid rgba(18, 18, 18, 0.06);
   background: rgba(217, 223, 237, 0.5);
 }
-html[data-theme="light"] .jarvis-mini-sphere {
+html[data-theme="light"] .adion-mini-sphere {
   border: 1.5px solid #01f3ff;
   box-shadow: 0 0 12px rgba(1, 243, 255, 0.5);
 }
-html[data-theme="light"] .jarvis-mini-sphere .mini-core {
+html[data-theme="light"] .adion-mini-sphere .mini-core {
   background: #01f3ff;
   box-shadow: 0 0 8px #01f3ff;
 }
-html[data-theme="light"] .jarvis-title {
+html[data-theme="light"] .adion-title {
   color: #121212;
   background: linear-gradient(135deg, #01f3ff, #015eb0);
 }
-html[data-theme="light"] .btn-jarvis-action {
+html[data-theme="light"] .btn-adion-action {
   background: rgba(1, 243, 255, 0.08);
   border: 1px solid rgba(1, 243, 255, 0.25);
   color: #01f3ff;
 }
-html[data-theme="light"] .btn-jarvis-action:hover {
+html[data-theme="light"] .btn-adion-action:hover {
   background: #01f3ff;
   color: #e9edf6;
   border-color: #01f3ff;
   box-shadow: 0 0 14px rgba(1, 243, 255, 0.4);
 }
-html[data-theme="light"] .btn-jarvis-close {
+html[data-theme="light"] .btn-adion-close {
   color: #616a74;
 }
-html[data-theme="light"] .btn-jarvis-close:hover {
+html[data-theme="light"] .btn-adion-close:hover {
   color: #121212;
   background: rgba(18, 18, 18, 0.08);
 }
-html[data-theme="light"] .jarvis-session-meta {
+html[data-theme="light"] .adion-session-meta {
   background: rgba(240, 240, 240, 0.2);
   border-bottom: 1px solid rgba(18, 18, 18, 0.04);
 }
-html[data-theme="light"] .jarvis-session-meta-pill {
+html[data-theme="light"] .adion-session-meta-pill {
   color: #47566b;
 }
 html[data-theme="light"] .meta-dot {
   background: #46efb7;
   box-shadow: 0 0 6px rgba(70, 239, 183, 0.6);
 }
-html[data-theme="light"] .jarvis-session-count-pill {
+html[data-theme="light"] .adion-session-count-pill {
   background: rgba(1, 243, 255, 0.08);
   border: 1px solid rgba(1, 243, 255, 0.2);
   color: #01f3ff;
 }
-html[data-theme="light"] .jarvis-component-strip {
+html[data-theme="light"] .adion-component-strip {
   background: rgba(213, 221, 240, 0.35);
   border-bottom: 1px solid rgba(18, 18, 18, 0.05);
 }
-html[data-theme="light"] .jarvis-strip-item {
+html[data-theme="light"] .adion-strip-item {
   background: linear-gradient(145deg, rgba(18, 18, 18, 0.04) 0%, rgba(18, 18, 18, 0.01) 100%);
   border: 1px solid rgba(18, 18, 18, 0.08);
   box-shadow: 0 2px 8px rgba(240, 240, 240, 0.2);
 }
-html[data-theme="light"] .jarvis-strip-item:hover {
+html[data-theme="light"] .adion-strip-item:hover {
   background: linear-gradient(145deg, rgba(18, 18, 18, 0.07) 0%, rgba(18, 18, 18, 0.02) 100%);
   border-color: rgba(1, 243, 255, 0.35);
   box-shadow: 0 4px 16px rgba(240, 240, 240, 0.3), 0 0 12px rgba(1, 243, 255, 0.1);
@@ -357,111 +357,111 @@ html[data-theme="light"] .btn-toggle-switch.active {
 html[data-theme="light"] .btn-toggle-switch.active .toggle-knob {
   background: #e4e9f4;
 }
-html[data-theme="light"] .jarvis-timeline::-webkit-scrollbar-thumb {
+html[data-theme="light"] .adion-timeline::-webkit-scrollbar-thumb {
   background: rgba(1, 243, 255, 0.25);
 }
-html[data-theme="light"] .jarvis-empty-state .empty-icon {
+html[data-theme="light"] .adion-empty-state .empty-icon {
   color: #01f3ff;
 }
-html[data-theme="light"] .jarvis-empty-state .empty-title {
+html[data-theme="light"] .adion-empty-state .empty-title {
   color: #0c1319;
 }
-html[data-theme="light"] .jarvis-interaction-card {
+html[data-theme="light"] .adion-interaction-card {
   background: rgba(217, 223, 235, 0.65);
   border: 1px solid rgba(18, 18, 18, 0.08);
   box-shadow: 0 3px 12px rgba(240, 240, 240, 0.25);
 }
-html[data-theme="light"] .jarvis-interaction-card:hover {
+html[data-theme="light"] .adion-interaction-card:hover {
   border-color: rgba(1, 243, 255, 0.35);
   box-shadow: 0 6px 20px rgba(240, 240, 240, 0.4), 0 0 16px rgba(1, 243, 255, 0.08);
 }
-html[data-theme="light"] .jarvis-card-header {
+html[data-theme="light"] .adion-card-header {
   color: #74849b;
 }
-html[data-theme="light"] .jarvis-source-badge {
+html[data-theme="light"] .adion-source-badge {
   background: rgba(1, 243, 255, 0.1);
   border: 1px solid rgba(1, 243, 255, 0.25);
   color: #01f3ff;
 }
-html[data-theme="light"] .jarvis-prompt-row {
+html[data-theme="light"] .adion-prompt-row {
   border-bottom: 1px solid rgba(18, 18, 18, 0.04);
 }
-html[data-theme="light"] .jarvis-user-label {
+html[data-theme="light"] .adion-user-label {
   color: #078cc7;
   background: rgba(7, 140, 199, 0.12);
 }
-html[data-theme="light"] .jarvis-prompt-text {
+html[data-theme="light"] .adion-prompt-text {
   color: #0b1219;
 }
-html[data-theme="light"] .jarvis-response-row {
+html[data-theme="light"] .adion-response-row {
   background: rgba(229, 234, 244, 0.7);
   border: 1px solid rgba(18, 18, 18, 0.05);
   border-left: 3px solid #01f3ff;
 }
-html[data-theme="light"] .jarvis-bot-label {
+html[data-theme="light"] .adion-bot-label {
   color: #01f3ff;
   background: rgba(1, 243, 255, 0.12);
 }
-html[data-theme="light"] .jarvis-thought-text {
+html[data-theme="light"] .adion-thought-text {
   color: #1e2834;
 }
-html[data-theme="light"] .jarvis-action-tag {
+html[data-theme="light"] .adion-action-tag {
   background: rgba(1, 243, 255, 0.08);
   color: #01f3ff;
   border: 1px solid rgba(1, 243, 255, 0.22);
 }
-html[data-theme="light"] .jarvis-chat-input-row {
+html[data-theme="light"] .adion-chat-input-row {
   border-top: 1px solid rgba(18, 18, 18, 0.06);
   background: rgba(223, 229, 241, 0.6);
 }
-html[data-theme="light"] .jarvis-input-dock {
+html[data-theme="light"] .adion-input-dock {
   background: rgba(230, 234, 244, 0.95);
   border: 1px solid rgba(18, 18, 18, 0.1);
   box-shadow: 0 2px 8px rgba(240, 240, 240, 0.3);
 }
-html[data-theme="light"] .jarvis-input-dock:focus-within {
+html[data-theme="light"] .adion-input-dock:focus-within {
   border-color: rgba(1, 243, 255, 0.5);
   box-shadow: 0 0 16px rgba(1, 243, 255, 0.2);
 }
-html[data-theme="light"] .jarvis-input-dock input {
+html[data-theme="light"] .adion-input-dock input {
   color: #121212;
 }
-html[data-theme="light"] .jarvis-input-dock input::placeholder {
+html[data-theme="light"] .adion-input-dock input::placeholder {
   color: #74849b;
 }
-html[data-theme="light"] .btn-jarvis-mic {
+html[data-theme="light"] .btn-adion-mic {
   color: #47566b;
 }
-html[data-theme="light"] .btn-jarvis-mic:hover {
+html[data-theme="light"] .btn-adion-mic:hover {
   color: #01f3ff;
   background: rgba(1, 243, 255, 0.12);
 }
-html[data-theme="light"] .btn-jarvis-mic.active {
+html[data-theme="light"] .btn-adion-mic.active {
   background: rgba(204, 0, 51, 0.2);
   color: #cc0033;
 }
-html[data-theme="light"] .btn-jarvis-send {
+html[data-theme="light"] .btn-adion-send {
   background: linear-gradient(135deg, #01f3ff, #015eb0);
   color: #e9edf6;
   box-shadow: 0 2px 8px rgba(1, 243, 255, 0.35);
 }
-html[data-theme="light"] .btn-jarvis-send:hover {
+html[data-theme="light"] .btn-adion-send:hover {
   box-shadow: 0 4px 14px rgba(1, 243, 255, 0.5);
 }
-html[data-theme="light"] .btn-ask-jarvis {
+html[data-theme="light"] .btn-ask-adion {
   background: #1770e5;
   color: #121212;
   box-shadow: 0 1px 3px rgba(240, 240, 240, 0.3);
 }
-html[data-theme="light"] .btn-ask-jarvis:hover {
+html[data-theme="light"] .btn-ask-adion:hover {
   background: #3681e4;
   box-shadow: 0 2px 8px rgba(23, 112, 229, 0.45);
 }
-html[data-theme="light"] .btn-ask-jarvis.active {
+html[data-theme="light"] .btn-ask-adion.active {
   background: #4f92ea;
   box-shadow: inset 0 1px 3px rgba(240, 240, 240, 0.3);
 }
-html[data-theme="light"] .jarvis-side-panel {
+html[data-theme="light"] .adion-side-panel {
   background: linear-gradient(180deg, #dde1ec 0%, #e5e9f2 60%, #c7d3ef 100%);
   border-left: 1px solid rgba(18, 18, 18, 0.08);
   box-shadow: -8px 0 32px rgba(240, 240, 240, 0.7);
@@ -496,6 +496,27 @@ html[data-theme="light"] .gemini-sparkle-hero {
 }
 html[data-theme="light"] .side-panel-greeting {
   color: #121417;
+}
+html[data-theme="light"] .side-panel-subgreeting {
+  color: #5a6174;
+}
+html[data-theme="light"] .side-panel-toolbar {
+  border-bottom: 1px solid rgba(18, 18, 18, 0.08);
+  background: rgba(18, 18, 18, 0.03);
+}
+html[data-theme="light"] .btn-mode-chip {
+  background: rgba(18, 18, 18, 0.05);
+  border: 1px solid rgba(18, 18, 18, 0.1);
+  color: #5a6174;
+}
+html[data-theme="light"] .btn-mode-chip:hover {
+  background: rgba(18, 18, 18, 0.09);
+  color: #121212;
+}
+html[data-theme="light"] .btn-mode-chip.active {
+  background: rgba(9, 80, 196, 0.12);
+  border-color: rgba(9, 80, 196, 0.4);
+  color: #0950c4;
 }
 html[data-theme="light"] .gemini-chip {
   background: rgba(18, 18, 18, 0.08);
@@ -826,34 +847,34 @@ html[data-theme="light"] .btn-side-panel-send {
 html[data-theme="light"] .btn-side-panel-send:hover {
   box-shadow: 0 4px 12px rgba(11, 78, 189, 0.6);
 }
-html[data-theme="light"] .jarvis-control-bar {
+html[data-theme="light"] .adion-control-bar {
   background: rgba(217, 223, 237, 0.85);
   border: 1px solid rgba(1, 243, 255, 0.35);
   box-shadow: 0 2px 8px rgba(240, 240, 240, 0.25);
 }
-html[data-theme="light"] .jarvis-control-bar:focus-within {
+html[data-theme="light"] .adion-control-bar:focus-within {
   background: rgba(223, 229, 242, 0.98);
   border-color: #01f3ff;
   box-shadow: 0 0 0 2px rgba(1, 243, 255, 0.25), 0 4px 16px rgba(1, 243, 255, 0.2);
 }
-html[data-theme="light"] .jarvis-control-input {
+html[data-theme="light"] .adion-control-input {
   color: #0c1319;
 }
-html[data-theme="light"] .jarvis-control-input::placeholder {
+html[data-theme="light"] .adion-control-input::placeholder {
   color: #616a74;
 }
-html[data-theme="light"] .jarvis-control-mic {
+html[data-theme="light"] .adion-control-mic {
   background: rgba(1, 243, 255, 0.12) !important;
   border: 1px solid rgba(1, 243, 255, 0.3) !important;
   color: #01f3ff !important;
 }
-html[data-theme="light"] .jarvis-control-mic:hover {
+html[data-theme="light"] .adion-control-mic:hover {
   background: rgba(1, 243, 255, 0.25) !important;
   color: #121212 !important;
   border-color: #01f3ff !important;
   box-shadow: 0 0 10px rgba(1, 243, 255, 0.45) !important;
 }
-html[data-theme="light"] .jarvis-control-mic.listening {
+html[data-theme="light"] .adion-control-mic.listening {
   background: #cc0033 !important;
   border-color: #cc0033 !important;
   color: #121212 !important;

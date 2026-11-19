@@ -11,7 +11,14 @@ const AgentState = {
   EXECUTING_ACTION: 'EXECUTING_ACTION',
   AWAITING_DISAMBIGUATION: 'AWAITING_DISAMBIGUATION',
   AWAITING_BIOMETRICS: 'AWAITING_BIOMETRICS',
-  ERROR: 'ERROR'
+  ERROR: 'ERROR',
+  // Gemini Task Mode States
+  PLANNING_NEXT: 'PLANNING_NEXT',
+  EXECUTING: 'EXECUTING',
+  VERIFYING: 'VERIFYING',
+  PAUSED_FOR_USER: 'PAUSED_FOR_USER',
+  COMPLETED: 'COMPLETED',
+  STOPPED: 'STOPPED'
 };
 
 const ActionType = {
@@ -55,6 +62,21 @@ const ActionType = {
   // Local System & Terminal Bridge
   TERMINAL_EXEC: 'TERMINAL_EXEC',
 
+  // Native PC & OS Controls
+  OPEN_APP: 'OPEN_APP',
+  PC_CLICK: 'PC_CLICK',
+  PC_MOVE: 'PC_MOVE',
+  PC_TYPE: 'PC_TYPE',
+  PC_PRESS: 'PC_PRESS',
+  PC_SCROLL: 'PC_SCROLL',
+  PC_READ: 'PC_READ',
+  SYSTEM_VOLUME: 'SYSTEM_VOLUME',
+  DESKTOP_SCREENSHOT: 'DESKTOP_SCREENSHOT',
+
+  // Multi-Agent & Synthesis
+  RESEARCH_TOPIC: 'RESEARCH_TOPIC',
+  COMPARE_PRICES: 'COMPARE_PRICES',
+
   // Security & Vault
   REQUEST_BIOMETRIC_AUTH: 'REQUEST_BIOMETRIC_AUTH',
   FILL_CREDENTIAL: 'FILL_CREDENTIAL'
@@ -77,7 +99,17 @@ const IPCChannels = {
   AGENT_ACTION_FINISHED: 'agent:action-finished',
   AGENT_DISAMBIGUATION_REQUIRED: 'agent:disambiguation-required',
   AGENT_FEEDBACK_MESSAGE: 'agent:feedback-message',
-  AGENT_INSPECTOR_TELEMETRY: 'agent:inspector-telemetry'
+  AGENT_INSPECTOR_TELEMETRY: 'agent:inspector-telemetry',
+
+  // Gemini Task Mode (Stateful Observable Execution Loop & Work Panel)
+  TASK_MODE_GET_STATUS: 'task-mode:get-status',
+  TASK_MODE_TOGGLE: 'task-mode:toggle',
+  TASK_MODE_USER_ACTION: 'task-mode:user-action',
+  TASK_MODE_STATUS_CHANGE: 'task-mode:status-change',
+  TASK_MODE_UPDATE: 'task-mode:update',
+  TASK_MODE_PAUSED: 'task-mode:paused',
+  TASK_MODE_RESUMED: 'task-mode:resumed',
+  TASK_MODE_COMPLETED: 'task-mode:completed'
 };
 
 module.exports = {

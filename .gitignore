@@ -15,6 +15,7 @@ dist/
 out/
 build/
 *.log
+.hyperframes/
 
 # OS generated files
 .DS_Store
@@ -27,8 +28,12 @@ __pycache__/
 
 
 # Local scratch scripts and editor/agent backups
-*.bak
+*.bak*
 *.v1bak
 /patch*.js
 /*_new.js
 /profile.jpg
+tool scan/*.png
+tool scan/*.jpg
+tool scan/*.json
+nul

@@ -9,6 +9,7 @@ const DataSynthesizer = require('./dataSynthesizer');
 const ZKPMesh = require('./zkpMesh');
 const MCPServer = require('../mcp/mcpServer');
 const TerminalBridge = require('../terminal/terminalBridge');
+const { createPcEngine } = require('../pc');
 const store = require('../main/store');
 const { IPCChannels, AgentState } = require('./protocol');
 
@@ -44,6 +45,24 @@ class ControlPlane {
       this.terminalBridge
     );
     this.runtime.terminalBridge = this.terminalBridge;
+    this.runtime.multiAgents = this.multiAgents;
+    this.runtime.synthesizer = this.synthesizer;
+
+    // PC control (Windows): a read-only UI Automation probe plus a separate
+    // input sidecar gated by actionConsent. Off until the user enables it.
+    let userDataPath = '';
+    try {
+      userDataPath = require('electron').app.getPath('userData');
+    } catch (_) {
+      userDataPath = '';
+    }
+    this.pcEngine = createPcEngine({
+      userDataPath,
+      modelClient: this.runtime.model,
+      send: (channel, payload) => this.sendToUI(channel, payload),
+      log: (...args) => console.log('[PcEngine]', ...args)
+    });
+    this.runtime.pcEngine = this.pcEngine;
 
     // Initialize Chromium Model Context Protocol (MCP) Server
     this.mcpServer = new MCPServer({
@@ -66,7 +85,7 @@ class ControlPlane {
     console.log(`[Diagnostics] Continuous monitoring initialized (diagnosticLogging=${isDiagEnabled}, level=${store.getSetting('logLevel') || 'structured'})`);
 
     // MCP Server is an OPTIONAL component: do NOT force-launch on every startup.
-    // Only launch if the user explicitly enabled it in the Jarvis GUI or Settings.
+    // Only launch if the user explicitly enabled it in the Adion GUI or Settings.
     const shouldStartMcp = Boolean(store.getSetting('mcpServerEnabled'));
     if (shouldStartMcp) {
       console.log('[ControlPlane] Launching MCP server per saved user configuration...');
@@ -74,7 +93,13 @@ class ControlPlane {
         console.warn('[ControlPlane] MCP server startup notice:', err.message);
       });
     } else {
-      console.log('[ControlPlane] MCP server is in standby (optional component, toggle on in Jarvis GUI or Settings).');
+      console.log('[ControlPlane] MCP server is in standby (optional component, toggle on in Adion GUI or Settings).');
+    }
+
+    // PC control (Windows): the sidecars take a moment to answer a ping, so
+    // this is kicked off only when the user left the toggle on.
+    if (store.getSetting('pcControlEnabled')) {
+      this.pcEngine.start().catch((err) => console.warn('[ControlPlane] PC engine startup notice:', err.message));
     }
 
     // Terminal Bridge: Standalone PC Terminal connector (single toggle in browser)
@@ -85,8 +110,13 @@ class ControlPlane {
         console.warn('[ControlPlane] Terminal bridge startup notice:', err.message);
       });
     } else {
-      console.log('[ControlPlane] Local Terminal Bridge is in standby (single toggle to connect in Jarvis GUI / Copilot).');
+      console.log('[ControlPlane] Local Terminal Bridge is in standby (single toggle to connect in Adion GUI / Copilot).');
     }
+
+    // Gemini Task Mode: Stateful observable execution loop with work panel and takeover
+    const taskModeInit = store.getSetting('taskModeEnabled') !== false;
+    this.runtime.taskModeEnabled = taskModeInit;
+    console.log(`[ControlPlane] Gemini Task Mode initialized: ${taskModeInit ? 'ENABLED' : 'DISABLED'}`);
 
     // Load saved AI Provider configurations and active provider
     try {
@@ -144,12 +174,26 @@ class ControlPlane {
       this.sendToUI('shell:action', data);
     });
 
-    this.runtime.on('jarvis-notification', (data) => {
-      this.sendToUI('jarvis:notification', data);
+    this.runtime.on('adion-notification', (data) => {
+      this.sendToUI('adion:notification', data);
     });
 
     this.runtime.on('terminal-output', (data) => {
       this.sendToUI('agent:terminal-output', data);
+    });
+
+    // Gemini Task Mode Events
+    this.runtime.on('task-mode:update', (data) => {
+      this.sendToUI('task-mode:update', data);
+    });
+    this.runtime.on('task-mode:paused', (data) => {
+      this.sendToUI('task-mode:paused', data);
+    });
+    this.runtime.on('task-mode:resumed', (data) => {
+      this.sendToUI('task-mode:resumed', data);
+    });
+    this.runtime.on('task-mode:completed', (data) => {
+      this.sendToUI('task-mode:completed', data);
     });
 
     if (this.terminalBridge) {
@@ -199,15 +243,15 @@ class ControlPlane {
   registerIPCHandlers() {
     // Direct natural language command from UI input / omnibox
     ipcMain.handle(IPCChannels.AGENT_SEND_COMMAND, async (event, commandText) => {
-      await this.runtime.processCommand(commandText);
+      await this.runtime.processCommand(commandText, 'text');
       return { success: true, state: this.runtime.state };
     });
 
     // Voice stream initiated from microphone HUD
-    ipcMain.on(IPCChannels.AGENT_VOICE_STREAM_START, () => {
-      console.log('[ControlPlane] 🎙️ Received voice stream start signal from UI');
+    ipcMain.on(IPCChannels.AGENT_VOICE_STREAM_START, (event, mode) => {
+      console.log(`[ControlPlane] 🎙️ Received voice stream start signal from UI (mode: ${mode || 'talk'})`);
       this._voiceDataReceived = false;
-      this.runtime.startAudioSession();
+      this.runtime.startAudioSession(mode);
     });
 
     // Voice stream audio chunks transmitted from microphone
@@ -243,6 +287,15 @@ class ControlPlane {
     ipcMain.handle('agent:set-page-sharing', (event, isShared) => {
       this.runtime.isPageShared = Boolean(isShared);
       return { success: true, isShared: this.runtime.isPageShared };
+    });
+
+    ipcMain.handle('agent:set-shared-tabs', (event, tabIds) => {
+      this.runtime.sharedTabIds = Array.isArray(tabIds) ? tabIds : null;
+      return { success: true, sharedTabIds: this.runtime.sharedTabIds };
+    });
+
+    ipcMain.handle('agent:get-shared-tabs', () => {
+      return { sharedTabIds: this.runtime.sharedTabIds || null };
     });
 
     // Query Context Engine Stats
@@ -313,10 +366,10 @@ class ControlPlane {
       store.setSetting('mcpServerEnabled', willEnable);
 
       if (willEnable && !this.mcpServer.isRunning) {
-        console.log('[ControlPlane] Starting MCP Server on demand via Jarvis GUI...');
+        console.log('[ControlPlane] Starting MCP Server on demand via Adion GUI...');
         await this.mcpServer.start();
       } else if (!willEnable && this.mcpServer.isRunning) {
-        console.log('[ControlPlane] Stopping MCP Server via Jarvis GUI...');
+        console.log('[ControlPlane] Stopping MCP Server via Adion GUI...');
         await this.mcpServer.stop();
       }
 
@@ -371,8 +424,34 @@ class ControlPlane {
     });
 
     ipcMain.handle('session:send-chat', async (event, message) => {
-      await this.runtime.processCommand(message, 'jarvis-chat');
+      await this.runtime.processCommand(message, 'adion-chat');
       return this.runtime.sessionManager.getHistory();
+    });
+
+    // Gemini Task Mode (Stateful Observable Execution Loop, Work Panel, & Takeover)
+    ipcMain.handle('task-mode:get-status', () => {
+      return {
+        enabled: Boolean(this.runtime.taskModeEnabled),
+        activeTask: this.runtime.currentTask || null
+      };
+    });
+
+    ipcMain.handle('task-mode:toggle', (event, requestedState) => {
+      const willEnable = requestedState !== undefined ? Boolean(requestedState) : !this.runtime.taskModeEnabled;
+      store.setSetting('taskModeEnabled', willEnable);
+      this.runtime.taskModeEnabled = willEnable;
+      console.log(`[ControlPlane] ⚡ Gemini Task Mode toggled: ${willEnable ? 'ENABLED' : 'DISABLED'}`);
+      const status = {
+        enabled: willEnable,
+        activeTask: this.runtime.currentTask || null
+      };
+      this.sendToUI('task-mode:status-change', status);
+      return status;
+    });
+
+    ipcMain.handle('task-mode:user-action', async (event, { action, data }) => {
+      console.log(`[ControlPlane] ⚡ Task Mode user action: "${action}"`, data);
+      return this.runtime.handleTaskModeUserAction(action, data);
     });
 
     // 3rd-Party Model Integration & Provider Management
@@ -421,6 +500,19 @@ class ControlPlane {
       return this.terminalBridge ? this.terminalBridge.getStatus() : { connected: false };
     });
 
+    // Jarvis Session IPC Handlers
+    ipcMain.handle('jarvis:get-session-info', () => {
+      return this.runtime.jarvisSession ? this.runtime.jarvisSession.getSessionInfo() : { error: 'Jarvis session not initialized' };
+    });
+
+    ipcMain.handle('jarvis:clear-session', () => {
+      if (this.runtime.jarvisSession) {
+        this.runtime.jarvisSession.clearSession();
+        return { success: true, message: 'Jarvis session cleared' };
+      }
+      return { success: false, message: 'Jarvis session not initialized' };
+    });
+
     ipcMain.handle('terminal:toggle', async (event, enable) => {
       if (!this.terminalBridge) return { connected: false };
       const status = await this.terminalBridge.toggle(enable);
@@ -436,6 +528,25 @@ class ControlPlane {
       }
       return await this.terminalBridge.executeCommand(command, { cwd, timeoutMs });
     });
+
+    ipcMain.handle('pc:get-status', () => (this.pcEngine ? this.pcEngine.status() : { available: false }));
+
+    ipcMain.handle('pc:toggle', async (event, enable) => {
+      if (!this.pcEngine) return { available: false };
+      if (enable) await this.pcEngine.start();
+      else this.pcEngine.stop();
+      const status = this.pcEngine.status();
+      store.setSetting('pcControlEnabled', Boolean(enable));
+      this.sendToUI('pc:status-change', status);
+      return status;
+    });
+
+    ipcMain.handle('pc:run', async (event, goal) => {
+      if (!this.pcEngine) return { outcome: 'error', report: 'PC control is not available' };
+      return this.pcEngine.run(goal);
+    });
+
+    ipcMain.handle('pc:stop', () => (this.pcEngine ? this.pcEngine.stopRun('asked') : false));
 
     ipcMain.handle('terminal:get-history', () => {
       return this.terminalBridge ? this.terminalBridge.history : [];

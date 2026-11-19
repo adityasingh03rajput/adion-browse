@@ -8,7 +8,7 @@ const { EventEmitter } = require('events');
  * - Initializes an empty JSON log file on application startup, clearing previous run history.
  * - Records every user prompt (preserving exact phrasing and fidelity) and model response.
  * - Persists structured session logs to .data/session_interactions.json.
- * - Powers the Jarvis UI session memory review and new session resets.
+ * - Powers the Adion UI session memory review and new session resets.
  */
 class SessionManager extends EventEmitter {
   constructor(dataDir = null) {

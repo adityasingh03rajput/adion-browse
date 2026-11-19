@@ -1,0 +1,660 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --ground: #07090e;
+        --surface: #0e131d;
+        --card-bg: rgba(17, 24, 39, 0.75);
+        --border-glass: rgba(255, 255, 255, 0.08);
+        --border-cyan: rgba(0, 242, 254, 0.35);
+        --ink: #f0f6fc;
+        --ink-muted: #8b949e;
+        --neon-cyan: #00f2fe;
+        --electric-blue: #3b82f6;
+        --laser-orange: #ff5500;
+        --mint-emerald: #10b981;
+        --violet-thinking: #8b5cf6;
+        --danger-red: #ef4444;
+        --font-mono: "JetBrains Mono", monospace;
+        --font-sans: Inter, sans-serif;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html, body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--ground);
+        font-family: var(--font-sans);
+        color: var(--ink);
+      }
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: radial-gradient(circle at 50% 50%, #0d131f 0%, #07090e 100%);
+      }
+      .scene {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 1920px;
+        height: 1080px;
+        pointer-events: none;
+      }
+      .scene-content {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+
+      /* Grid Background Accent */
+      .cyber-grid {
+        position: absolute;
+        inset: 0;
+        background-image: 
+          linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+        background-size: 80px 80px;
+        pointer-events: none;
+      }
+
+      /* Global Header Overlay Bar (Omnibox Mock) */
+      .browser-bar {
+        position: absolute;
+        top: 40px;
+        left: 120px;
+        right: 120px;
+        height: 72px;
+        background: rgba(14, 19, 29, 0.85);
+        backdrop-filter: blur(16px);
+        border: 1px solid var(--border-glass);
+        border-radius: 16px;
+        display: flex;
+        align-items: center;
+        padding: 0 24px;
+        gap: 20px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+        z-index: 50;
+      }
+      .nav-dots {
+        display: flex;
+        gap: 8px;
+      }
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+      }
+      .dot-red { background: #ff5f56; }
+      .dot-yellow { background: #ffbd2e; }
+      .dot-green { background: #27c93f; }
+      
+      .omnibox {
+        flex: 1;
+        height: 44px;
+        background: rgba(7, 9, 14, 0.7);
+        border: 1px solid var(--border-glass);
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        gap: 12px;
+        font-family: var(--font-mono);
+        font-size: 15px;
+        color: var(--ink-muted);
+      }
+      .omnibox-url {
+        color: var(--ink);
+      }
+      .voice-pill {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 14px;
+        background: rgba(0, 242, 254, 0.12);
+        border: 1px solid var(--neon-cyan);
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        color: var(--neon-cyan);
+      }
+      .live-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--neon-cyan);
+        box-shadow: 0 0 12px var(--neon-cyan);
+      }
+      .shield-badge-btn {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        background: rgba(255, 85, 0, 0.12);
+        border: 1px solid var(--laser-orange);
+        border-radius: 8px;
+        color: var(--laser-orange);
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      /* Typography Helpers */
+      .hero-title {
+        font-size: 64px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        line-height: 1.1;
+        text-align: center;
+        color: var(--ink);
+      }
+      .hero-title span.cyan {
+        color: var(--neon-cyan);
+        text-shadow: 0 0 30px rgba(0, 242, 254, 0.4);
+      }
+      .hero-title span.orange {
+        color: var(--laser-orange);
+        text-shadow: 0 0 30px rgba(255, 85, 0, 0.4);
+      }
+      .hero-title span.emerald {
+        color: var(--mint-emerald);
+        text-shadow: 0 0 30px rgba(16, 185, 129, 0.4);
+      }
+      .sub-title {
+        font-size: 24px;
+        color: var(--ink-muted);
+        text-align: center;
+        margin-top: 18px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        font-family: var(--font-mono);
+      }
+
+      /* Scene 1: Tab Overload & Errors */
+      .tabs-overflow {
+        display: flex;
+        gap: 6px;
+        width: 1400px;
+        overflow: hidden;
+        margin-top: 20px;
+      }
+      .fake-tab {
+        flex: 1;
+        min-width: 90px;
+        height: 38px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--border-glass);
+        border-radius: 8px 8px 0 0;
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        font-size: 12px;
+        color: #64748b;
+        white-space: nowrap;
+      }
+      .alert-card {
+        background: rgba(239, 68, 68, 0.12);
+        border: 1px solid var(--danger-red);
+        border-radius: 12px;
+        padding: 16px 24px;
+        color: #fca5a5;
+        font-family: var(--font-mono);
+        font-size: 16px;
+        box-shadow: 0 10px 30px rgba(239, 68, 68, 0.2);
+        margin-top: 24px;
+      }
+
+      /* Scene 2: 3D Holographic Sphere Widget */
+      .sphere-stage {
+        position: relative;
+        width: 320px;
+        height: 320px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 24px;
+      }
+      .sphere-core {
+        width: 140px;
+        height: 140px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 35% 35%, #00f2fe 0%, #3b82f6 50%, #07090e 100%);
+        box-shadow: 0 0 80px rgba(0, 242, 254, 0.6), inset 0 0 30px rgba(255, 255, 255, 0.5);
+      }
+      .sphere-ring {
+        position: absolute;
+        border-radius: 50%;
+        border: 2px solid rgba(0, 242, 254, 0.5);
+        box-shadow: 0 0 20px rgba(0, 242, 254, 0.3);
+      }
+      .ring-1 {
+        width: 260px;
+        height: 260px;
+      }
+      .ring-2 {
+        width: 310px;
+        height: 310px;
+        border-style: dashed;
+        border-color: rgba(139, 92, 246, 0.5);
+      }
+      .exec-tree {
+        display: flex;
+        gap: 16px;
+        margin-top: 32px;
+      }
+      .tree-node {
+        background: rgba(14, 19, 29, 0.9);
+        border: 1px solid var(--border-cyan);
+        padding: 12px 20px;
+        border-radius: 10px;
+        font-family: var(--font-mono);
+        font-size: 14px;
+        color: var(--neon-cyan);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      /* Scene 3: Hardware Action & Verification */
+      .dom-card {
+        width: 1000px;
+        background: var(--surface);
+        border: 1px solid var(--border-glass);
+        border-radius: 16px;
+        padding: 32px;
+        box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+      }
+      .dom-input-row {
+        display: flex;
+        gap: 16px;
+        margin-top: 20px;
+      }
+      .dom-input {
+        flex: 1;
+        height: 52px;
+        background: #07090e;
+        border: 1px solid var(--border-cyan);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        padding: 0 20px;
+        font-family: var(--font-mono);
+        font-size: 16px;
+        color: var(--neon-cyan);
+      }
+      .dom-button {
+        height: 52px;
+        padding: 0 28px;
+        background: linear-gradient(135deg, #00f2fe, #3b82f6);
+        border: none;
+        border-radius: 8px;
+        color: #07090e;
+        font-weight: 700;
+        font-size: 15px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .verified-stamp {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 18px;
+        background: rgba(16, 185, 129, 0.15);
+        border: 1px solid var(--mint-emerald);
+        border-radius: 20px;
+        color: var(--mint-emerald);
+        font-family: var(--font-mono);
+        font-size: 14px;
+        font-weight: 600;
+        margin-top: 24px;
+      }
+
+      /* Scene 4: Shields & Counter */
+      .shield-display {
+        display: flex;
+        align-items: center;
+        gap: 40px;
+        background: rgba(14, 19, 29, 0.9);
+        border: 1px solid rgba(255, 85, 0, 0.4);
+        padding: 40px 60px;
+        border-radius: 24px;
+        box-shadow: 0 0 60px rgba(255, 85, 0, 0.15);
+      }
+      .shield-stat-number {
+        font-size: 96px;
+        font-weight: 800;
+        color: var(--laser-orange);
+        line-height: 1;
+        font-family: var(--font-mono);
+        text-shadow: 0 0 40px rgba(255, 85, 0, 0.5);
+      }
+      .shield-stat-label {
+        font-size: 20px;
+        color: var(--ink-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-top: 8px;
+      }
+
+      /* Scene 5: Task Mode & Terminal */
+      .copilot-panel {
+        width: 900px;
+        background: var(--surface);
+        border: 1px solid var(--border-glass);
+        border-radius: 16px;
+        overflow: hidden;
+      }
+      .copilot-header {
+        background: rgba(255, 255, 255, 0.03);
+        padding: 16px 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--border-glass);
+      }
+      .terminal-box {
+        background: #05070a;
+        padding: 24px;
+        font-family: var(--font-mono);
+        font-size: 15px;
+        color: #a7f3d0;
+        line-height: 1.6;
+      }
+      .checkpoint-btn-row {
+        display: flex;
+        gap: 16px;
+        margin-top: 16px;
+      }
+      .btn-pill {
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        border: 1px solid var(--border-glass);
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--ink);
+      }
+      .btn-pill.primary {
+        background: rgba(0, 242, 254, 0.15);
+        border-color: var(--neon-cyan);
+        color: var(--neon-cyan);
+      }
+
+      /* Scene 6: Finale Typography */
+      .brand-title {
+        font-size: 92px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        color: var(--ink);
+        text-transform: uppercase;
+        margin-bottom: 12px;
+      }
+      .brand-tagline {
+        font-size: 38px;
+        font-weight: 300;
+        letter-spacing: 0.04em;
+        color: var(--neon-cyan);
+        text-shadow: 0 0 30px rgba(0, 242, 254, 0.5);
+      }
+      .brand-meta {
+        font-size: 16px;
+        font-family: var(--font-mono);
+        letter-spacing: 0.12em;
+        color: var(--ink-muted);
+        text-transform: uppercase;
+        margin-top: 36px;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="90"
+      data-width="1920"
+      data-height="1080"
+    >
+      <div class="cyber-grid"></div>
+
+      <!-- Persistent UI Header (Omnibox Mock) -->
+      <div class="browser-bar" data-hold>
+        <div class="nav-dots">
+          <div class="dot dot-red"></div>
+          <div class="dot dot-yellow"></div>
+          <div class="dot dot-green"></div>
+        </div>
+        <div class="omnibox">
+          <span style="color:#38bdf8;">https://</span>
+          <span class="omnibox-url" id="omniboxUrl">adion.browse/autonomous</span>
+        </div>
+        <div class="voice-pill" id="headerVoicePill">
+          <span class="live-dot"></span>
+          <span>LISTENING</span>
+        </div>
+        <div class="shield-badge-btn" id="headerShieldBtn">
+          <span>SHIELDS UP</span>
+          <span style="background:var(--laser-orange); color:#fff; border-radius:10px; padding:2px 6px; font-size:11px;">48</span>
+        </div>
+      </div>
+
+      <!-- ================= SCENE 1 (00:00 - 00:15): THE PROBLEM ================= -->
+      <div id="scene1" class="clip scene" data-start="0" data-duration="15" data-track-index="0" data-hold>
+        <div class="scene-content" id="s1-content">
+          <h1 class="hero-title" id="s1-title">
+            THE WEB IS BROKEN BY<br />
+            <span class="orange">TRACKERS, BLOAT & FRAGILE BOTS</span>
+          </h1>
+          <p class="sub-title" id="s1-sub">OVER 80 TABS • SYNTHETIC DOM ERRORS • INVASIVE SCRIPTS</p>
+
+          <div class="tabs-overflow" id="s1-tabs">
+            <div class="fake-tab" id="s1-tab1">Tab 1 (Video)</div>
+            <div class="fake-tab" id="s1-tab2">Tab 2 (Articles)</div>
+            <div class="fake-tab" id="s1-tab3">Tab 3 (Documentation)</div>
+            <div class="fake-tab" id="s1-tab4">Tab 4 (Analytics)</div>
+            <div class="fake-tab" id="s1-tab5">Tab 5 (Dashboard)</div>
+            <div class="fake-tab" id="s1-tab6">Tab 6 (Console)</div>
+            <div class="fake-tab" id="s1-tab7">Tab 7 (Store)</div>
+            <div class="fake-tab" id="s1-tab8">Tab 8 (Social)</div>
+          </div>
+
+          <div class="alert-card" id="s1-alert">
+            ⚠ DOMException: Element is not interactable in shadow root. Action timed out.
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= SCENE 2 (00:15 - 00:32): VOICE & 3D SPHERE ================= -->
+      <div id="scene2" class="clip scene" data-start="15" data-duration="17" data-track-index="0" data-hold>
+        <div class="scene-content" id="s2-content">
+          <div class="sphere-stage" id="s2-sphere">
+            <div class="sphere-ring ring-1" id="s2-ring1"></div>
+            <div class="sphere-ring ring-2" id="s2-ring2"></div>
+            <div class="sphere-core" id="s2-core"></div>
+          </div>
+
+          <h2 class="hero-title" id="s2-title">
+            CONTINUOUS VOICE INTENT<br />
+            <span class="cyan">HARDWARE VAD + GROQ WHISPER</span>
+          </h2>
+          <p class="sub-title" id="s2-sub">Full Semantic Understanding • Zero Fragile Shortcuts</p>
+
+          <div class="exec-tree" id="s2-tree">
+            <div class="tree-node" id="s2-node1">1. NAVIGATE</div>
+            <div class="tree-node" id="s2-node2">2. SCROLL_INTO_VIEW</div>
+            <div class="tree-node" id="s2-node3">3. EXTRACT_DATA</div>
+            <div class="tree-node" id="s2-node4">4. COMPOSE_SUMMARY</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= SCENE 3 (00:32 - 00:52): CHROMIUM HARDWARE ================= -->
+      <div id="scene3" class="clip scene" data-start="32" data-duration="20" data-track-index="0" data-hold>
+        <div class="scene-content" id="s3-content">
+          <h2 class="hero-title" id="s3-title">
+            REAL CHROMIUM HARDWARE DISPATCH<br />
+            <span class="emerald">NO SIMULATED JAVASCRIPT HACKS</span>
+          </h2>
+          <p class="sub-title" id="s3-sub">CDP Mouse Clicks • Lexical Rich-Text • Visual Sampling Verification</p>
+
+          <div class="dom-card" id="s3-card">
+            <div style="font-size:14px; font-family:var(--font-mono); color:var(--ink-muted);">
+              TARGET: document.querySelector('#flight-booking-search')
+            </div>
+            <div class="dom-input-row">
+              <div class="dom-input" id="s3-input">Typing: "Quarterly AI benchmarks summary"...</div>
+              <button class="dom-button" id="s3-btn">SUBMIT QUERY</button>
+            </div>
+            <div class="verified-stamp" id="s3-stamp">
+              ✓ CDP DISPATCH CONFIRMED • CANVAS HASH VERIFIED
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= SCENE 4 (00:52 - 01:08): ADION SHIELDS ================= -->
+      <div id="scene4" class="clip scene" data-start="52" data-duration="16" data-track-index="0" data-hold>
+        <div class="scene-content" id="s4-content">
+          <div class="shield-display" id="s4-display">
+            <div>
+              <div class="shield-stat-number" id="s4-counter">48</div>
+              <div class="shield-stat-label">Trackers & Ads Annihilated</div>
+            </div>
+            <div style="width:1px; height:120px; background:var(--border-glass);"></div>
+            <div>
+              <h3 style="font-size:32px; color:var(--laser-orange); margin-bottom:8px;">ADION SHIELDS</h3>
+              <p style="color:var(--ink-muted); font-size:16px; max-width:400px; line-height:1.5;">
+                Network-level heuristic blocker. Enforcing HTTPS upgrades and zero cloud telemetry.
+              </p>
+            </div>
+          </div>
+
+          <p class="sub-title" id="s4-sub" style="margin-top:32px;">
+            100% On-Device Session Sovereignty • No Data Harvesting
+          </p>
+        </div>
+      </div>
+
+      <!-- ================= SCENE 5 (01:08 - 01:20): TASK MODE & TERMINAL ================= -->
+      <div id="scene5" class="clip scene" data-start="68" data-duration="12" data-track-index="0" data-hold>
+        <div class="scene-content" id="s5-content">
+          <h2 class="hero-title" id="s5-title" style="margin-bottom:24px;">
+            GEMINI TASK MODE & LOCAL BRIDGE
+          </h2>
+
+          <div class="copilot-panel" id="s5-panel">
+            <div class="copilot-header">
+              <span style="font-family:var(--font-mono); font-size:14px; color:var(--neon-cyan);">⚡ TASK WORK PANEL</span>
+              <span style="font-size:13px; color:var(--mint-emerald);">EXECUTING STEP 3/4</span>
+            </div>
+            <div class="terminal-box" id="s5-term">
+              $ adion-bridge --port 9225 --mcp 9224<br />
+              [Bridge] Connected to local PC terminal runtime.<br />
+              [MCP] Semantic DOM exported with 99.4% token reduction.<br />
+              [Task] Ready for execution or manual takeover.
+            </div>
+          </div>
+
+          <div class="checkpoint-btn-row" id="s5-btns">
+            <div class="btn-pill primary" id="s5-btn-approve">✓ APPROVE & CONTINUE</div>
+            <div class="btn-pill" id="s5-btn-takeover">🖐️ TAKE OVER BROWSER</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= SCENE 6 (01:20 - 01:30): FINALE ================= -->
+      <div id="scene6" class="clip scene" data-start="80" data-duration="10" data-track-index="0" data-hold>
+        <div class="scene-content" id="s6-content">
+          <div class="sphere-stage" id="s6-sphere" style="margin-bottom: 28px;">
+            <div class="sphere-ring ring-1" id="s6-ring1"></div>
+            <div class="sphere-ring ring-2" id="s6-ring2"></div>
+            <div class="sphere-core" id="s6-core"></div>
+          </div>
+
+          <h1 class="brand-title" id="s6-brand">ADION BROWSE</h1>
+          <p class="brand-tagline" id="s6-tagline">"May I help you? Please."</p>
+          <p class="brand-meta" id="s6-meta">Open Source • Privacy Sovereign • Chromium Core</p>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const tl = gsap.timeline({ paused: true });
+
+      // Continuous subtle ambient drift across the entire 90s
+      tl.fromTo(".cyber-grid", { y: 0 }, { y: 80, duration: 90, ease: "none" }, 0);
+
+      // ================= SCENE 1 TIMELINE (0 to 15s) =================
+      tl.fromTo("#s1-title", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 1.2, ease: "power3.out" }, 0.5);
+      tl.fromTo("#s1-sub", { opacity: 0 }, { opacity: 1, duration: 1, ease: "power2.out" }, 1.5);
+      tl.fromTo("#s1-tabs", { opacity: 0, scale: 0.95 }, { opacity: 1, scale: 1, duration: 1.2, ease: "power2.out" }, 2.5);
+      tl.to("#s1-tabs", { x: -80, duration: 5, ease: "power1.inOut" }, 4.0);
+      tl.fromTo("#s1-alert", { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.8, ease: "back.out(1.5)" }, 6.5);
+      tl.to("#s1-alert", { scale: 1.03, duration: 2, yoyo: true, repeat: 2, ease: "sine.inOut" }, 7.5);
+      tl.to("#s1-content", { opacity: 0, scale: 1.05, filter: "blur(8px)", duration: 1.5, ease: "power2.in" }, 13.5);
+
+      // ================= SCENE 2 TIMELINE (15 to 32s) =================
+      tl.fromTo("#s2-sphere", { opacity: 0, scale: 0.7 }, { opacity: 1, scale: 1, duration: 1.5, ease: "back.out(1.4)" }, 15.2);
+      tl.fromTo("#s2-ring1", { rotation: 0 }, { rotation: 360, duration: 17, ease: "none" }, 15);
+      tl.fromTo("#s2-ring2", { rotation: 0 }, { rotation: -360, duration: 17, ease: "none" }, 15);
+      tl.fromTo("#s2-core", { scale: 1 }, { scale: 1.15, duration: 1.5, yoyo: true, repeat: 8, ease: "sine.inOut" }, 15);
+      tl.fromTo("#s2-title", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 1.2, ease: "power3.out" }, 16.5);
+      tl.fromTo("#s2-sub", { opacity: 0 }, { opacity: 1, duration: 1, ease: "power2.out" }, 17.5);
+      tl.fromTo("#s2-node1", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6, ease: "power2.out" }, 19.0);
+      tl.fromTo("#s2-node2", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6, ease: "power2.out" }, 21.0);
+      tl.fromTo("#s2-node3", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6, ease: "power2.out" }, 23.0);
+      tl.fromTo("#s2-node4", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6, ease: "power2.out" }, 25.0);
+      tl.to("#s2-content", { opacity: 0, y: -40, duration: 1.2, ease: "power2.in" }, 30.5);
+
+      // ================= SCENE 3 TIMELINE (32 to 52s) =================
+      tl.fromTo("#s3-title", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 1.2, ease: "power3.out" }, 32.5);
+      tl.fromTo("#s3-sub", { opacity: 0 }, { opacity: 1, duration: 1, ease: "power2.out" }, 33.5);
+      tl.fromTo("#s3-card", { opacity: 0, scale: 0.92, y: 40 }, { opacity: 1, scale: 1, y: 0, duration: 1.5, ease: "power3.out" }, 35);
+      tl.fromTo("#s3-input", { opacity: 0.4 }, { opacity: 1, duration: 2, ease: "power1.inOut" }, 37);
+      tl.fromTo("#s3-btn", { scale: 1 }, { scale: 0.94, duration: 0.3, yoyo: true, repeat: 1, ease: "power1.inOut" }, 39.5);
+      tl.fromTo("#s3-stamp", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.8, ease: "back.out(1.8)" }, 40.5);
+      tl.to("#s3-card", { y: -15, duration: 4, yoyo: true, repeat: 1, ease: "sine.inOut" }, 42.5);
+      tl.to("#s3-content", { opacity: 0, scale: 0.95, duration: 1.2, ease: "power2.in" }, 50.5);
+
+      // ================= SCENE 4 TIMELINE (52 to 68s) =================
+      tl.fromTo("#s4-display", { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 1.4, ease: "power3.out" }, 52.5);
+      tl.fromTo("#s4-counter", { scale: 0.8 }, { scale: 1.1, duration: 1, yoyo: true, repeat: 3, ease: "sine.inOut" }, 54);
+      tl.fromTo("#s4-sub", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 1, ease: "power2.out" }, 56);
+      tl.to("#s4-display", { y: -10, duration: 4, yoyo: true, repeat: 1, ease: "sine.inOut" }, 58);
+      tl.to("#s4-content", { opacity: 0, y: -30, duration: 1.2, ease: "power2.in" }, 66.5);
+
+      // ================= SCENE 5 TIMELINE (68 to 80s) =================
+      tl.fromTo("#s5-title", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 1.2, ease: "power3.out" }, 68.5);
+      tl.fromTo("#s5-panel", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 1.2, ease: "power3.out" }, 69.5);
+      tl.fromTo("#s5-btns", { opacity: 0, scale: 0.95 }, { opacity: 1, scale: 1, duration: 0.8, ease: "power2.out" }, 72);
+      tl.to("#s5-btn-approve", { scale: 1.05, duration: 1, yoyo: true, repeat: 2, ease: "sine.inOut" }, 73.5);
+      tl.to("#s5-content", { opacity: 0, scale: 0.95, duration: 1.2, ease: "power2.in" }, 78.5);
+
+      // ================= SCENE 6 TIMELINE (80 to 90s) =================
+      tl.fromTo("#s6-sphere", { opacity: 0, scale: 0.5 }, { opacity: 1, scale: 1, duration: 1.8, ease: "back.out(1.5)" }, 80.5);
+      tl.fromTo("#s6-ring1", { rotation: 0 }, { rotation: 360, duration: 10, ease: "none" }, 80);
+      tl.fromTo("#s6-ring2", { rotation: 0 }, { rotation: -360, duration: 10, ease: "none" }, 80);
+      tl.fromTo("#s6-brand", { opacity: 0, scale: 0.85 }, { opacity: 1, scale: 1, duration: 1.5, ease: "power3.out" }, 82);
+      tl.fromTo("#s6-tagline", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 1.2, ease: "power3.out" }, 84);
+      tl.fromTo("#s6-meta", { opacity: 0 }, { opacity: 1, duration: 1, ease: "power2.out" }, 85.5);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

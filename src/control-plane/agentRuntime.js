@@ -4,7 +4,6 @@ const fs = require('fs');
 const { AgentState, ActionType } = require('./protocol');
 const STTEngine = require('./sttEngine');
 const ModelClient = require('./modelClient');
-const ModelRouter = require('./modelRouter');
 const SessionManager = require('./sessionManager');
 const { buildDOMGroundingScript, detectSemanticCluster } = require('./universalGrounder');
 const { scoreTokenOverlap } = require('./tokenMatch');
@@ -14,6 +13,10 @@ const { scoreTokenOverlap } = require('./tokenMatch');
  * Decoupled execution engine that interprets natural language and speech intents,
  * grounds them against the DOM/CDP pipeline, and dispatches actions to Chromium.
  */
+const { evaluateAction } = require('./actionConsent');
+const { createSettleWatcher } = require('./settleWatcher');
+const JarvisSession = require('./jarvisSession');
+
 class AgentRuntime extends EventEmitter {
   constructor(tabManager, cdpBridge, contextEngine, visionGrounder, securityVault, sessionManager = null, terminalBridge = null) {
     super();
@@ -23,22 +26,29 @@ class AgentRuntime extends EventEmitter {
     this.vision = visionGrounder;
     this.vault = securityVault;
     this.sessionManager = sessionManager || new SessionManager();
+    this.jarvisSession = new JarvisSession();
     this.terminalBridge = terminalBridge;
     this.stt = new STTEngine();
     this.model = new ModelClient();
-    this.router = new ModelRouter();
     this.state = AgentState.IDLE;
     this.currentTask = null;
+    this.taskModeEnabled = true;
+    this.taskPauseResolver = null;
     this.actionHistory = [];
     this.continuousVoice = false;
+    this.voiceRequiresWakeWord = false;
+    this.wakeArmedUntil = 0;
+    this.persistentGoal = false;
+    this.goalRunId = 0;
     this.lastDOMSelector = null;
     this.lastDOMAction = null;
     this.lastReferencedFile = null;
     this.isPageShared = true; // Chrome Gemini-style active page context sharing
+    this.sharedTabIds = null; // null = all open tabs by default; Array<id> = user-selected tabs
     this.verboseAudioLogging = false; // Filtered to suppress repetitive audio frame status spam
     this.maxGoalIterations = 15; // Autonomous Sense-Plan-Act-Verify re-planning goal loop depth
 
-    // Audio stream session state & VAD tracking
+    // Audio stream session state & VAD tracking (inspired by nus-companion)
     this.audioSession = {
       active: false,
       chunks: [],
@@ -51,8 +61,35 @@ class AgentRuntime extends EventEmitter {
       isSegmenting: false,
       noiseFloor: 0.003,
       pendingSpeechFrames: 0,
+      strayQuietFrames: 0,
+      // RMS-based VAD thresholds (inspired by nus-companion)
+      speechRms: 30,       // Normalized threshold (0-100 scale, 30 = moderate sensitivity)
+      pauseMs: 450,          // Quiet duration to end segment
+      minSpeechMs: 350,      // Minimum speech duration
+      preRollMs: 200,        // Pre-roll buffer before speech
+      preRollBuffer: []      // Buffer to capture speech onset
+    };
+    // Conversation mode state tracking (inspired by nus-companion)
+    this.convoState = {
+      heldText: '',        // Buffer for mid-phrase text joining
+      heldTimer: null,      // Timer for mid-phrase timeout
+      lastUtteranceTime: 0, // Timestamp of last utterance
+      utteranceCount: 0     // Count of utterances in current session
+    };
+    // Pending audio capture: Gemini-style — mic stays hot while a command is
+    // being processed. Speech detected during processing is buffered and
+    // queued as the next utterance instead of being dropped.
+    this.pendingAudio = {
+      chunks: [],
+      totalBytes: 0,
+      chunkCount: 0,
+      speechDetected: false,
+      pendingSpeechFrames: 0,
+      speechFramesCount: 0,
+      consecutiveSilenceFrames: 0,
       strayQuietFrames: 0
     };
+    this.pendingQueue = []; // [{ pcm: Buffer, capturedAt: number }] — Gemini-style turn queue
   }
 
   get modelClient() {
@@ -71,8 +108,24 @@ class AgentRuntime extends EventEmitter {
   /**
    * Start a streaming audio session (Continuous Hands-Free Voice Mode)
    */
-  startAudioSession() {
-    this.continuousVoice = true;
+  /**
+   * Start a streaming audio session.
+   * mode 'talk' (default): explicit push-to-talk — user tapped the mic, so every
+   *   utterance is a command; the session ends after each command.
+   * mode 'wake': hands-free always-listening — Adion only responds to
+   *   utterances addressed with the "Adion" wake word.
+   * mode 'convo': ChatGPT/Gemini-style conversation — continuous listening,
+   *   no wake word required, mic re-arms automatically after each response.
+   * mode 'jarvis': Jarvis mode — persistent AI assistant with 200k context window,
+   *   remembers everything across the entire session.
+   */
+  startAudioSession(mode = 'talk') {
+    this.isWakeMode = mode === 'wake';
+    this.isConvoMode = mode === 'convo';
+    this.isJarvisMode = mode === 'jarvis';
+    this.voiceRequiresWakeWord = this.isWakeMode;
+    this.continuousVoice = this.isWakeMode || this.isConvoMode || this.isJarvisMode;
+    this.wakeArmedUntil = 0;
     this.audioSession = {
       active: true,
       chunks: [],
@@ -86,11 +139,25 @@ class AgentRuntime extends EventEmitter {
       isSegmenting: false,
       noiseFloor: 0.003,
       pendingSpeechFrames: 0,
-      strayQuietFrames: 0
+      strayQuietFrames: 0,
+      // RMS-based VAD thresholds (inspired by nus-companion)
+      speechRms: 30,       // Normalized threshold (0-100 scale, 30 = moderate sensitivity)
+      pauseMs: 450,          // Quiet duration to end segment
+      minSpeechMs: 350,      // Minimum speech duration
+      preRollMs: 200,        // Pre-roll buffer before speech
+      preRollBuffer: []      // Buffer to capture speech onset
     };
+    // Reset pending capture for fresh session
+    this.pendingAudio = {
+      chunks: [], totalBytes: 0, chunkCount: 0,
+      speechDetected: false, pendingSpeechFrames: 0,
+      speechFramesCount: 0, consecutiveSilenceFrames: 0, strayQuietFrames: 0
+    };
+    this.pendingQueue = [];
     this.setState(AgentState.LISTENING);
-    console.log('[AgentRuntime Audio] Continuous voice stream session initialized');
-    this.emit('feedback', { message: 'Microphone stream open - capturing audio frames...', level: 'info' });
+    const modeDesc = this.isJarvisMode ? 'Jarvis mode (200k context)' : (this.isConvoMode ? 'Conversation mode (ChatGPT-style)' : (this.isWakeMode ? 'Wake mode (hands-free)' : 'Push-to-talk'));
+    console.log(`[AgentRuntime Audio] Voice session initialized (${modeDesc})`);
+    this.emit('feedback', { message: `Microphone stream open - ${modeDesc}`, level: 'info' });
   }
 
   /**
@@ -112,11 +179,22 @@ class AgentRuntime extends EventEmitter {
       isSegmenting: false,
       noiseFloor: 0.003,
       pendingSpeechFrames: 0,
-      strayQuietFrames: 0
+      strayQuietFrames: 0,
+      // RMS-based VAD thresholds (inspired by nus-companion)
+      speechRms: 30,       // Normalized threshold (0-100 scale, 30 = moderate sensitivity)
+      pauseMs: 450,          // Quiet duration to end segment
+      minSpeechMs: 350,      // Minimum speech duration
+      preRollMs: 200,        // Pre-roll buffer before speech
+      preRollBuffer: []      // Buffer to capture speech onset
     };
     this.setState(AgentState.LISTENING);
     console.log('[AgentRuntime Audio] Voice session re-armed: ready for next speech command');
-    this.emit('feedback', { message: 'Ready for next voice command... (listening)', level: 'info' });
+    this.emit('feedback', { 
+      message: '👂 Listening... (voice active)', 
+      level: 'info',
+      voiceState: 'LISTENING',
+      prompt: null
+    });
   }
 
   /**
@@ -124,7 +202,15 @@ class AgentRuntime extends EventEmitter {
    * Computes acoustic RMS energy and evaluates Voice Activity Detection (VAD)
    */
   processAudioStreamChunk(audioChunk) {
-    if (!this.audioSession.active || this.audioSession.isSegmenting) return;
+    // Gemini-style: while a command is being processed (session inactive but
+    // continuous voice on), keep capturing speech into the pending buffer so
+    // nothing the user says mid-processing is lost.
+    if (!this.audioSession.active || this.audioSession.isSegmenting) {
+      if (this.continuousVoice && !this.audioSession.isSegmenting) {
+        this.processPendingAudioChunk(audioChunk);
+      }
+      return;
+    }
 
     let buffer;
     if (Buffer.isBuffer(audioChunk)) {
@@ -154,28 +240,30 @@ class AgentRuntime extends EventEmitter {
       const sample = buffer.readInt16LE(i) / 32768.0;
       sumSquares += sample * sample;
     }
+
+    // RMS-based VAD (inspired by nus-companion)
     const rms = sampleCount > 0 ? Math.sqrt(sumSquares / sampleCount) : 0;
     if (rms > this.audioSession.peakEnergy) {
       this.audioSession.peakEnergy = rms;
     }
 
-    // Voice Activity Detection (VAD): adaptive noise floor + hysteresis.
-    // Room noise drifts (fan, AC, mic gain); a fixed 0.012 threshold sits inside
-    // the noise band (silence ~0.002, blips ~0.013) and false-triggers on it.
+    // Convert RMS to 0-100 scale for comparison with speechRms threshold
+    const rmsNormalized = Math.min(100, (rms / 0.3) * 100); // Scale based on typical speech RMS ~0.3
+    const isSpeechActive = rmsNormalized > this.audioSession.speechRms;
+
+    // Pre-roll buffer: capture audio before speech onset (200ms)
     const S = this.audioSession;
-    if (typeof S.noiseFloor !== 'number') S.noiseFloor = 0.003;
-    if (rms < 0.02) {
-      // Slow EMA of the quiet floor; clamp keeps it sane in dead silence.
-      S.noiseFloor = Math.max(0.0008, S.noiseFloor + (rms - S.noiseFloor) * 0.02);
+    if (S.preRollBuffer) {
+      S.preRollBuffer.push(buffer);
+      // Keep only last 200ms worth of audio (approx 3 chunks at 16kHz 16-bit)
+      if (S.preRollBuffer.length > 3) {
+        S.preRollBuffer.shift();
+      }
     }
-    // Attack threshold: absolute floor 0.025 (above noise blips ~0.014, below
-    // real speech ~0.04+) with room-noise scaling, capped so quiet speech survives.
-    const vadThreshold = Math.min(0.04, Math.max(0.025, S.noiseFloor * 6));
-    const isSpeechActive = rms > vadThreshold;
 
     // Log audio frame telemetry to stdout with exact Speech: true / Speech: false from git history
     if (this.audioSession.chunkCount % 5 === 1 || isSpeechActive) {
-      console.log(`[AgentRuntime Audio] Frame #${this.audioSession.chunkCount} | Size: ${buffer.length}B | RMS: ${rms.toFixed(4)} | Speech: ${isSpeechActive}`);
+      console.log(`[AgentRuntime Audio] Frame #${this.audioSession.chunkCount} | Size: ${buffer.length}B | RMS: ${rms.toFixed(4)} | NormRMS: ${rmsNormalized.toFixed(1)} | Speech: ${isSpeechActive}`);
     }
 
     // VAD Auto-Segmentation & Endpointing State Machine
@@ -188,14 +276,24 @@ class AgentRuntime extends EventEmitter {
       S.strayQuietFrames = 0;
       if (!S.speechDetected && S.pendingSpeechFrames >= 2) {
         S.speechDetected = true;
-        console.log(`[AgentRuntime VAD] Voice activity initiated (RMS: ${rms.toFixed(4)})`);
+        // Pre-roll audio is already in chunks (pushed at line 181), so no unshift needed
+        // Clear pre-roll buffer since speech has been detected
+        S.preRollBuffer = [];
+        console.log(`[AgentRuntime VAD] Voice activity initiated (RMS: ${rms.toFixed(4)}, NormRMS: ${rmsNormalized.toFixed(1)})`);
       }
     } else if (this.audioSession.speechDetected && !this.audioSession.isSegmenting) {
       this.audioSession.consecutiveSilenceFrames++;
-      // Natural speech pause: 9 silence frames (~1.15s of post-speech pause)
-      if (this.audioSession.consecutiveSilenceFrames >= 9 && this.audioSession.chunks.length >= 5) {
-        // Discard transient acoustic clicks or breath under 8 speech frames (<100ms of actual voice)
-        if ((this.audioSession.speechFramesCount || 0) < 8) {
+      // Voice-garble fix: endpoint on real milliseconds, not frame counts.
+      // At 16kHz 16-bit mono, 1ms = 32 bytes, so msPerChunk = bytes/32.
+      // (Old code assumed 50ms frames for pause but 128ms frames for
+      // min-speech — both wrong for the real ~85ms renderer chunks.)
+      const msPerChunk = Math.max(20, buffer.length / 32);
+      const silenceMs = this.audioSession.consecutiveSilenceFrames * msPerChunk;
+      const minChunks = Math.max(2, Math.ceil(240 / msPerChunk)); // ~240ms audio minimum
+      if (silenceMs >= (this.audioSession.pauseMs || 450) && this.audioSession.chunks.length >= minChunks) {
+        // Discard transient acoustic clicks or breath under minSpeechMs threshold
+        const speechMs = (this.audioSession.speechFramesCount || 0) * msPerChunk;
+        if (speechMs < (this.audioSession.minSpeechMs || 350)) {
           this.audioSession.speechDetected = false;
           this.audioSession.speechFramesCount = 0;
           this.audioSession.consecutiveSilenceFrames = 0;
@@ -224,6 +322,82 @@ class AgentRuntime extends EventEmitter {
   }
 
   /**
+   * Capture audio while a command is being processed (Gemini-style barge-in queue).
+   * Runs the same RMS VAD; when an utterance completes, stores the PCM so it can
+   * be transcribed and dispatched as the next command once processing finishes.
+   */
+  processPendingAudioChunk(audioChunk) {
+    const P = this.pendingAudio;
+    let buffer;
+    if (Buffer.isBuffer(audioChunk)) {
+      buffer = audioChunk;
+    } else if (audioChunk instanceof ArrayBuffer) {
+      buffer = Buffer.from(audioChunk);
+    } else if (ArrayBuffer.isView(audioChunk)) {
+      buffer = Buffer.from(audioChunk.buffer, audioChunk.byteOffset, audioChunk.byteLength);
+    } else if (typeof audioChunk === 'string') {
+      buffer = Buffer.from(audioChunk, 'base64');
+    } else {
+      return;
+    }
+
+    P.chunks.push(buffer);
+    P.totalBytes += buffer.length;
+    P.chunkCount++;
+
+    // RMS VAD (same thresholds as main session)
+    let sumSquares = 0;
+    const sampleCount = Math.floor(buffer.length / 2);
+    for (let i = 0; i < buffer.length - 1; i += 2) {
+      const sample = buffer.readInt16LE(i) / 32768.0;
+      sumSquares += sample * sample;
+    }
+    const rms = sampleCount > 0 ? Math.sqrt(sumSquares / sampleCount) : 0;
+    const rmsNormalized = Math.min(100, (rms / 0.3) * 100);
+    const speechRms = this.audioSession.speechRms || 30;
+    const isSpeechActive = rmsNormalized > speechRms;
+
+    if (isSpeechActive) {
+      P.pendingSpeechFrames = (P.pendingSpeechFrames || 0) + 1;
+      P.speechFramesCount = (P.speechFramesCount || 0) + 1;
+      P.consecutiveSilenceFrames = 0;
+      P.strayQuietFrames = 0;
+      if (!P.speechDetected && P.pendingSpeechFrames >= 2) {
+        P.speechDetected = true;
+      }
+    } else if (P.speechDetected) {
+      P.consecutiveSilenceFrames++;
+      // Voice-garble fix: same ms-based endpointing as the main buffer.
+      const msPerChunkP = Math.max(20, buffer.length / 32);
+      const minChunksP = Math.max(2, Math.ceil(240 / msPerChunkP));
+      if (P.consecutiveSilenceFrames * msPerChunkP >= (this.audioSession.pauseMs || 450) && P.chunks.length >= minChunksP) {
+        const speechMsP = (P.speechFramesCount || 0) * msPerChunkP;
+        if (speechMsP >= (this.audioSession.minSpeechMs || 350)) {
+          const pcm = Buffer.concat(P.chunks);
+          console.log(`[AgentRuntime Audio] 🎙️ Speech captured during processing (${pcm.length}B) — queued as next command`);
+          this.pendingQueue.push({ pcm, capturedAt: Date.now() });
+          if (this.pendingQueue.length > 5) this.pendingQueue.shift(); // cap queue depth
+        }
+        // Reset pending session for next utterance
+        P.chunks = [];
+        P.totalBytes = 0;
+        P.chunkCount = 0;
+        P.speechDetected = false;
+        P.speechFramesCount = 0;
+        P.consecutiveSilenceFrames = 0;
+        P.pendingSpeechFrames = 0;
+      }
+    } else {
+      P.pendingSpeechFrames = 0;
+      P.strayQuietFrames = (P.strayQuietFrames || 0) + 1;
+      if (P.strayQuietFrames >= 9) {
+        P.speechFramesCount = 0;
+        P.strayQuietFrames = 0;
+      }
+    }
+  }
+
+  /**
    * Automatically segment speech buffer, run STT transcription, and dispatch parsed intent
    */
   async triggerAutoEndpoint() {
@@ -245,7 +419,13 @@ class AgentRuntime extends EventEmitter {
 
       if (transcript && transcript.trim()) {
         this.emit('transcript', { text: transcript });
-        await this.processCommand(transcript);
+        
+        // Conversation/Jarvis mode: mid-phrase joining via shared helper (voice-garble fix #7)
+        if (this.isConvoMode || this.isJarvisMode) {
+          await this.dispatchConvoText(transcript.trim(), 'live');
+        } else {
+          await this.processCommand(transcript);
+        }
       } else {
         this.emit('feedback', { message: 'No clear voice command identified', level: 'warning' });
       }
@@ -253,12 +433,147 @@ class AgentRuntime extends EventEmitter {
       console.error('[AgentRuntime Pipeline] STT Error:', err);
       this.emit('feedback', { message: `STT error: ${err.message}`, level: 'error' });
     } finally {
-      // Hands-free continuous loop: Automatically re-arm microphone session for next command
+      // Hands-free continuous loop (wake mode or convo mode): re-arm for the next command.
+      // Push-to-talk: the user explicitly tapped the mic for ONE command, so
+      // end the session and tell the renderer to close the mic stream.
       if (this.continuousVoice) {
-        this.rearmAudioSession();
+        // Gemini-style: drain queued utterances FIRST while session stays
+        // inactive (speech keeps routing to pendingAudio), then re-arm live mic.
+        while (this.pendingQueue.length > 0 && this.continuousVoice) {
+          const pending = this.pendingQueue.shift();
+          await this.processPendingUtterance(pending.pcm);
+        }
+        if (this.continuousVoice) {
+          this.rearmAudioSession();
+        }
       } else {
         this.setState(AgentState.IDLE);
+        this.emit('shell-action', { action: 'STOP_VOICE' });
       }
+      
+      // Clear mid-phrase buffer if session ended
+      if (!this.continuousVoice && this.convoState.heldTimer) {
+        clearTimeout(this.convoState.heldTimer);
+        this.convoState.heldTimer = null;
+        this.convoState.heldText = '';
+      }
+      // Clear pending capture on session end
+      if (!this.continuousVoice) {
+        this.pendingAudio = {
+          chunks: [], totalBytes: 0, chunkCount: 0,
+          speechDetected: false, pendingSpeechFrames: 0,
+          speechFramesCount: 0, consecutiveSilenceFrames: 0, strayQuietFrames: 0
+        };
+        this.pendingQueue = [];
+      }
+    }
+  }
+
+  /**
+   * Voice-garble fix #7: single shared convo/jarvis mid-phrase path.
+   * - A stale hold (>=1.5s, continuation never arrived) is FLUSHED as its own
+   *   command instead of silently dropped (old else-branch cleared heldText).
+   * - Joined text is capped at 25 words; over-cap joins flush the held part
+   *   first and handle the new text as a fresh turn, so two separate tasks
+   *   never splice into one mega-prompt.
+   * - Holding arms heldTimer: 1.6s with no continuation + runtime IDLE
+   *   auto-flushes the held text (never while busy: no concurrent commands).
+   */
+  armConvoFlushTimer() {
+    if (this.convoState.heldTimer) clearTimeout(this.convoState.heldTimer);
+    this.convoState.heldTimer = setTimeout(() => {
+      this.convoState.heldTimer = null;
+      const held = this.convoState.heldText;
+      if (!held) return;
+      if (Date.now() - this.convoState.lastUtteranceTime < 1500) return; // continuation may still land
+      if (this.state !== AgentState.IDLE) return; // busy: leave it; next utterance flushes it
+      this.convoState.heldText = '';
+      this.convoState.lastUtteranceTime = Date.now();
+      console.log(`[AgentRuntime Convo] Auto-flushed stale held text: "${held}"`);
+      this.processCommand(held).catch((err) => console.error('[AgentRuntime Convo] Auto-flush error:', err));
+    }, 1600);
+    if (this.convoState.heldTimer.unref) this.convoState.heldTimer.unref();
+  }
+
+  clearConvoHold() {
+    if (this.convoState.heldTimer) { clearTimeout(this.convoState.heldTimer); this.convoState.heldTimer = null; }
+    this.convoState.heldText = '';
+  }
+
+  async dispatchConvoText(cleanText, tag) {
+    const S = this.convoState;
+    const now = Date.now();
+    const HOLD_WINDOW_MS = 1500;
+    const JOIN_WORD_CAP = 25;
+    const words = (t) => t.split(/\s+/).filter(Boolean).length;
+    const endsMidPhrase = (t) => /\b(and|or|but|so|because|with|to|for|in|on|at|by|from|of)$/i.test(t);
+
+    let text = cleanText;
+    // Stale hold: previous fragment never got its continuation — run it as
+    // its own command instead of silently dropping it.
+    if (S.heldText && now - S.lastUtteranceTime >= HOLD_WINDOW_MS) {
+      const stale = S.heldText;
+      this.clearConvoHold();
+      S.lastUtteranceTime = now;
+      S.utteranceCount++;
+      console.log(`[AgentRuntime Convo] Flushed stale held text (${tag}): "${stale}"`);
+      await this.processCommand(stale);
+    }
+    // Fresh continuation: join, capped so separate tasks never splice.
+    if (S.heldText && Date.now() - S.lastUtteranceTime < HOLD_WINDOW_MS) {
+      const held = S.heldText;
+      const joinedText = held + ' ' + text;
+      this.clearConvoHold();
+      S.lastUtteranceTime = Date.now();
+      S.utteranceCount++;
+      if (words(joinedText) > JOIN_WORD_CAP) {
+        console.log(`[AgentRuntime Convo] Join over ${JOIN_WORD_CAP} words — split (${tag}): "${held}" | "${text}"`);
+        await this.processCommand(held);
+        S.lastUtteranceTime = Date.now();
+        // fall through: handle the new text as a fresh turn below
+      } else {
+        console.log(`[AgentRuntime Convo] Joined mid-phrase (${tag}): "${joinedText}"`);
+        await this.processCommand(joinedText);
+        return;
+      }
+    }
+    // Fresh turn: hold trailing-conjunction fragments for a continuation,
+    // otherwise dispatch immediately.
+    if (endsMidPhrase(text) && S.utteranceCount < 5) {
+      S.heldText = text;
+      S.lastUtteranceTime = Date.now();
+      S.utteranceCount++;
+      console.log(`[AgentRuntime Convo] Held mid-phrase (${tag}): "${text}"`);
+      this.emit('feedback', { message: 'Waiting for continuation...', level: 'info' });
+      this.armConvoFlushTimer();
+      return;
+    }
+    S.lastUtteranceTime = Date.now();
+    S.utteranceCount++;
+    this.clearConvoHold();
+    await this.processCommand(text);
+  }
+
+  /**
+   * Transcribe and dispatch an utterance that was captured while a previous
+   * command was still processing (Gemini-style queued turn).
+   */
+  async processPendingUtterance(pcm) {
+    try {
+      const transcript = await this.stt.transcribePCM(pcm);
+      console.log(`[AgentRuntime Pipeline] Pending utterance transcribed: "${transcript}"`);
+      if (transcript && transcript.trim()) {
+        this.emit('transcript', { text: transcript });
+        // Conversation/Jarvis mode: mid-phrase joining via shared helper (voice-garble fix #7)
+        if (this.isConvoMode || this.isJarvisMode) {
+          await this.dispatchConvoText(transcript.trim(), 'pending');
+        } else {
+          await this.processCommand(transcript);
+        }
+      }
+    } catch (err) {
+      console.error('[AgentRuntime Pipeline] Pending utterance STT error:', err);
+      this.emit('feedback', { message: `Pending utterance STT error: ${err.message}`, level: 'error' });
     }
   }
 
@@ -267,6 +582,7 @@ class AgentRuntime extends EventEmitter {
    */
   async stopAudioSession(providedTranscript = null) {
     this.continuousVoice = false;
+    this.voiceRequiresWakeWord = false;
     if (!this.audioSession.active && !providedTranscript) {
       this.setState(AgentState.IDLE);
       return { transcript: '' };
@@ -363,11 +679,90 @@ class AgentRuntime extends EventEmitter {
    * Every command is planned by the AI model; there is no local fast path.
    */
   async processCommand(rawInput, source = 'voice') {
-    if (!rawInput || typeof rawInput !== 'string') return;
-    const exactPrompt = String(rawInput); // Strict prompt fidelity preservation
-    
-    const text = exactPrompt.trim();
+    if (!rawInput) return;
+
+    // Support direct structured action objects or JSON strings
+    let directAction = null;
+    if (typeof rawInput === 'object' && rawInput !== null && rawInput.type) {
+      directAction = rawInput;
+    } else if (typeof rawInput === 'string' && rawInput.trim().startsWith('{') && rawInput.trim().endsWith('}')) {
+      try {
+        const parsed = JSON.parse(rawInput.trim());
+        if (parsed && parsed.type) {
+          directAction = parsed;
+        }
+      } catch (_) {}
+    }
+
+    if (directAction) {
+      this.setState(AgentState.EXECUTING_ACTION, { action: directAction });
+      const execRes = await this.executeIntent(directAction);
+      const isOk = execRes ? execRes.success !== false : true;
+      this.setState(AgentState.IDLE);
+      this.sessionManager.recordInteraction({
+        source: source,
+        rawPrompt: JSON.stringify(directAction),
+        transcription: directAction.type,
+        pageContext: {},
+        modelResponse: { thought: `Executed direct action: ${directAction.type}`, actions: [directAction] },
+        status: isOk ? 'success' : 'failed',
+        feedback: execRes?.report || `Action ${directAction.type} finished`
+      });
+      if (this.jarvisSession) {
+        this.jarvisSession.addTurn(JSON.stringify(directAction), `Action ${directAction.type} executed`, {});
+      }
+      return;
+    }
+
+    let commandInput = String(rawInput).trim();
+    if (!commandInput) return;
+
+    // Wake-word gate: during continuous hands-free listening, Adion only
+    // responds to utterances addressed to it ("Adion, ...", "Hey Adion ...").
+    // Ambient speech is ignored without leaving LISTENING state. Stop commands
+    // stay exempt so the session can always be ended by voice.
+    //
+    // Conversation mode (convo): ChatGPT/Gemini-style — no wake word required,
+    // just speak naturally. This mode is for back-and-forth dialogue.
+    //
+    // Jarvis mode: Persistent AI assistant with extended context — no wake word,
+    // continuous listening, remembers everything across session.
+    //
+    // STT renders "Adion" unreliably ("AD on", "ADN", "addion", "एडियन", even
+    // legacy "Jarvis"), so the matcher accepts observed mishearings. A bare
+    // wake word arms a short window (~10s): the NEXT utterance is then treated
+    // as the command, matching how users actually speak ("Adion." → "Open Canva").
+    const isStopPhrase = /(stop listening|turn off (mic|microphone|voice)|exit voice|stop voice|cancel voice|shut down voice)/i.test(commandInput);
+    if (source === 'voice' && this.voiceRequiresWakeWord && !this.isConvoMode && !this.isJarvisMode && !isStopPhrase) {
+      const wakeMatch = commandInput.match(/^(?:(?:hey|hi|okay|ok|hello|yo)\s+)?(?:adion|addion|aidion|edion|adn|ad\s*on|a\s*dune|add\s*yon|ay\s*deon|एडियन|एडियोन|jarvis)(?=[\s,.:;!?\-]|$)/i);
+      const wakeArmed = this.wakeArmedUntil && Date.now() < this.wakeArmedUntil;
+      if (wakeMatch) {
+        commandInput = commandInput.slice(wakeMatch[0].length).replace(/^[\s,.:;!?\-]+/, '').trim();
+        this.wakeArmedUntil = 0;
+        if (!commandInput) {
+          this.wakeArmedUntil = Date.now() + 10000;
+          this.emit('feedback', { message: "Yes? I'm listening.", level: 'info' });
+          this.emit('adion-notification', { type: 'info', message: 'Adion is listening.' });
+          return;
+        }
+      } else if (wakeArmed) {
+        // Window consumed: this utterance is the command that followed the wake word.
+        this.wakeArmedUntil = 0;
+      } else {
+        this.emit('feedback', { message: 'Ignored ambient speech — say "Adion" to wake me', level: 'info' });
+        return;
+      }
+    }
+
+    const exactPrompt = commandInput; // Strict prompt fidelity preservation
+    const text = exactPrompt;
     if (!text) return;
+
+    // Detect ongoing/sustained activities (games, monitoring, "until X") so the
+    // goal loop keeps acting across many turns instead of ending after one step.
+    this.persistentGoal = /\b(?:chess|game|gaming|match|until|monitor|survive|compete|battle|ongoing|continuous|practice)\b/i.test(exactPrompt) ||
+                          /\bplay\b[\s\S]*\b(?:game|chess|match|online)\b/i.test(exactPrompt);
+    const runId = ++this.goalRunId;
 
     // Hands-free voice stop command
     if (/(stop listening|turn off (mic|microphone|voice)|exit voice|stop voice|cancel voice|shut down voice)/i.test(text)) {
@@ -376,21 +771,57 @@ class AgentRuntime extends EventEmitter {
       this.emit('shell-action', { action: 'STOP_VOICE' });
       this.setState(AgentState.IDLE);
       this.emit('feedback', { message: 'Voice agent stopped listening', level: 'info' });
-      this.emit('jarvis-notification', { type: 'info', message: 'Voice listening deactivated.' });
+      this.emit('adion-notification', { type: 'info', message: 'Voice listening deactivated.' });
+      return;
+    }
+
+    // Activity stop command: ends a sustained goal (game, monitor, etc.)
+    if (/\b(?:stop\s+(?:playing|the\s+game|chess|it|the\s+match)|enough|quit(?:\s+the\s+game)?|that'?s\s+all|thats\s+all|stop\s+now)\b/i.test(text)) {
+      this.persistentGoal = false;
+      this.continuousVoice = false;
+      this.audioSession.active = false;
+      this.emit('shell-action', { action: 'STOP_VOICE' });
+      this.setState(AgentState.IDLE);
+      this.emit('feedback', { message: 'Stopped the ongoing activity.', level: 'info' });
+      this.emit('adion-notification', { type: 'info', message: 'Activity stopped.' });
       return;
     }
 
     this.setState(AgentState.PARSING_INTENT, { input: exactPrompt });
     this.emit('feedback', { message: `Autonomous Agent coordinating: "${text}"`, level: 'info' });
 
-    // Detect Computer Use / Local Workspace Mode (/pc, /computer, /workspace)
-    const isComputerUse = /^\/(?:pc|computer|workspace)\b/i.test(exactPrompt) ||
+    // Detect Computer Use / Local Workspace Mode (/pc, /pc_use, /computer, /workspace)
+    if (/^\/(?:task_mode|task)\b/i.test(exactPrompt)) {
+      const sub = exactPrompt.replace(/^\/(?:task_mode|task)\s*/i, '').trim();
+      if (!sub) {
+        this.taskModeEnabled = !this.taskModeEnabled;
+        const msg = `⚡ Gemini Task Mode is now ${this.taskModeEnabled ? 'ENABLED (Stateful Loop + Work Panel)' : 'DISABLED'}`;
+        this.emit('feedback', { message: msg, level: 'info' });
+        this.emit('task-mode:status-change', { enabled: this.taskModeEnabled, activeTask: this.currentTask });
+        this.setState(AgentState.IDLE);
+        return;
+      }
+    }
+
+    const isComputerUse = /^\/(?:pc_use|pc|computer|workspace)\b/i.test(exactPrompt) ||
                           /^(?:run\s+on\s+(?:pc|computer|workspace)|on\s+(?:my\s+)?(?:pc|computer|workspace))\b/i.test(exactPrompt);
 
     let plannedText = text;
     if (isComputerUse) {
-      plannedText = text.replace(/^(?:\/pc\s+|\/computer\s+|\/workspace\s+|run\s+on\s+(?:pc|computer|workspace)\s+|on\s+(?:my\s+)?(?:pc|computer|workspace)\s*)/i, '').trim();
+      plannedText = text.replace(/^(?:\/pc_use\s+|\/pc\s+|\/computer\s+|\/workspace\s+|run\s+on\s+(?:pc|computer|workspace)\s+|on\s+(?:my\s+)?(?:pc|computer|workspace)\s*)/i, '').trim();
       if (!plannedText) plannedText = 'inspect current directory and system status';
+    }
+
+    // Fast Utterance Classification & Zero-Latency Dismiss (adapted from companion/src/guide/voice.js)
+    const { classifyUtterance } = require('./voiceClassifier');
+    const utterance = classifyUtterance(text);
+    if (utterance.kind === 'dismiss') {
+      console.log(`[AgentRuntime] Dismiss/cancel recognized: "${text}". Stopping active tasks.`);
+      this.cancelCurrentTask();
+      this.emit('feedback', { message: '🛑 Stopped as requested.', level: 'info' });
+      this.emit('adion-notification', { type: 'info', message: 'Task stopped.' });
+      this.setState(AgentState.IDLE);
+      return;
     }
 
     let activeTab = null;
@@ -404,7 +835,44 @@ class AgentRuntime extends EventEmitter {
         pageContext.lastDOMSelector = this.lastDOMSelector;
       }
 
+      // Full PC control: drive the desktop through the Windows sidecars. /pc falls
+      // through to the terminal path when they are unavailable, so it keeps working
+      // on machines where PowerShell is blocked.
+      const pcGoal = /^inspect current directory/i.test(plannedText) ? 'read this' : plannedText;
+      if (isComputerUse && this.pcEngine && this.pcEngine.platform === 'win32') {
+        try {
+          this.setState(AgentState.EXECUTING_ACTION, { action: 'PC_TASK' });
+          this.emit('feedback', { message: `🖥️ Driving the desktop: "${pcGoal}"...`, level: 'info' });
+          const pcResult = await this.pcEngine.run(pcGoal);
+          if (!pcResult || pcResult.outcome === 'unavailable') {
+            console.warn('[AgentRuntime PC] sidecars unavailable, using terminal mode:', pcResult && pcResult.report);
+          } else {
+            const ok = pcResult.outcome === 'ok';
+            this.emit('feedback', { message: pcResult.report || 'PC run finished.', level: ok ? 'success' : 'warning' });
+            if (pcResult.text) {
+              // "read this" / "summarize this": the words themselves are the answer.
+              this.emit('feedback', { message: String(pcResult.text).slice(0, 8000), level: 'info' });
+            }
+            this.emit('adion-notification', { type: ok ? 'info' : 'warning', message: pcResult.report || 'PC run finished.' });
+            this.setState(AgentState.IDLE);
+            this.sessionManager.recordInteraction({
+              source,
+              rawPrompt: exactPrompt,
+              transcription: text,
+              pageContext: { isComputerUse: true, pc: true },
+              modelResponse: { actions: [] },
+              status: ok ? 'success' : 'failed',
+              feedback: pcResult.report || ''
+            });
+            return;
+          }
+        } catch (pcError) {
+          console.warn('[AgentRuntime PC] run failed, falling back to terminal mode:', pcError.message);
+        }
+      }
+
       // Computer Use environment setup: ensure local terminal bridge is active
+
       if (isComputerUse) {
         pageContext.isComputerUse = true;
         if (this.terminalBridge) {
@@ -421,25 +889,40 @@ class AgentRuntime extends EventEmitter {
         });
       }
 
-      // 1. Gather Active Page Context (including shared page context if page sharing is enabled)
-      if (!isComputerUse && activeTab && activeTab.view && !activeTab.url.startsWith('adion://newtab') && this.isPageShared !== false) {
+      // 1. Gather Active Page Context (including simultaneous multi-tab context if page sharing is enabled)
+      if (!isComputerUse && activeTab && this.isPageShared !== false) {
         try {
-          const sharedCtx = await this.getActivePageContext();
+          const sharedCtx = await this.getActivePageContext(activeTab);
           if (sharedCtx) {
             pageContext = { ...pageContext, ...sharedCtx };
           }
         } catch (_) {}
       }
 
-      // 2. Retrieve recent conversation history from SessionManager so agent retains conversational memory
-      const recentInteractions = this.sessionManager ? (this.sessionManager.getHistory().interactions || []).slice(-40) : [];
-      const conversationHistory = recentInteractions.map(item => ({
-        user: item.prompt?.raw || item.prompt?.transcription || item.rawPrompt || item.transcription || '',
-        agent: item.response?.thought || item.response?.feedback || item.feedback || (item.modelResponse && item.modelResponse.thought) || '',
-        status: item.response?.status || item.status || 'success'
-      })).filter(h => h.user && h.user.trim().length > 0);
+      // 2. Retrieve conversation history - unified Jarvis session (200k context) & SessionManager
+      let conversationHistory = [];
+      if (this.jarvisSession && this.jarvisSession.conversationHistory && this.jarvisSession.conversationHistory.length > 0) {
+        const jarvisTurns = typeof this.jarvisSession.getRecentTurns === 'function'
+          ? this.jarvisSession.getRecentTurns(100)
+          : this.jarvisSession.conversationHistory.slice(-100);
+        conversationHistory = jarvisTurns.map(turn => ({
+          user: turn.user,
+          agent: turn.assistant,
+          status: 'success'
+        }));
+      } else if (this.sessionManager) {
+        const recentInteractions = (this.sessionManager.getHistory().interactions || []).slice(-40);
+        conversationHistory = recentInteractions.map(item => ({
+          user: item.prompt?.raw || item.prompt?.transcription || item.rawPrompt || item.transcription || '',
+          agent: item.response?.thought || item.response?.feedback || item.feedback || (item.modelResponse && item.modelResponse.thought) || '',
+          status: item.response?.status || item.status || 'success'
+        })).filter(h => h.user && h.user.trim().length > 0);
+      }
 
-      // Pass lastReferencedFile in pageContext for zero-latency coreference resolution
+      // Pass recentEntities & lastReferencedFile in pageContext for zero-latency coreference resolution
+      if (this.jarvisSession && this.jarvisSession.recentEntities) {
+        pageContext.recentEntities = this.jarvisSession.recentEntities;
+      }
       if (this.lastReferencedFile) {
         pageContext.lastReferencedFile = this.lastReferencedFile;
       }
@@ -447,13 +930,29 @@ class AgentRuntime extends EventEmitter {
       // 3. TIER 1: AI-FIRST AUTONOMOUS GOAL EXECUTION & RE-PLANNING LOOP
       // Sense -> Plan -> Act -> Verify. The agent senses live state after each action,
       // reports execution results back to the model, tracks subtask breakdown, and iteratively replans until the goal is accomplished.
-      let maxGoalIterations = this.maxGoalIterations || 15;
-      const absoluteSafetyCap = 30;
+      let maxGoalIterations = this.persistentGoal ? 60 : (this.maxGoalIterations || 15);
+      const absoluteSafetyCap = this.persistentGoal ? 300 : 30;
+      let replanRetries = 0; // sustained activities survive transient model outages (429/503)
       let iteration = 0;
       let goalAccomplished = false;
+      // goalAccomplished doubles as the loop terminator, so abort paths
+      // (stall, anti-loop, cross-question) set it too — goalAborted keeps the
+      // distinction so logs/persistence never report a failed run as success.
+      let goalAborted = false;
       const stepHistory = [];
       let finalFeedback = '';
       let initialPlan = null;
+      
+      // Action repeat detection to prevent loops (inspired by nus-companion)
+      const actionRepeats = new Map();
+      const REPEAT_LIMIT = 3;
+      const COOLDOWN_MS = 4000;
+      const lastActionTime = new Map();
+      
+      // Screen stagnation detection (inspired by nus-companion)
+      let lastScreenSignature = '';
+      let sameScreenCount = 0;
+      const SCREEN_STAGNATION_LIMIT = 2;
 
       if (this.model) {
         try {
@@ -474,7 +973,7 @@ class AgentRuntime extends EventEmitter {
           ? initialPlan.tasks
           : this.synthesizeTasksFromPrompt(exactPrompt, initialPlan.actions);
 
-        // Emit initial task breakdown to Jarvis Copilot
+        // Emit initial task breakdown to Adion Copilot
         if (activeTasks && activeTasks.length > 0) {
           this.emit('task-breakdown', { prompt: exactPrompt, tasks: activeTasks });
           const taskSummary = activeTasks.map((t, idx) => `${idx + 1}. ${t.title}`).join('\n');
@@ -485,11 +984,40 @@ class AgentRuntime extends EventEmitter {
           });
         }
 
+        // Initialize Gemini Task Mode stateful model & Work Panel
+        if (this.taskModeEnabled) {
+          const taskId = 'task_' + Date.now();
+          this.currentTask = {
+            id: taskId,
+            goal: exactPrompt,
+            status: 'PLANNING_NEXT',
+            mode: 'task',
+            stepNumber: 0,
+            maxSteps: maxGoalIterations,
+            completedSteps: [],
+            currentStep: null,
+            remainingSteps: (activeTasks || []).map(t => ({ id: t.id, title: t.title, status: 'pending' })),
+            touchedPages: activeTab && activeTab.url ? [{ url: activeTab.url, title: activeTab.title || activeTab.url, time: Date.now() }] : [],
+            artifacts: [],
+            pauseReason: null,
+            sensitiveAction: null,
+            loopState: {
+              lastStateHash: null,
+              consecutiveNoDeltaCount: 0
+            }
+          };
+          this.emitTaskModeUpdate();
+        }
+
         // If model returned 0 actions:
         if (initialPlan.actions.length === 0) {
           // Anti-Hallucination Guard: Never accept 0 actions if user prompt explicitly demanded an action!
+          // BUT exempt conversational QA, questions, explanations, creative requests where thought itself is the answer
+          const isQuestionOrExploration = /^(?:how|why|what|who|when|where|can\s+you|could\s+you|would\s+you|tell\s+me|explain|summarize|describe|teach\s+me)\b/i.test(exactPrompt) ||
+            /\?$/.test(exactPrompt.trim()) ||
+            /\b(?:poem|essay|story|joke|article|summary|explanation|definition)\b/i.test(exactPrompt);
           const hasActionVerb = /\b(create|make|write|generate|add|delete|remove|run|execute|build|start|stop|install|clone|open)\b/i.test(exactPrompt);
-          if (hasActionVerb) {
+          if (hasActionVerb && !isQuestionOrExploration) {
             console.warn('[AgentRuntime Guard] Model hallucinated completion with 0 actions for action prompt:', exactPrompt);
             this.emit('feedback', {
               message: `⚠️ Action notice: No execution command was dispatched by the planner. No system changes were made.`,
@@ -504,13 +1032,16 @@ class AgentRuntime extends EventEmitter {
               status: 'failed',
               feedback: 'No actions were dispatched.'
             });
+            if (this.jarvisSession) {
+              this.jarvisSession.addTurn(exactPrompt, 'Action not dispatched: No execution command was dispatched by planner.', pageContext);
+            }
             return;
           }
 
           this.setState(AgentState.IDLE);
           const feedbackMsg = initialPlan.thought || 'Standing by for browser commands.';
           this.emit('feedback', { message: feedbackMsg, level: 'info' });
-          this.emit('jarvis-notification', { type: 'info', message: feedbackMsg });
+          this.emit('adion-notification', { type: 'info', message: feedbackMsg });
           this.sessionManager.recordInteraction({
             source: source,
             rawPrompt: exactPrompt,
@@ -520,6 +1051,9 @@ class AgentRuntime extends EventEmitter {
             status: 'success',
             feedback: feedbackMsg
           });
+          if (this.jarvisSession) {
+            this.jarvisSession.addTurn(exactPrompt, feedbackMsg, pageContext);
+          }
           return;
         }
 
@@ -528,11 +1062,31 @@ class AgentRuntime extends EventEmitter {
 
         while (iteration < maxGoalIterations && !goalAccomplished) {
           iteration++;
+          // A newer command (or stop phrase) superseded this goal run — abort cleanly.
+          if (runId !== this.goalRunId) {
+            goalAccomplished = true;
+            finalFeedback = 'Superseded by a newer command.';
+            break;
+          }
           executedPlan = currentPlan;
 
-          // Dynamic Iteration Cap Extension requested by AI
-          if (typeof currentPlan.extendCapBy === 'number' && currentPlan.extendCapBy > 0) {
-            const ext = Math.min(Math.round(currentPlan.extendCapBy), 8);
+          if (this.currentTask) {
+            this.currentTask.stepNumber = iteration;
+            this.currentTask.status = 'PLANNING_NEXT';
+            this.setState(AgentState.PLANNING_NEXT);
+            const curTab = this.tabManager ? this.tabManager.getActiveTab() : null;
+            if (curTab && curTab.url && !this.currentTask.touchedPages.some(p => p.url === curTab.url)) {
+              this.currentTask.touchedPages.push({ url: curTab.url, title: curTab.title || curTab.url, time: Date.now() });
+            }
+            this.emitTaskModeUpdate();
+          }
+
+          // Dynamic Iteration Cap Extension requested by AI:
+          // Strictly protect against runway inflation on simple commands (hotkeys, tab actions, simple navigation)
+          // or when previous steps made zero progress or repeated actions.
+          const isSimpleCommand = /\b(close|switch|alt\s*\+?\s*f4|press|shortcut|theme|dark\s*mode|light\s*mode|volume|unmute|mute)\b/i.test(exactPrompt);
+          if (!isSimpleCommand && typeof currentPlan.extendCapBy === 'number' && currentPlan.extendCapBy > 0 && stalledIterations === 0) {
+            const ext = Math.min(Math.round(currentPlan.extendCapBy), 5);
             const prevCap = maxGoalIterations;
             maxGoalIterations = Math.min(maxGoalIterations + ext, absoluteSafetyCap);
             if (maxGoalIterations > prevCap) {
@@ -573,6 +1127,49 @@ class AgentRuntime extends EventEmitter {
             // twice in the same goal run. Repeating it is what made the agent click
             // the same button or heading on every iteration.
             const fingerprint = this.fingerprintAction(act, intent);
+            
+            // Repeat detection (inspired by nus-companion)
+            let actionTarget = act.params?.target || act.params?.selector || act.params?.url || act.params?.query || act.params?.except || '';
+            if (act.type === ActionType.CLOSE_TAB && !actionTarget) {
+              actionTarget = activeTab ? activeTab.id : '';
+            }
+            const actionKey = act.type + ' ' + (actionTarget ? actionTarget : JSON.stringify(act.params || {}));
+            const repeatCount = (actionRepeats.get(actionKey) || 0) + 1;
+            actionRepeats.set(actionKey, repeatCount);
+            
+            // Check cooldown for launch actions
+            const isLaunchAction = act.type === ActionType.NAVIGATE || act.type === ActionType.NEW_TAB;
+            if (isLaunchAction) {
+              const lastLaunch = lastActionTime.get(actionKey) || 0;
+              if (Date.now() - lastLaunch < COOLDOWN_MS) {
+                console.log(`[AgentRuntime GoalLoop] Cooldown: ${actionKey} launched ${Date.now() - lastLaunch}ms ago (< ${COOLDOWN_MS}ms)`);
+                stepHistory.push({
+                  iteration,
+                  action: act.type,
+                  status: 'SKIPPED',
+                  summary: `${act.type} (cooldown - same action too recent)`,
+                  fingerprint
+                });
+                continue;
+              }
+              lastActionTime.set(actionKey, Date.now());
+            }
+            
+            // Block after REPEAT_LIMIT identical actions
+            if (repeatCount >= REPEAT_LIMIT) {
+              console.log(`[AgentRuntime GoalLoop] Repeat limit reached: ${actionKey} repeated ${repeatCount} times`);
+              allSubActionsSucceeded = false;
+              turnOutcomeMsg = `Action "${actionKey}" repeated ${repeatCount} times without progress. Try a different approach or stop.`;
+              stepHistory.push({
+                iteration,
+                action: act.type,
+                status: 'FAILED',
+                summary: `Repeat limit (${REPEAT_LIMIT}) reached for ${actionKey}`,
+                fingerprint
+              });
+              this.emit('feedback', { message: turnOutcomeMsg, level: 'warning' });
+              break;
+            }
 
             // Reject incomplete actions before touching the page or the shell.
             const invalidReason = this.validateIntent(intent);
@@ -645,8 +1242,96 @@ class AgentRuntime extends EventEmitter {
               intent.submit = false;
             }
 
+            // Gemini Task Mode: Human-in-the-Loop Checkpoint & Takeover Guard
+            if (this.taskModeEnabled) {
+              const sensitiveCheck = this.isSensitiveActionForTaskMode(act, intent);
+              if (sensitiveCheck) {
+                this.setState(AgentState.PAUSED_FOR_USER);
+                if (this.currentTask) {
+                  this.currentTask.status = 'PAUSED_FOR_USER';
+                  this.currentTask.pauseReason = sensitiveCheck.reason;
+                  this.currentTask.sensitiveAction = { type: act.type, ...intent };
+                  this.emitTaskModeUpdate();
+                }
+                this.emit('task-mode:paused', this.currentTask);
+                this.emit('feedback', { message: `⏸️ [Task Mode Checkpoint] ${sensitiveCheck.reason}. Waiting for user confirmation or takeover...`, level: 'warning' });
+
+                const userDecision = await new Promise(resolve => {
+                  this.taskPauseResolver = resolve;
+                });
+                this.taskPauseResolver = null;
+
+                if (userDecision && userDecision.stop) {
+                  goalAccomplished = true;
+                  goalAborted = true;
+                  finalFeedback = 'Task stopped by user at checkpoint.';
+                  break;
+                }
+                this.setState(AgentState.EXECUTING);
+                if (this.currentTask) {
+                  this.currentTask.status = 'EXECUTING';
+                  this.currentTask.pauseReason = null;
+                  this.currentTask.sensitiveAction = null;
+                  this.emitTaskModeUpdate();
+                }
+                this.emit('task-mode:resumed', this.currentTask);
+              }
+            }
+
+            const activeTabForStep = this.tabManager ? this.tabManager.getActiveTab() : null;
+            const preStateHash = await this.computePageStateHash(activeTabForStep);
+
+            if (this.currentTask) {
+              const stepTitle = `${act.type} ${intent.target || intent.url || intent.text || ''}`.trim();
+              this.currentTask.currentStep = {
+                id: iteration,
+                title: stepTitle,
+                action: act.type,
+                target: intent.target || intent.selector || intent.url || '',
+                expectedOutcome: currentPlan.thought || 'Verify DOM state update',
+                status: 'in_progress',
+                startTime: Date.now()
+              };
+              this.currentTask.status = 'EXECUTING';
+              this.setState(AgentState.EXECUTING);
+              this.emitTaskModeUpdate();
+            }
+
             const execRes = await this.executeIntent(intent);
             const isSuccess = execRes ? execRes.success !== false : true;
+
+            // Gemini Task Mode: Post-Action State Observation & Delta Verification
+            if (this.currentTask) {
+              this.setState(AgentState.VERIFYING);
+              this.currentTask.status = 'VERIFYING';
+              this.emitTaskModeUpdate();
+
+              const postTab = this.tabManager ? this.tabManager.getActiveTab() : null;
+              const postStateHash = await this.computePageStateHash(postTab);
+              if (preStateHash && postStateHash && preStateHash === postStateHash && act.type !== ActionType.SCROLL) {
+                this.currentTask.loopState.consecutiveNoDeltaCount = (this.currentTask.loopState.consecutiveNoDeltaCount || 0) + 1;
+                if (this.currentTask.loopState.consecutiveNoDeltaCount >= 2) {
+                  console.log(`[AgentRuntime TaskMode] Stagnation detected: 2 consecutive steps produced no DOM delta (${preStateHash.slice(0, 40)}). Adapting strategy.`);
+                  turnOutcomeMsg = `Notice: Page state did not change after action "${act.type}". Adapting strategy to alternative selector, scroll, or search.`;
+                }
+              } else {
+                this.currentTask.loopState.consecutiveNoDeltaCount = 0;
+              }
+
+              if (this.currentTask.currentStep) {
+                this.currentTask.completedSteps.push({
+                  ...this.currentTask.currentStep,
+                  status: isSuccess ? 'completed' : 'failed',
+                  durationMs: Date.now() - this.currentTask.currentStep.startTime,
+                  summary: isSuccess ? `${act.type} ${intent.target || intent.url || ''}`.trim() : (execRes?.reason || 'unfulfilled')
+                });
+                this.currentTask.currentStep = null;
+              }
+              if (activeTasks) {
+                this.currentTask.remainingSteps = activeTasks.filter(t => t.status === 'pending');
+              }
+              this.emitTaskModeUpdate();
+            }
 
             let subSummary = '';
             if (act.type === ActionType.TERMINAL_EXEC || act.type === 'TERMINAL_EXEC') {
@@ -678,6 +1363,8 @@ class AgentRuntime extends EventEmitter {
               const currentTask = activeTasks.find(t => t.status === 'in_progress') || activeTasks.find(t => t.status === 'pending');
               if (currentTask) {
                 if (isSuccess) {
+                  actionRepeats.delete(actionKey);
+                  sameScreenCount = 0;
                   currentTask.status = 'completed';
                   const nextTask = activeTasks.find(t => t.status === 'pending');
                   if (nextTask) nextTask.status = 'in_progress';
@@ -690,11 +1377,12 @@ class AgentRuntime extends EventEmitter {
 
             if (!isSuccess) {
               allSubActionsSucceeded = false;
-              turnOutcomeMsg = execRes?.crossQuestion || execRes?.reason || 'Action could not be executed';
-              // If cross-question was emitted (e.g. Sign Up vs Log In conflict), pause and let user reply
-              if (execRes?.crossQuestion) {
+              turnOutcomeMsg = execRes?.crossQuestion || execRes?.message || execRes?.reason || 'Action could not be executed';
+              // If cross-question, missing target, or PC control failure, stop immediately and report truthfully instead of blind retries
+              if (execRes?.crossQuestion || execRes?.reason === 'TARGET_NOT_FOUND' || act.type === ActionType.PC_PRESS || act.type === 'PC_PRESS') {
                 goalAccomplished = true;
-                finalFeedback = execRes.crossQuestion;
+                goalAborted = true;
+                finalFeedback = execRes?.message || execRes?.crossQuestion || execRes?.reason || turnOutcomeMsg;
                 break;
               }
             } else if (act.type === ActionType.CLICK_SELECTOR && !execRes?.visualGrounding) {
@@ -702,6 +1390,30 @@ class AgentRuntime extends EventEmitter {
               // panel is not proof the user's goal is complete. Only the planner
               // may set goalAccomplished, based on the observed page state.
               console.log(`[AgentRuntime GoalLoop] Click succeeded on "${intent.target}"; waiting for planner verification before completing the goal.`);
+            } else if (act.type === ActionType.CLOSE_TAB && isSuccess && i === actionsInTurn.length - 1) {
+              goalAccomplished = true;
+              finalFeedback = execRes?.message || `Closed requested tabs.`;
+            } else if (act.type === ActionType.SWITCH_TAB && isSuccess && (i === actionsInTurn.length - 1 || /\b(switch|go\s*to|focus)\b/i.test(exactPrompt))) {
+              goalAccomplished = true;
+              finalFeedback = execRes?.message || `Switched to requested tab.`;
+            } else if (act.type === ActionType.NAVIGATE && isSuccess && i === actionsInTurn.length - 1) {
+              const isPureNavCommand = /^(?:(?:kill\s+this\s+tab\s+and\s+)?(?:open|go\s+to|navigate\s+to|visit)\s+([a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}|https?:\/\/[^\s]+)\s*(?:please)?[\.\!]?)$/i.test(exactPrompt.trim());
+              if (isPureNavCommand) {
+                goalAccomplished = true;
+                finalFeedback = `Navigated to ${intent.url || 'target page'}.`;
+              }
+            } else if ((act.type === ActionType.PC_PRESS || act.type === 'PC_PRESS') && isSuccess) {
+              goalAccomplished = true;
+              finalFeedback = execRes?.report || `Dispatched keyboard shortcut.`;
+            } else if ((act.type === ActionType.PC_MOVE || act.type === 'PC_MOVE') && isSuccess && i === actionsInTurn.length - 1) {
+              // mouse.move is deterministic: the OS put the cursor where asked.
+              // Screenshots rarely render the cursor, so "verify by looking"
+              // re-plans screenshot->move forever — trust it like a press.
+              goalAccomplished = true;
+              finalFeedback = execRes?.report || 'Mouse moved to target.';
+            } else if (currentPlan.goalAccomplished === true && isSuccess && i === actionsInTurn.length - 1) {
+              goalAccomplished = true;
+              finalFeedback = currentPlan.thought || 'Goal accomplished.';
             }
 
             if (i < actionsInTurn.length - 1) {
@@ -715,14 +1427,13 @@ class AgentRuntime extends EventEmitter {
           // re-planning into the same click again.
           if (actionsInTurn.length > 0 && skippedDuplicates === actionsInTurn.length) {
             goalAccomplished = true;
+            goalAborted = true;
             finalFeedback = 'Stopped: the planner repeated an action that had already run (success or failure). No duplicate action was dispatched.';
             this.emit('feedback', {
               message: '⚠️ Anti-loop guard: repeated action detected and skipped; stopped to avoid an infinite click loop.',
               level: 'warning'
             });
           }
-
-          if (goalAccomplished) break;
 
           // Stall detection: consecutive steps that execute nothing are a dead
           // end, not a reason to keep spending model calls and iterations.
@@ -731,12 +1442,18 @@ class AgentRuntime extends EventEmitter {
           else stalledIterations = 0;
           if (stalledIterations >= 3) {
             goalAccomplished = true;
+            goalAborted = true;
             finalFeedback = `Stopped after ${stalledIterations} consecutive steps that could not execute any action. Last result: ${turnOutcomeMsg || finalFeedback || 'no progress'}.`;
             this.emit('feedback', { message: '⚠️ ' + finalFeedback, level: 'warning' });
+            break;
           }
 
-          console.log(`[AgentRuntime GoalLoop] iter end #${iteration}: goal=${goalAccomplished} steps=${stepHistory.length} tasks=${(activeTasks||[]).map(t=>t.status).join(',')}`);
-          finalFeedback = currentPlan.thought || turnOutcomeMsg || 'Task step executed.';
+          if (goalAccomplished) break;
+
+          console.log(`[AgentRuntime GoalLoop] iter end #${iteration}: goal=${goalAccomplished}${goalAborted ? ' (aborted)' : ''} steps=${stepHistory.length} tasks=${(activeTasks||[]).map(t=>t.status).join(',')}`);
+          if (!goalAborted) {
+            finalFeedback = currentPlan.thought || turnOutcomeMsg || 'Task step executed.';
+          }
 
           // Check if the model explicitly marked the overall goal as accomplished
           if (currentPlan.goalAccomplished === true && allSubActionsSucceeded) {
@@ -754,23 +1471,60 @@ class AgentRuntime extends EventEmitter {
             break;
           }
 
-          // Sense: Pause for live DOM settling and dynamic re-hydration
-          await new Promise(r => setTimeout(r, 600));
+          // Sense: Pause for live DOM settling and dynamic re-hydration.
+          // Sustained activities (games etc.) get a longer beat so the page
+          // state (board, animations, turn timers) fully settles between turns.
+          await new Promise(r => setTimeout(r, this.persistentGoal ? 1800 : 600));
 
           const currentTab = this.tabManager ? this.tabManager.getActiveTab() : null;
+
+          // True DOM Perceptual Stagnation Check (DOM hash delta, not just URL/title)
+          if (currentTab && !isComputerUse) {
+            const currentDomHash = await this.computePageStateHash(currentTab).catch(() => '');
+            if (currentDomHash && currentDomHash === lastScreenSignature) {
+              sameScreenCount++;
+            } else {
+              sameScreenCount = 0;
+              if (currentDomHash) lastScreenSignature = currentDomHash;
+            }
+            if (sameScreenCount >= 3) {
+              console.log(`[AgentRuntime GoalLoop] DOM Stagnation detected: ${sameScreenCount} iterations without state change`);
+              this.emit('feedback', { message: 'Screen unchanged across 3 iterations. Adapting strategy...', level: 'warning' });
+              stepHistory.push({
+                iteration,
+                action: 'STAGNATION_DETECTED',
+                status: 'INFO',
+                summary: `DOM unchanged for ${sameScreenCount} iterations. Target panel or element may already be open, or requires scrolling or pressing Enter.`
+              });
+            }
+          }
+
           const livePageContext = isComputerUse
             ? { ...pageContext, terminal: this.terminalBridge ? this.terminalBridge.getStatus() : null }
             : await this.getActivePageContext(currentTab);
 
           // Build augmented conversational history containing live goal execution progress
+          const completedActionSummaries = Array.from(new Set(
+            stepHistory
+              .filter(s => s.status === 'SUCCESS' && s.action !== 'STAGNATION_DETECTED')
+              .map(s => s.summary || s.action)
+          )).filter(Boolean);
+
           const augmentedHistory = [...conversationHistory];
           augmentedHistory.push({
             user: `Goal: "${exactPrompt}"`,
             agent: `Progress so far:\n` + stepHistory.slice(-8).map(s => `- [Step ${s.iteration}] ${s.summary} (${s.status})`).join('\n') +
+                   (completedActionSummaries.length > 0 ? `\nALREADY COMPLETED ACTIONS (DO NOT REPEAT): [${completedActionSummaries.join('; ')}]\n` : '') +
                    (isComputerUse
                      ? `\n[Operating Environment: Host PC / Local Terminal (${livePageContext.terminal?.cwd || process.cwd()})]\nCRITICAL INSTRUCTION: Analyze the output of the previous step. If additional terminal commands are required to fulfill the user's PC task, output {"type": "TERMINAL_EXEC", "params": {"command": "..."}}. When the task is complete, return "goalAccomplished": true, "actions": [], and summarize results.`
-                     : `\nCurrent Active Page: "${livePageContext.title || livePageContext.url}" (URL: ${livePageContext.url}) with buttons: [${(livePageContext.buttons || []).slice(0, 10).join(', ')}]\n` +
-                       `CRITICAL INSTRUCTION: If you already reached the site or clicked the requested button, DO NOT navigate back or repeat actions. If more turns are needed, specify "extendCapBy". If goal is satisfied, return "goalAccomplished": true, "actions": [].`
+                     : `\nCurrent Active Page: "${livePageContext.title || livePageContext.url}" (URL: ${livePageContext.url}) with buttons: [${(livePageContext.buttons || []).slice(0, 25).join(', ')}]\n` +
+                       (Array.isArray(livePageContext.openTabs) && livePageContext.openTabs.length > 1
+                         ? `Open Tabs (${livePageContext.openTabs.length}): ` + livePageContext.openTabs.map(t => { const bg = (livePageContext.backgroundTabs || []).find(b => b.id === t.id); return `[Tab #${t.index}${t.isActive ? ' *ACTIVE*' : ''}: "${t.title}" (${t.url})]` + (bg && bg.headings && bg.headings.length ? ` (Headings: ${bg.headings.slice(0, 3).join(', ')})` : ''); }).join(' | ') + '\n'
+                         : '') +
+                       `CRITICAL INSTRUCTION: If you already reached the site or clicked the requested button, DO NOT navigate back or repeat actions. If more turns are needed, specify "extendCapBy". If goal is satisfied, return "goalAccomplished": true, "actions": [].` +
+                       (this.persistentGoal
+                         ? `\nONGOING ACTIVITY MODE: The goal is a sustained activity (e.g., a game or monitor). Keep executing the NEXT step of the activity on every turn. Set "goalAccomplished": true ONLY when the activity has verifiably ENDED (game over, victory, defeat, task complete) — completing a single move/step is NOT completion.`
+                         : '')
                    )
           });
 
@@ -778,18 +1532,47 @@ class AgentRuntime extends EventEmitter {
           try {
             const planTarget = isComputerUse ? `Local Terminal (${livePageContext.terminal?.shell || 'powershell'})` : (livePageContext.title || livePageContext.url);
             console.log(`[AgentRuntime GoalLoop] Re-planning next step on ${planTarget}...`);
-            this.emit('feedback', { 
-              message: isComputerUse 
+            const __replanStart = Date.now();
+            this.emit('feedback', {
+              message: isComputerUse
                 ? `Evaluating next terminal step on local PC...`
-                : `Inspected page "${livePageContext.title || livePageContext.url}". Evaluating next step for goal...`, 
-              level: 'info' 
+                : `Inspected page "${livePageContext.title || livePageContext.url}". Context: ${livePageContext.buttons?.length || 0} buttons, ${livePageContext.scene?.length || 0} elements, ${livePageContext.headings?.length || 0} headings`,
+              level: 'info'
             });
-            const nextPlan = await Promise.race([
-              this.model.planActions(plannedText, livePageContext, augmentedHistory),
-              new Promise((_, rej) => setTimeout(() => rej(new Error('replan timeout 15s')), 15000))
-            ]);
+            // Heartbeat: keep the UI/logs alive during slow model calls
+            const __heartbeat = setInterval(() => {
+              const waited = ((Date.now() - __replanStart) / 1000).toFixed(0);
+              console.log(`[AgentRuntime GoalLoop] ⏳ Still waiting on planner... ${waited}s`);
+              this.emit('feedback', { message: `⏳ Planner thinking... ${waited}s`, level: 'info' });
+            }, 5000);
+            if (__heartbeat.unref) __heartbeat.unref();
+            let nextPlan;
+            try {
+              nextPlan = await Promise.race([
+                this.model.planActions(plannedText, livePageContext, augmentedHistory),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('replan timeout 15s')), 15000))
+              ]);
+            } finally {
+              clearInterval(__heartbeat);
+            }
             if (nextPlan && (Array.isArray(nextPlan.actions) || nextPlan.thought)) {
               if (!Array.isArray(nextPlan.actions)) nextPlan.actions = [];
+              
+              // Feedback: Show memory if available and verified against ground truth
+              if (nextPlan.memory && !goalAborted) {
+                const lastStep = stepHistory[stepHistory.length - 1];
+                const hadRecentFailure = lastStep && (lastStep.status === 'FAILED' || lastStep.status === 'SKIPPED');
+                const claimsActionComplete = /closed|switched|clicked|submitted|navigated|created|deleted/i.test(nextPlan.memory);
+                if (!hadRecentFailure || !claimsActionComplete) {
+                  console.log(`[AgentRuntime GoalLoop] Memory: ${nextPlan.memory}`);
+                  this.emit('feedback', { message: `🧠 Memory: ${nextPlan.memory}`, level: 'debug' });
+                }
+              }
+              if (nextPlan.next_goal) {
+                console.log(`[AgentRuntime GoalLoop] Next Goal: ${nextPlan.next_goal}`);
+                this.emit('feedback', { message: `🎯 Next: ${nextPlan.next_goal}`, level: 'debug' });
+              }
+              
               if (nextPlan.actions.length === 0 || (nextPlan.goalAccomplished === true && nextPlan.actions.length === 0)) {
                 // Physical Verification Safety Net for Computer Use:
                 if (isComputerUse) {
@@ -844,40 +1627,69 @@ class AgentRuntime extends EventEmitter {
                 break;
               }
               currentPlan = nextPlan;
+              replanRetries = 0;
+            } else if (this.persistentGoal && replanRetries < 8) {
+              // Sustained activity: model returned nothing usable — back off and retry
+              // instead of abandoning a game mid-play (free-tier providers throttle often).
+              replanRetries++;
+              console.warn(`[AgentRuntime GoalLoop] Empty re-plan on sustained activity; retry ${replanRetries}/8 in 8s...`);
+              this.emit('feedback', { message: `Model planner unavailable — retrying in 8s (${replanRetries}/8)...`, level: 'warning' });
+              await new Promise(r => setTimeout(r, 8000));
+              continue;
             } else {
               break;
             }
           } catch (replanErr) {
             console.warn('[AgentRuntime GoalLoop] Re-planning error:', replanErr.message);
+            if (this.persistentGoal && replanRetries < 8) {
+              replanRetries++;
+              this.emit('feedback', { message: `Planner error (${replanErr.message}) — retrying in 8s (${replanRetries}/8)...`, level: 'warning' });
+              await new Promise(r => setTimeout(r, 8000));
+              continue;
+            }
             break;
           }
         }
 
         // Record interaction in session memory log
+        if (this.currentTask) {
+          this.currentTask.status = goalAborted ? 'FAILED' : 'COMPLETED';
+          this.setState(goalAborted ? AgentState.IDLE : AgentState.COMPLETED);
+          this.emitTaskModeUpdate();
+          if (!goalAborted) {
+            this.emit('task-mode:completed', this.currentTask);
+          }
+        }
+
         this.sessionManager.recordInteraction({
           source: source,
           rawPrompt: exactPrompt,
           transcription: text,
           pageContext: pageContext,
           modelResponse: executedPlan || initialPlan,
-          status: 'success',
-          feedback: finalFeedback || (executedPlan && executedPlan.thought) || 'Task completed successfully'
+          status: goalAborted ? 'aborted' : 'success',
+          feedback: finalFeedback || (executedPlan && executedPlan.thought) || (goalAborted ? 'Task stopped before completion.' : 'Task completed successfully')
         });
+        
+        // Also record in Jarvis session
+        if (this.jarvisSession) {
+          this.jarvisSession.addTurn(exactPrompt, finalFeedback || (executedPlan && executedPlan.thought) || (goalAborted ? 'Task stopped before completion.' : 'Task completed successfully'), pageContext);
+        }
 
-        this.emit('jarvis-notification', {
-          type: 'success',
-          message: finalFeedback || (executedPlan && executedPlan.thought) || `Task executed successfully.`
+        this.emit('adion-notification', {
+          type: goalAborted ? 'warning' : 'success',
+          message: finalFeedback || (executedPlan && executedPlan.thought) || (goalAborted ? 'Task stopped before completion.' : `Task executed successfully.`)
         });
         return;
       }
 
-      // No fast-path, cache, or regex fallback: if the AI planner produced no
-      // plan, report it plainly instead of guessing an action.
+      // No fast-path, cache, or regex fallback: if the AI planner produced no plan, 
+      // report it plainly instead of guessing an action.
       this.setState(AgentState.IDLE);
       const noPlanMsg = 'The AI planner produced no plan for this command, so nothing was executed.';
       console.warn('[AgentRuntime] No plan from model; command not executed:', exactPrompt);
       this.emit('feedback', { message: noPlanMsg, level: 'warning' });
-      this.emit('jarvis-notification', { type: 'alert', message: noPlanMsg });
+      this.emit('adion-notification', { type: 'alert', message: noPlanMsg });
       this.sessionManager.recordInteraction({
         source: source,
         rawPrompt: exactPrompt,
@@ -892,7 +1704,7 @@ class AgentRuntime extends EventEmitter {
       const generalizedMsg = this.getGeneralizedErrorMessage(err);
       this.setState(AgentState.ERROR, { error: generalizedMsg });
       this.emit('feedback', { message: generalizedMsg, level: 'warning' });
-      this.emit('jarvis-notification', { type: 'alert', message: generalizedMsg });
+      this.emit('adion-notification', { type: 'alert', message: generalizedMsg });
 
       this.sessionManager.recordInteraction({
         source: source,
@@ -953,11 +1765,25 @@ class AgentRuntime extends EventEmitter {
           ? null
           : 'INPUT_TEXT requires selector and text';
       case ActionType.SWITCH_TAB:
-        return has(intent.target || intent.index) ? null : 'SWITCH_TAB requires target or index';
+        return (has(intent.target) || has(intent.index) || has(intent.query) || has(intent.tab) || has(intent.tabId) || has(intent.title) || has(intent.url) || has(intent.id))
+          ? null
+          : 'SWITCH_TAB requires target, index, or title';
       case ActionType.MODIFY_DOM:
         return has(intent.selector || intent.target) ? null : 'MODIFY_DOM requires selector';
       case ActionType.TERMINAL_EXEC:
         return has(intent.command || intent.cmd) ? null : 'TERMINAL_EXEC requires command';
+      case ActionType.OPEN_APP:
+      case 'OPEN_APP':
+        return has(intent.name || intent.app) ? null : 'OPEN_APP requires name';
+      case ActionType.PC_PRESS:
+      case 'PC_PRESS':
+        return has(intent.keys || intent.shortcut || intent.chord) ? null : 'PC_PRESS requires keys';
+      case ActionType.PC_MOVE:
+      case 'PC_MOVE':
+        return (has(intent.x ?? intent.x1000) && has(intent.y ?? intent.y1000)) ? null : 'PC_MOVE requires x/y or x1000/y1000';
+      case ActionType.RESEARCH_TOPIC:
+      case 'RESEARCH_TOPIC':
+        return has(intent.topic || intent.query) ? null : 'RESEARCH_TOPIC requires topic';
       default:
         return null;
     }
@@ -970,8 +1796,25 @@ class AgentRuntime extends EventEmitter {
     let executionResult = { success: true, intent };
 
     const isTerminalAction = intent.type === ActionType.TERMINAL_EXEC || intent.type === 'TERMINAL_EXEC';
+    const isIndependentAction = [
+      ActionType.OPEN_APP, 'OPEN_APP',
+      ActionType.PC_PRESS, 'PC_PRESS',
+      ActionType.PC_CLICK, 'PC_CLICK',
+      ActionType.PC_MOVE, 'PC_MOVE',
+      ActionType.PC_TYPE, 'PC_TYPE',
+      ActionType.PC_READ, 'PC_READ',
+      ActionType.SYSTEM_VOLUME, 'SYSTEM_VOLUME',
+      ActionType.DESKTOP_SCREENSHOT, 'DESKTOP_SCREENSHOT',
+      ActionType.THEME_SET, 'THEME_SET', 'theme_set',
+      ActionType.THEME_TOGGLE, 'THEME_TOGGLE', 'theme_toggle',
+      ActionType.RESEARCH_TOPIC, 'RESEARCH_TOPIC',
+      ActionType.COMPARE_PRICES, 'COMPARE_PRICES',
+      'PAGE_ANALYSIS_OR_QA',
+      'CONVERSATIONAL_ACKNOWLEDGE'
+    ].includes(intent.type);
+
     const activeTab = this.tabManager ? this.tabManager.getActiveTab() : null;
-    if (!activeTab && intent.type !== ActionType.NEW_TAB && !isTerminalAction) {
+    if (!activeTab && intent.type !== ActionType.NEW_TAB && !isTerminalAction && !isIndependentAction) {
       throw new Error('No active browser tab found');
     }
 
@@ -993,7 +1836,315 @@ class AgentRuntime extends EventEmitter {
         break;
       }
 
+      case 'PAGE_ANALYSIS_OR_QA': {
+        // This tool returns a conversational response without performing an action.
+        // The model synthesizes a direct answer based on page context and conversation history.
+        this.emit('feedback', { message: `Answering: ${intent.query || 'analyzing page...'}`, level: 'info' });
+        
+        // If we have a query, use the model client to synthesize a response
+        if (intent.query && this.modelClient) {
+          try {
+            const pageContext = await this.getGeneralPageContext();
+            const history = this.sessionManager ? this.sessionManager.getHistory().interactions.slice(-5) : [];
+            
+            const response = await this.modelClient.synthesizeAnswer(intent.query, pageContext, history);
+            
+            this.emit('feedback', { message: response, level: 'success' });
+            executionResult = { success: true, answer: response, verified: true };
+          } catch (err) {
+            console.warn('[AgentRuntime PAGE_ANALYSIS_OR_QA] Error synthesizing answer:', err);
+            this.emit('feedback', { message: 'Could not synthesize answer', level: 'warning' });
+            executionResult = { success: false, reason: 'ANSWER_SYNTHESIS_FAILED', verified: false };
+          }
+        } else {
+          // No query, just acknowledge
+          executionResult = { success: true, answer: 'I can see the page content. How can I help?', verified: true };
+        }
+        break;
+      }
+
+      case ActionType.OPEN_APP:
+      case 'OPEN_APP': {
+        const appName = intent.name || intent.app || '';
+        this.emit('feedback', { message: `🖥️ Launching desktop application: "${appName}"...`, level: 'info' });
+        let launched = false;
+        let report = '';
+        if (this.pcEngine && this.pcEngine.actions && typeof this.pcEngine.actions.open_app === 'function') {
+          try {
+            const res = await this.pcEngine.actions.open_app({ name: appName });
+            launched = res && res.ok;
+            report = res && res.report;
+          } catch (e) {
+            report = e.message;
+          }
+        }
+        if (!launched) {
+          try {
+            const { spawn } = require('child_process');
+            if (process.platform === 'win32') {
+              const child = spawn('cmd.exe', ['/c', 'start', '', String(appName)], { windowsHide: true, detached: true, stdio: 'ignore' });
+              child.unref();
+              launched = true;
+            } else if (process.platform === 'darwin') {
+              spawn('open', ['-a', String(appName)], { detached: true, stdio: 'ignore' }).unref();
+              launched = true;
+            } else {
+              spawn('xdg-open', [String(appName)], { detached: true, stdio: 'ignore' }).unref();
+              launched = true;
+            }
+          } catch (e) {
+            report = e.message;
+          }
+        }
+        if (launched) {
+          this.emit('feedback', { message: `Launched application "${appName}" successfully.`, level: 'success' });
+          executionResult = { success: true, verified: true, app: appName };
+          if (this.jarvisSession) this.jarvisSession.updateEntities({ action: 'OPEN_APP' });
+        } else {
+          this.emit('feedback', { message: `Could not launch "${appName}": ${report || 'application not found'}`, level: 'warning' });
+          executionResult = { success: false, reason: report || 'APPLICATION_NOT_FOUND', verified: false };
+        }
+        break;
+      }
+
+      case ActionType.PC_PRESS:
+      case 'PC_PRESS': {
+        const keys = intent.keys || intent.shortcut || intent.chord || '';
+        this.emit('feedback', { message: `⌨️ Pressing shortcut: ${keys}...`, level: 'info' });
+
+        const normalizedKeys = String(keys).toLowerCase().replace(/\s+/g, '');
+        if (normalizedKeys === 'alt+f4' || normalizedKeys === 'alt+f-4') {
+          if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+            this.emit('feedback', { message: 'Alt+F4: Closing window...', level: 'success' });
+            setTimeout(() => {
+              try { this.mainWindow.close(); } catch (_) {}
+            }, 300);
+            executionResult = { success: true, verified: true, report: 'Closed window via Alt+F4' };
+            break;
+          }
+        }
+
+        if (this.pcEngine && this.pcEngine.actions && typeof this.pcEngine.actions.press === 'function') {
+          if (this.pcEngine.status && !this.pcEngine.status().available) {
+            await this.pcEngine.start().catch(() => {});
+          }
+          const res = await this.pcEngine.actions.press({ keys });
+          const ok = res && res.ok;
+          this.emit('feedback', { message: res?.report || `Pressed ${keys}`, level: ok ? 'success' : 'warning' });
+          executionResult = { success: Boolean(ok), verified: Boolean(ok), report: res?.report };
+        } else {
+          executionResult = { success: false, reason: 'PC control engine unavailable' };
+        }
+        break;
+      }
+
+      case ActionType.PC_CLICK:
+      case 'PC_CLICK': {
+        this.emit('feedback', { message: `🖱️ Clicking desktop element "${intent.text || intent.target || 'target'}"...`, level: 'info' });
+        // on-demand sidecar start (click): sidecars boot lazily; without this,
+  // the first click/move/type/read after launch fails with "input.ps1 not running".
+  if (this.pcEngine.status && !this.pcEngine.status().available) {
+  await this.pcEngine.start().catch(() => {});
+  }
+        if (this.pcEngine && this.pcEngine.actions && typeof this.pcEngine.actions.click === 'function') {
+          const res = await this.pcEngine.actions.click({ text: intent.text || intent.target, x: intent.x, y: intent.y, x1000: intent.x1000, y1000: intent.y1000 });
+          const ok = res && res.ok;
+          this.emit('feedback', { message: res?.report || 'Desktop click executed', level: ok ? 'success' : 'warning' });
+          executionResult = { success: Boolean(ok), verified: Boolean(ok), report: res?.report };
+        } else {
+          executionResult = { success: false, reason: 'PC control engine unavailable' };
+        }
+        break;
+      }
+
+      case ActionType.PC_MOVE:
+      case 'PC_MOVE': {
+        this.emit('feedback', { message: 'Moving mouse' + (intent.x1000 !== undefined ? ' to x1000/y1000 (' + intent.x1000 + ', ' + intent.y1000 + ')' : (intent.x !== undefined ? ' to pixels (' + intent.x + ', ' + intent.y + ')' : '')) + '...', level: 'info' });
+        // on-demand sidecar start (move): sidecars boot lazily; without this,
+  // the first click/move/type/read after launch fails with "input.ps1 not running".
+  if (this.pcEngine.status && !this.pcEngine.status().available) {
+  await this.pcEngine.start().catch(() => {});
+  }
+        if (this.pcEngine && this.pcEngine.actions && typeof this.pcEngine.actions.move === 'function') {
+          const res = await this.pcEngine.actions.move({ text: intent.text || intent.target, x: intent.x, y: intent.y, x1000: intent.x1000, y1000: intent.y1000 });
+          const ok = res && res.ok;
+          this.emit('feedback', { message: res && res.report ? res.report : 'Mouse moved', level: ok ? 'success' : 'warning' });
+          executionResult = { success: Boolean(ok), verified: Boolean(ok), report: res && res.report };
+        } else {
+          executionResult = { success: false, reason: 'PC control engine unavailable' };
+        }
+        break;
+      }
+
+      case ActionType.PC_TYPE:
+      case 'PC_TYPE': {
+        const textVal = intent.text || intent.value || '';
+        this.emit('feedback', { message: `⌨️ Typing into desktop window...`, level: 'info' });
+        // on-demand sidecar start (type): sidecars boot lazily; without this,
+  // the first click/move/type/read after launch fails with "input.ps1 not running".
+  if (this.pcEngine.status && !this.pcEngine.status().available) {
+  await this.pcEngine.start().catch(() => {});
+  }
+        if (this.pcEngine && this.pcEngine.actions && typeof this.pcEngine.actions.type === 'function') {
+          const res = await this.pcEngine.actions.type({ text: textVal, enter: Boolean(intent.enter) });
+          const ok = res && res.ok;
+          this.emit('feedback', { message: res?.report || 'Typed into desktop window', level: ok ? 'success' : 'warning' });
+          executionResult = { success: Boolean(ok), verified: Boolean(ok), report: res?.report };
+        } else {
+          executionResult = { success: false, reason: 'PC control engine unavailable' };
+        }
+        break;
+      }
+
+      case ActionType.PC_READ:
+      case 'PC_READ': {
+        this.emit('feedback', { message: `🔍 Reading desktop window content...`, level: 'info' });
+        // on-demand sidecar start (read): sidecars boot lazily; without this,
+  // the first click/move/type/read after launch fails with "input.ps1 not running".
+  if (this.pcEngine.status && !this.pcEngine.status().available) {
+  await this.pcEngine.start().catch(() => {});
+  }
+        if (this.pcEngine && this.pcEngine.actions && typeof this.pcEngine.actions.read === 'function') {
+          const res = await this.pcEngine.actions.read({});
+          const ok = res && res.ok;
+          const readText = res?.text || res?.report || 'No text found in window.';
+          this.emit('feedback', { message: readText.slice(0, 4000), level: ok ? 'success' : 'warning' });
+          executionResult = { success: Boolean(ok), verified: Boolean(ok), text: readText };
+        } else {
+          executionResult = { success: false, reason: 'PC control engine unavailable' };
+        }
+        break;
+      }
+
+      case ActionType.SYSTEM_VOLUME:
+      case 'SYSTEM_VOLUME': {
+        const act = (intent.action || intent.mode || 'toggle').toLowerCase();
+        let cmd = '';
+        if (process.platform === 'win32') {
+          if (act.includes('mute') || act.includes('toggle')) {
+            cmd = 'powershell.exe -NoProfile -Command "(New-Object -ComObject WScript.Shell).SendKeys([char]173)"';
+          } else if (act.includes('up') || act.includes('increase') || act.includes('raise')) {
+            cmd = 'powershell.exe -NoProfile -Command "for ($i=0; $i -lt 5; $i++) { (New-Object -ComObject WScript.Shell).SendKeys([char]175) }"';
+          } else if (act.includes('down') || act.includes('decrease') || act.includes('lower')) {
+            cmd = 'powershell.exe -NoProfile -Command "for ($i=0; $i -lt 5; $i++) { (New-Object -ComObject WScript.Shell).SendKeys([char]174) }"';
+          } else {
+            cmd = 'powershell.exe -NoProfile -Command "(New-Object -ComObject WScript.Shell).SendKeys([char]173)"';
+          }
+        }
+        if (cmd) {
+          try {
+            const { exec } = require('child_process');
+            await new Promise((resolve) => exec(cmd, { timeout: 3000 }, resolve));
+          } catch (_) {}
+        }
+        this.emit('feedback', { message: `System volume updated (${act}).`, level: 'success' });
+        executionResult = { success: true, verified: true, action: act };
+        break;
+      }
+
+      case ActionType.THEME_SET:
+      case 'THEME_SET':
+      case 'theme_set': {
+        const theme = String(intent.theme || 'dark').toLowerCase();
+        this.emit('shell-action', { action: 'THEME_SET', theme });
+        this.emit('feedback', { message: `Browser theme switched to ${theme} mode`, level: 'success' });
+        executionResult = { success: true, verified: true, theme };
+        break;
+      }
+
+      case ActionType.THEME_TOGGLE:
+      case 'THEME_TOGGLE':
+      case 'theme_toggle': {
+        this.emit('shell-action', { action: 'THEME_TOGGLE' });
+        this.emit('feedback', { message: 'Toggled browser theme', level: 'success' });
+        executionResult = { success: true, verified: true };
+        break;
+      }
+
+      case ActionType.RESEARCH_TOPIC:
+      case 'RESEARCH_TOPIC': {
+        const topic = intent.topic || intent.query || 'web research';
+        this.emit('feedback', { message: `🔬 Launching Deep Research Agent for: "${topic}"...`, level: 'info' });
+        if (this.multiAgents && typeof this.multiAgents.executeDeepResearch === 'function') {
+          try {
+            const res = await this.multiAgents.executeDeepResearch(topic);
+            const summary = res.summary || `Synthesized research for ${topic}`;
+            const bullets = (res.keyPoints || []).map(p => `• ${p}`).join('\n');
+            const fullOutput = `${summary}\n\n${bullets}`.trim();
+            this.emit('feedback', { message: fullOutput, level: 'success' });
+            executionResult = { success: true, verified: true, results: res };
+          } catch (e) {
+            this.emit('feedback', { message: `Research agent error: ${e.message}`, level: 'warning' });
+            executionResult = { success: false, reason: e.message };
+          }
+        } else {
+          executionResult = await this.executeIntent({ type: ActionType.NAVIGATE, query: topic });
+        }
+        break;
+      }
+
+      case ActionType.COMPARE_PRICES:
+      case 'COMPARE_PRICES': {
+        const prod = intent.product || intent.query || 'product';
+        this.emit('feedback', { message: `🛍️ Comparative Shopping Agent scanning prices for "${prod}"...`, level: 'info' });
+        if (this.multiAgents && typeof this.multiAgents.executeComparativeShopping === 'function') {
+          try {
+            const res = await this.multiAgents.executeComparativeShopping(prod, intent.targets || [
+              { name: 'Store 1', basePrice: 59 },
+              { name: 'Store 2', basePrice: 49 },
+              { name: 'Store 3', basePrice: 65 }
+            ]);
+            const best = res.bestOption || {};
+            const msg = `Best deal found for "${prod}": ${best.vendor} at $${best.price} (Potential savings: $${res.savings || 0})`;
+            this.emit('feedback', { message: msg, level: 'success' });
+            executionResult = { success: true, verified: true, results: res };
+          } catch (e) {
+            this.emit('feedback', { message: `Shopping agent error: ${e.message}`, level: 'warning' });
+            executionResult = { success: false, reason: e.message };
+          }
+        } else {
+          executionResult = await this.executeIntent({ type: ActionType.NAVIGATE, query: `buy ${prod} best price` });
+        }
+        break;
+      }
+
+      case ActionType.DESKTOP_SCREENSHOT:
+      case 'DESKTOP_SCREENSHOT': {
+        this.emit('feedback', { message: '📸 Capturing desktop screenshot & inspecting screen text...', level: 'info' });
+        try {
+          const { captureDisplay } = require('../pc/screenCapture');
+          const cap = await captureDisplay();
+          let ocrSummary = '';
+          if (cap && cap.dataUrl) {
+            try {
+              const { recognizeText } = require('../pc/ocr');
+              const fs = require('fs');
+              const path = require('path');
+              const tmpDir = path.join(process.cwd(), '.cache');
+              if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+              const tmpImg = path.join(tmpDir, `screen_${Date.now()}.png`);
+              const base64Data = cap.dataUrl.replace(/^data:image\/\w+;base64,/, '');
+              fs.writeFileSync(tmpImg, Buffer.from(base64Data, 'base64'));
+              const recognized = await recognizeText(tmpImg);
+              try { fs.unlinkSync(tmpImg); } catch (_) {}
+              if (recognized && recognized.trim()) {
+                ocrSummary = recognized.trim().replace(/\s+/g, ' ').slice(0, 350);
+              }
+            } catch (_) {}
+          }
+          const summaryMsg = ocrSummary 
+            ? `Captured desktop display (${cap?.pxWidth}x${cap?.pxHeight}). Visible screen text: "${ocrSummary}"`
+            : `Captured desktop display (${cap?.pxWidth}x${cap?.pxHeight}).`;
+          this.emit('feedback', { message: summaryMsg, level: 'success' });
+          executionResult = { success: true, verified: true, capture: cap, report: summaryMsg, summary: summaryMsg };
+        } catch (e) {
+          executionResult = { success: false, reason: e.message };
+        }
+        break;
+      }
+
       case ActionType.SCROLL: {
+        const scrollBefore = await this.captureInteractionState({ visual: false });
         if (intent.direction === 'top') {
           await this.cdp.evaluate('window.scrollTo({ top: 0, behavior: "smooth" })');
         } else if (intent.direction === 'bottom') {
@@ -1001,39 +2152,196 @@ class AgentRuntime extends EventEmitter {
         } else {
           await this.cdp.dispatchScroll(intent.amount);
         }
-        this.emit('feedback', { message: `Scrolled ${intent.direction}`, level: 'success' });
+        // Verify the scroll actually moved the page (smooth scroll + lazy load
+        // need a beat). Honest failure lets the planner try another approach.
+        let scrollChanged = !scrollBefore;
+        if (scrollBefore) {
+          const scrollDeadline = Date.now() + 1200;
+          while (Date.now() < scrollDeadline) {
+            await new Promise(r => setTimeout(r, 120));
+            const now = await this.captureInteractionState({ visual: false });
+            if (now && this.interactionStateChanged(scrollBefore, now)) { scrollChanged = true; break; }
+          }
+        }
+        if (scrollChanged) {
+          this.emit('feedback', { message: `Scrolled ${intent.direction}`, level: 'success' });
+          executionResult = { success: true, verified: true };
+        } else {
+          this.emit('feedback', { message: `Scroll ${intent.direction} had no effect — page may already be at that position or not scrollable`, level: 'warning' });
+          executionResult = { success: false, reason: 'SCROLL_NO_EFFECT', verified: false };
+        }
         break;
       }
 
       case ActionType.NEW_TAB: {
+        const tabCountBefore = this.tabManager ? this.tabManager.tabs.size : 0;
+        const activeBefore = this.tabManager ? this.tabManager.activeTabId : null;
         this.tabManager.createTab(intent.url || 'adion://newtab');
-        this.emit('feedback', { message: `Opened new tab: ${intent.url}`, level: 'success' });
+        // Verify a new tab actually opened and became active
+        let tabVerified = false;
+        const tabDeadline = Date.now() + 2000;
+        while (Date.now() < tabDeadline) {
+          await new Promise(r => setTimeout(r, 100));
+          if (this.tabManager && (this.tabManager.tabs.size > tabCountBefore || this.tabManager.activeTabId !== activeBefore)) {
+            tabVerified = true; break;
+          }
+        }
+        if (tabVerified) {
+          this.emit('feedback', { message: `Opened new tab: ${intent.url}`, level: 'success' });
+          executionResult = { success: true, verified: true };
+        } else {
+          this.emit('feedback', { message: 'New tab did not open — browser may be busy', level: 'warning' });
+          executionResult = { success: false, reason: 'NEW_TAB_NOT_VERIFIED', verified: false };
+        }
         break;
       }
 
       case ActionType.CLOSE_TAB: {
+        if (!this.tabManager) {
+          executionResult = { success: false, reason: 'TAB_MANAGER_UNAVAILABLE', verified: false };
+          break;
+        }
+
+        const tabCountBefore = this.tabManager.tabs.size;
+        const exceptTarget = intent.except || (intent.query && intent.query.match(/except\s+(.+)/i)?.[1]) || null;
+        const specificTarget = intent.target || (intent.query && !intent.query.toLowerCase().includes('except') ? intent.query : null);
+
+        if (exceptTarget) {
+          const exLower = exceptTarget.toLowerCase().trim();
+          const allTabs = Array.from(this.tabManager.tabs.values());
+          const keepTab = allTabs.find(t =>
+            (t.title || '').toLowerCase().includes(exLower) ||
+            (t.url || '').toLowerCase().includes(exLower)
+          );
+
+          if (keepTab) {
+            let closedCount = 0;
+            for (const t of allTabs) {
+              if (t.id === keepTab.id) continue;
+              this.tabManager.closeTab(t.id);
+              closedCount++;
+            }
+            this.tabManager.switchTab(keepTab.id);
+            const msg = `Closed ${closedCount} tab(s), kept "${keepTab.title || exceptTarget}"`;
+            this.emit('feedback', { message: msg, level: 'success' });
+            executionResult = { success: true, verified: true, closedCount, message: msg };
+            break;
+          }
+
+          // Target tab is NOT open in any browser tab.
+          // Truthful handling: do NOT blindly destroy the user's workspace, do NOT emit fake success.
+          const noMatchMsg = `No open tab matches "${exceptTarget}". All ${allTabs.length} tab(s) were kept open.`;
+          console.warn(`[AgentRuntime CLOSE_TAB] ${noMatchMsg}`);
+          this.emit('feedback', { message: noMatchMsg, level: 'warning' });
+          executionResult = { success: false, reason: 'TARGET_NOT_FOUND', verified: true, message: noMatchMsg };
+          break;
+        }
+
+        if (specificTarget && specificTarget !== 'current' && specificTarget !== 'active') {
+          const qLower = specificTarget.toLowerCase().trim();
+          const allTabs = Array.from(this.tabManager.tabs.values());
+          const matching = allTabs.filter(t =>
+            (t.title || '').toLowerCase().includes(qLower) ||
+            (t.url || '').toLowerCase().includes(qLower)
+          );
+          if (matching.length > 0) {
+            for (const t of matching) {
+              this.tabManager.closeTab(t.id);
+            }
+            this.emit('feedback', { message: `Closed ${matching.length} matching tab(s)`, level: 'success' });
+            executionResult = { success: true, verified: true, closedCount: matching.length };
+            break;
+          }
+        }
+
         if (activeTab) {
-          this.tabManager.closeTab(activeTab.id);
-          this.emit('feedback', { message: 'Closed active tab', level: 'success' });
+          const tabToCloseId = activeTab.id;
+          this.tabManager.closeTab(tabToCloseId);
+          let closeVerified = false;
+          const closeDeadline = Date.now() + 1500;
+          while (Date.now() < closeDeadline) {
+            await new Promise(r => setTimeout(r, 80));
+            if (this.tabManager && !this.tabManager.tabs.has(tabToCloseId)) {
+              closeVerified = true;
+              break;
+            }
+          }
+          if (closeVerified) {
+            this.emit('feedback', { message: 'Closed active tab', level: 'success' });
+            executionResult = { success: true, verified: true };
+          } else {
+            this.emit('feedback', { message: 'Tab did not close', level: 'warning' });
+            executionResult = { success: false, reason: 'CLOSE_TAB_NOT_VERIFIED', verified: false };
+          }
         }
         break;
       }
 
       case ActionType.GO_BACK: {
+        const urlBefore = activeTab?.url || '';
         this.tabManager.goBackActiveTab();
-        this.emit('feedback', { message: 'Navigated back', level: 'success' });
+        // History nav is async — poll for URL change (same-page anchors don't count)
+        let backVerified = false;
+        const backDeadline = Date.now() + 2500;
+        while (Date.now() < backDeadline) {
+          await new Promise(r => setTimeout(r, 120));
+          const cur = this.tabManager?.getActiveTab()?.url || '';
+          if (cur && cur !== urlBefore) { backVerified = true; break; }
+        }
+        if (backVerified) {
+          this.emit('feedback', { message: 'Navigated back', level: 'success' });
+          executionResult = { success: true, verified: true };
+        } else {
+          this.emit('feedback', { message: 'Nothing to go back to (or navigation did not occur)', level: 'warning' });
+          executionResult = { success: false, reason: 'GO_BACK_NOT_VERIFIED', verified: false };
+        }
         break;
       }
 
       case ActionType.GO_FORWARD: {
+        const urlBefore = activeTab?.url || '';
         this.tabManager.goForwardActiveTab();
-        this.emit('feedback', { message: 'Navigated forward', level: 'success' });
+        let fwdVerified = false;
+        const fwdDeadline = Date.now() + 2500;
+        while (Date.now() < fwdDeadline) {
+          await new Promise(r => setTimeout(r, 120));
+          const cur = this.tabManager?.getActiveTab()?.url || '';
+          if (cur && cur !== urlBefore) { fwdVerified = true; break; }
+        }
+        if (fwdVerified) {
+          this.emit('feedback', { message: 'Navigated forward', level: 'success' });
+          executionResult = { success: true, verified: true };
+        } else {
+          this.emit('feedback', { message: 'Nothing to go forward to (or navigation did not occur)', level: 'warning' });
+          executionResult = { success: false, reason: 'GO_FORWARD_NOT_VERIFIED', verified: false };
+        }
         break;
       }
 
       case ActionType.RELOAD: {
-        this.tabManager.reloadActiveTab();
-        this.emit('feedback', { message: 'Reloaded page', level: 'success' });
+        // Verify reload actually started via did-start-loading
+        const reloadContents = activeTab?.view?.webContents;
+        let reloadVerified = false;
+        if (reloadContents) {
+          const __onStart = () => { reloadVerified = true; try { reloadContents.removeListener('did-start-loading', __onStart); } catch (_) {} };
+          try { reloadContents.once('did-start-loading', __onStart); } catch (_) {}
+          this.tabManager.reloadActiveTab();
+          const reloadDeadline = Date.now() + 2500;
+          while (Date.now() < reloadDeadline && !reloadVerified) {
+            await new Promise(r => setTimeout(r, 100));
+          }
+          try { reloadContents.removeListener('did-start-loading', __onStart); } catch (_) {}
+        } else {
+          this.tabManager.reloadActiveTab();
+          reloadVerified = true; // no contents to verify against — don't block
+        }
+        if (reloadVerified) {
+          this.emit('feedback', { message: 'Reloaded page', level: 'success' });
+          executionResult = { success: true, verified: true };
+        } else {
+          this.emit('feedback', { message: 'Reload did not start', level: 'warning' });
+          executionResult = { success: false, reason: 'RELOAD_NOT_VERIFIED', verified: false };
+        }
         break;
       }
 
@@ -1051,7 +2359,10 @@ class AgentRuntime extends EventEmitter {
           this.emit('feedback', { message: `Navigating to WhatsApp Web for +${phone}`, level: 'info' });
         }
 
-        await this.observeAndDispatchWhatsApp(targetTab, phone, message);
+        const waSendRes = await this.observeAndDispatchWhatsApp(targetTab, phone, message);
+        executionResult = waSendRes && waSendRes.success === false
+          ? { success: false, reason: waSendRes.reason || 'WHATSAPP_SEND_NOT_VERIFIED', verified: false }
+          : { success: true, verified: waSendRes ? waSendRes.verified !== false : false, message: waSendRes?.message };
         break;
       }
 
@@ -1114,7 +2425,13 @@ class AgentRuntime extends EventEmitter {
           }
         }
 
-        await this.sendWhatsAppChat(targetTab, contact, message, isNumericPhone ? cleanPhone : null, secretCode);
+        const targetFile = intent.file || (intent.isDocument ? intent.message : null);
+        const waRes = await this.sendWhatsAppChat(targetTab, contact, message, isNumericPhone ? cleanPhone : null, secretCode, { file: targetFile });
+        // Honest outcome: sendWhatsAppChat verifies delivery in the live DOM.
+        // Its failure must reach the planner, not default to blind SUCCESS.
+        executionResult = waRes && waRes.success === false
+          ? { success: false, reason: waRes.reason || 'WHATSAPP_SEND_NOT_VERIFIED', verified: false }
+          : { success: true, verified: waRes ? waRes.verified !== false : false, message: waRes?.message };
         break;
       }
 
@@ -1129,7 +2446,10 @@ class AgentRuntime extends EventEmitter {
             this.emit('feedback', { message: 'Switched to active WhatsApp Web tab', level: 'info' });
           }
         }
-        await this.clickWhatsAppUnreadChat(targetTab);
+        const unreadRes = await this.clickWhatsAppUnreadChat(targetTab);
+        executionResult = unreadRes && unreadRes.success === false
+          ? { success: false, reason: unreadRes.reason || 'UNREAD_CHAT_NOT_OPENED', verified: false }
+          : { success: true, verified: unreadRes ? unreadRes.verified !== false : false, message: unreadRes?.message };
         break;
       }
 
@@ -1138,18 +2458,42 @@ class AgentRuntime extends EventEmitter {
         this.tabManager.navigateActiveTab(destination);
         this.emit('feedback', { message: `Navigating to: ${destination}`, level: 'success' });
         // Wait for target page navigation to settle so subsequent plan actions (e.g. click "Sign Up") ground against the live loaded DOM
+        let navLoadFired = false;
         try {
           const contents = activeTab?.view?.webContents;
           if (contents) {
             await new Promise((resolve) => {
-              const __onLoad = () => __done();
-              const __onDom = () => __done();
-              const __done = () => { try { contents.removeListener('did-finish-load', __onLoad); } catch (_) {} try { contents.removeListener('dom-ready', __onDom); } catch (_) {} clearTimeout(timer); resolve(); };
+              const __onLoad = () => { navLoadFired = true; try { contents.removeListener('did-finish-load', __onLoad); } catch (_) {} __done(); };
+              const __onDom = () => { navLoadFired = true; try { contents.removeListener('dom-ready', __onDom); } catch (_) {} __done(); };
+              const __done = () => { clearTimeout(timer); resolve(); };
               const timer = setTimeout(__done, 3000);
+              if (timer.unref) timer.unref();
               contents.once('did-finish-load', __onLoad);
               contents.once('dom-ready', __onDom);
             });
             await new Promise(r => setTimeout(r, 450));
+          }
+        } catch (_) {}
+        // Verify navigation actually landed on the destination (D:\help
+        // honest-outcome pattern): a failed/blocked nav must not report success.
+        let navVerified = true;
+        try {
+          const navContents = activeTab?.view?.webContents;
+          // Only verify when a real navigation event fired — same-page anchors,
+          // mocks, and prerendered tabs can't be judged by URL comparison.
+          if (navLoadFired && navContents && destination) {
+            const landed = await navContents.executeJavaScript('location.href').catch(() => '');
+            const destNorm = String(destination).toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+            const landedNorm = String(landed || '').toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+            // Search/query destinations legitimately land on a results page;
+            // only flag when the domain itself is absent.
+            const destHost = destNorm.split('/')[0];
+            // Only fail on a PROVEN mismatch — an unreadable/empty URL means
+            // we cannot verify, not that navigation failed (test mocks, prerender).
+            navVerified = !destHost || !landedNorm || landedNorm.includes(destHost) || landedNorm.includes(destNorm);
+            if (!navVerified) {
+              console.warn(`[AgentRuntime Nav] Destination mismatch: wanted "${destination}", landed on "${landed}"`);
+            }
           }
         } catch (_) {}
         if (destination.includes('wa.me') || destination.includes('whatsapp.com')) {
@@ -1160,9 +2504,22 @@ class AgentRuntime extends EventEmitter {
             phone = phone || parsed.searchParams.get('phone') || parsed.pathname.replace(/[^0-9]/g, '');
             message = message || parsed.searchParams.get('text') || '';
           } catch (_) {}
-          await this.observeAndDispatchWhatsApp(activeTab, phone, message);
+          const waNavRes = await this.observeAndDispatchWhatsApp(activeTab, phone, message);
+          if (waNavRes && waNavRes.success === false) {
+            executionResult = { success: false, reason: waNavRes.reason || 'WHATSAPP_SEND_NOT_VERIFIED', verified: false };
+          }
         } else {
           await this.autoHandleContinuations(activeTab);
+        }
+        if (!navVerified) {
+          this.emit('feedback', { message: `Navigation to "${destination}" did not reach the destination (landed elsewhere or blocked).`, level: 'warning' });
+          executionResult = { success: false, reason: 'NAVIGATION_NOT_VERIFIED', verified: false };
+        } else if (!executionResult || executionResult.success !== false) {
+          executionResult = { success: true, verified: true };
+          if (this.jarvisSession && destination) {
+            const destHost = String(destination).replace(/^https?:\/\//i, '').split('/')[0];
+            this.jarvisSession.updateEntities({ site: destHost, action: 'NAVIGATE' });
+          }
         }
         break;
       }
@@ -1170,6 +2527,7 @@ class AgentRuntime extends EventEmitter {
       case ActionType.TOGGLE_DEVTOOLS: {
         this.tabManager.toggleDevTools();
         this.emit('feedback', { message: 'Toggled Developer Tools', level: 'success' });
+        executionResult = { success: true, verified: 'dispatched' };
         break;
       }
 
@@ -1177,41 +2535,60 @@ class AgentRuntime extends EventEmitter {
         const panel = intent.panel || 'console';
         this.tabManager.switchDevToolsPanel(panel);
         this.emit('feedback', { message: `Switched Developer Tools to "${panel}" panel`, level: 'success' });
+        executionResult = { success: true, verified: 'dispatched' };
         break;
       }
 
       case ActionType.FOCUS_DEVTOOLS: {
         this.tabManager.focusDevTools();
         this.emit('feedback', { message: 'Focused Developer Tools', level: 'success' });
+        executionResult = { success: true, verified: 'dispatched' };
         break;
       }
 
       case ActionType.FOCUS_PAGE: {
         this.tabManager.focusPage();
         this.emit('feedback', { message: 'Focused webpage content', level: 'success' });
+        executionResult = { success: true, verified: 'dispatched' };
         break;
       }
 
       case ActionType.SWITCH_TAB: {
-        const target = intent.target || intent.query || intent.id;
+        const target = intent.target ?? intent.query ?? intent.tab ?? intent.tabId ?? intent.index ?? intent.title ?? intent.url ?? intent.id;
         const switched = this.tabManager.switchTabByQuery(target);
         if (switched) {
-          this.emit('feedback', { message: `Switched to tab: ${switched.title || switched.url}`, level: 'success' });
+          this.emit('feedback', { message: `Switched to tab: "${switched.title || switched.url}"`, level: 'success' });
+          executionResult = { success: true, verified: true, tab: switched.id };
         } else {
           this.emit('feedback', { message: `Could not find tab matching: "${target}"`, level: 'warning' });
+          executionResult = { success: false, reason: `TAB_NOT_FOUND: ${target}`, verified: false };
         }
         break;
       }
 
       case ActionType.OPEN_DASHBOARD: {
+        const dashCountBefore = this.tabManager ? this.tabManager.tabs.size : 0;
         this.tabManager.createTab('adion://dashboard');
-        this.emit('feedback', { message: 'Opened live Telemetry & Diagnostics Dashboard', level: 'success' });
+        let dashVerified = false;
+        const dashDeadline = Date.now() + 2000;
+        while (Date.now() < dashDeadline) {
+          await new Promise(r => setTimeout(r, 100));
+          if (this.tabManager && this.tabManager.tabs.size > dashCountBefore) { dashVerified = true; break; }
+        }
+        if (dashVerified) {
+          this.emit('feedback', { message: 'Opened live Telemetry & Diagnostics Dashboard', level: 'success' });
+          executionResult = { success: true, verified: true };
+        } else {
+          this.emit('feedback', { message: 'Dashboard tab did not open', level: 'warning' });
+          executionResult = { success: false, reason: 'DASHBOARD_NOT_VERIFIED', verified: false };
+        }
         break;
       }
 
       case ActionType.SHOW_METRICS_OVERLAY: {
         this.emit('shell-action', { action: 'SHOW_METRICS_OVERLAY' });
         this.emit('feedback', { message: 'Active: Telemetry & Live Diagnostics Overlay GUI', level: 'success' });
+        executionResult = { success: true, verified: 'dispatched' };
         break;
       }
 
@@ -1265,7 +2642,7 @@ class AgentRuntime extends EventEmitter {
             message: `DOM Modified${persistNote}: <${(res.renderedTag || 'node').toLowerCase()}> ${res.resolvedSelector} (${res.action}). Live render verified!`,
             level: 'success'
           });
-          this.emit('jarvis-notification', {
+          this.emit('adion-notification', {
             type: 'success',
             message: `Updated <${(res.renderedTag || 'node').toLowerCase()}> ${res.resolvedSelector} (${res.action})`
           });
@@ -1275,10 +2652,11 @@ class AgentRuntime extends EventEmitter {
             message: generalizedMsg,
             level: 'warning'
           });
-          this.emit('jarvis-notification', {
+          this.emit('adion-notification', {
             type: 'alert',
             message: generalizedMsg
           });
+          executionResult = { success: false, reason: res?.reason || 'DOM_MODIFY_FAILED', verified: false };
         }
         break;
       }
@@ -1297,6 +2675,7 @@ class AgentRuntime extends EventEmitter {
             });
           } else {
             this.emit('feedback', { message: `Element not found: "${selector}"`, level: 'warning' });
+            executionResult = { success: false, reason: 'INSPECT_ELEMENT_NOT_FOUND', verified: false };
           }
         }
         break;
@@ -1305,12 +2684,14 @@ class AgentRuntime extends EventEmitter {
       case ActionType.OPEN_SETTINGS: {
         this.emit('shell-action', { action: 'OPEN_SETTINGS' });
         this.emit('feedback', { message: 'Opened Settings', level: 'success' });
+        executionResult = { success: true, verified: 'dispatched' };
         break;
       }
 
       case ActionType.OPEN_BOOKMARKS: {
         this.emit('shell-action', { action: 'OPEN_BOOKMARKS' });
         this.emit('feedback', { message: 'Opened Bookmarks', level: 'success' });
+        executionResult = { success: true, verified: 'dispatched' };
         break;
       }
 
@@ -1326,8 +2707,10 @@ class AgentRuntime extends EventEmitter {
             this.emit('feedback', { message: `Bookmarked: ${activeTab.title || activeTab.url}`, level: 'success' });
           }
           this.emit('shell-action', { action: 'BOOKMARK_TOGGLED', isBookmarked: !isBm, url: activeTab.url });
+          executionResult = { success: true, verified: true };
         } else {
           this.emit('feedback', { message: 'Cannot bookmark internal or empty page', level: 'warning' });
+          executionResult = { success: false, reason: 'CANNOT_BOOKMARK_INTERNAL_PAGE', verified: false };
         }
         break;
       }
@@ -1335,22 +2718,94 @@ class AgentRuntime extends EventEmitter {
       case ActionType.OPEN_HISTORY: {
         this.emit('shell-action', { action: 'OPEN_HISTORY' });
         this.emit('feedback', { message: 'Opened History', level: 'success' });
+        executionResult = { success: true, verified: 'dispatched' };
+        break;
+      }
+
+      case ActionType.CLICK_COORDINATE: {
+        // D:\help fallback: click by screen coordinates when DOM grounding
+        // can't resolve the target. x,y may be normalized (0-1) viewport
+        // fractions (from the Interactive Scene) or absolute CSS pixels.
+        const contents = activeTab?.view?.webContents;
+        if (!contents) { executionResult = { success: false, reason: 'No active tab for coordinate click' }; break; }
+        let cx = Number(intent.x), cy = Number(intent.y);
+        if (!Number.isFinite(cx) || !Number.isFinite(cy)) {
+          executionResult = { success: false, reason: 'CLICK_COORDINATE requires numeric x and y' };
+          break;
+        }
+        const vp = await contents.executeJavaScript('({w: window.innerWidth, h: window.innerHeight})').catch(() => null);
+        if (!vp) { executionResult = { success: false, reason: 'Could not read viewport size' }; break; }
+        const px = (cx <= 1 && cy <= 1) ? Math.round(cx * vp.w) : Math.round(cx);
+        const py = (cx <= 1 && cy <= 1) ? Math.round(cy * vp.h) : Math.round(cy);
+        if (px < 0 || py < 0 || px > vp.w || py > vp.h) {
+          executionResult = { success: false, reason: `Coordinates (${px},${py}) outside viewport ${vp.w}x${vp.h}` };
+          break;
+        }
+        const before = await this.captureInteractionState({ visual: false });
+        try {
+          contents.sendInputEvent({ type: 'mouseMove', x: px, y: py });
+          await new Promise(r => setTimeout(r, 20));
+          contents.sendInputEvent({ type: 'mouseDown', x: px, y: py, button: 'left', clickCount: 1 });
+          await new Promise(r => setTimeout(r, 40));
+          contents.sendInputEvent({ type: 'mouseUp', x: px, y: py, button: 'left', clickCount: 1 });
+        } catch (_) {}
+        if (this.cdp && this.cdp.isAttached) { try { await this.cdp.dispatchClick(px, py); } catch (_) {} }
+        // Tier 3: in-page DOM event sequence at the point (React/SPAs register
+        // handlers on synthetic dispatched events too — same triple-tier as
+        // autonomousInspectAndClick).
+        await contents.executeJavaScript(`
+          (() => {
+            const el = document.elementFromPoint(${px}, ${py});
+            if (!el) return;
+            const opts = { bubbles: true, cancelable: true, clientX: ${px}, clientY: ${py}, button: 0, buttons: 1, view: window };
+            el.dispatchEvent(new PointerEvent('pointerdown', opts));
+            el.dispatchEvent(new MouseEvent('mousedown', opts));
+            el.dispatchEvent(new PointerEvent('pointerup', { ...opts, buttons: 0 }));
+            el.dispatchEvent(new MouseEvent('mouseup', { ...opts, buttons: 0 }));
+            el.dispatchEvent(new MouseEvent('click', { ...opts, buttons: 0 }));
+          })()
+        `).catch(() => null);
+        let coordChanged = !before;
+        if (before) {
+          const coordDeadline = Date.now() + 1400;
+          while (Date.now() < coordDeadline) {
+            await new Promise(r => setTimeout(r, 120));
+            const now = await this.captureInteractionState({ visual: false });
+            if (now && this.interactionStateChanged(before, now)) { coordChanged = true; break; }
+          }
+        }
+        if (coordChanged) {
+          this.emit('feedback', { message: `Clicked at (${px}, ${py})`, level: 'success' });
+          executionResult = { success: true, verified: true, x: px, y: py };
+        } else {
+          this.emit('feedback', { message: `Click at (${px}, ${py}) produced no visible change`, level: 'warning' });
+          executionResult = { success: false, reason: 'CLICK_NO_EFFECT', verified: false, x: px, y: py };
+        }
         break;
       }
 
       case ActionType.CLICK_SELECTOR: {
+        // Deterministic brakes: a click that sends, pays, deletes or posts is
+        // only run when the person's own request asked for that class of action.
+        const clickGate = this.actionAuthorized({ kind: 'page', label: intent.target || intent.selector }, intent);
+        if (!clickGate.allowed) {
+          this.emit('feedback', { message: clickGate.message, level: 'warning' });
+          executionResult = { success: false, refused: true, reason: clickGate.reason };
+          break;
+        }
+
         const targetLower = (intent.target || '').toLowerCase();
         // Check if referring to Chrome shell buttons
         if (/(developer tools|devtools|dev tools|code button|developer button)/i.test(targetLower)) {
           this.tabManager.toggleDevTools();
           this.emit('feedback', { message: 'Toggled Developer Tools', level: 'success' });
-          executionResult = { success: true };
+          executionResult = { success: true, verified: 'dispatched' };
           break;
         }
         if (/(settings|gear)/i.test(targetLower)) {
           this.emit('shell-action', { action: 'OPEN_SETTINGS' });
           this.emit('feedback', { message: 'Opened Settings', level: 'success' });
-          executionResult = { success: true };
+          executionResult = { success: true, verified: 'dispatched' };
           break;
         }
         if (/(bookmark button|star button|toggle bookmark|add bookmark)/i.test(targetLower)) {
@@ -1359,21 +2814,52 @@ class AgentRuntime extends EventEmitter {
         if (/(bookmark menu|bookmarks list|open bookmarks|show bookmarks)/i.test(targetLower)) {
           this.emit('shell-action', { action: 'OPEN_BOOKMARKS' });
           this.emit('feedback', { message: 'Opened Bookmarks', level: 'success' });
-          executionResult = { success: true };
+          executionResult = { success: true, verified: 'dispatched' };
           break;
         }
         if (/(history)/i.test(targetLower)) {
           this.emit('shell-action', { action: 'OPEN_HISTORY' });
           this.emit('feedback', { message: 'Opened History', level: 'success' });
-          executionResult = { success: true };
+          executionResult = { success: true, verified: 'dispatched' };
           break;
+        }
+
+        // Auth Gate Protection: Never attempt to autonomously complete third-party OAuth flows
+        // (Google, Apple, Facebook sign-in) without user interaction.
+        if (/continue with google|sign in with google|sign in with apple|login with google/i.test(targetLower)) {
+          const curUrl = (activeTab?.url || '').toLowerCase();
+          if (curUrl.includes('/auth') || curUrl.includes('/signup') || curUrl.includes('/login') || curUrl.includes('/account')) {
+            console.log(`[AgentRuntime] Auth Gate detected on "${curUrl}". Halting autonomous OAuth click.`);
+            const authMsg = 'Authentication Required: The site requires an account or sign-in to proceed. Please complete sign-in in the browser.';
+            this.emit('feedback', { message: authMsg, level: 'warning' });
+            this.emit('adion-notification', { type: 'warning', message: authMsg });
+            executionResult = {
+              success: false,
+              refused: true,
+              reason: 'AUTH_GATE_MANUAL_REQUIRED',
+              crossQuestion: authMsg
+            };
+            break;
+          }
         }
 
         this.setState(AgentState.GROUNDING_UI, { target: intent.target });
         this.emit('feedback', { message: `Grounding target: "${intent.target}"...`, level: 'info' });
 
-        const preClickState = this.vision ? await this.captureInteractionState() : null;
-        let clickRes = await this.autonomousInspectAndClick(activeTab, intent.target);
+        // Always capture pre-click state — DOM sampling does not require the
+        // vision module. Gating this on `this.vision` made every click report
+        // blind SUCCESS when vision was unavailable (WhatsApp loop bug).
+        const preClickState = await this.captureInteractionState();
+        // Primary path: AXTree grounding — D:\help's UIA screen-map equivalent.
+        // One CDP call returns every semantic control; ~100ms vs seconds of
+        // DOM-grounding retries. Falls through to DOM grounding on no-match.
+        let clickRes = await this.groundClickAX(activeTab, intent.target);
+        if (!clickRes?.success && clickRes?.reason && clickRes.reason !== 'CLICK_NO_EFFECT') {
+          console.log(`[AgentRuntime Click] AXTree could not ground "${intent.target}" (${clickRes.reason}); falling back to DOM grounding`);
+          clickRes = await this.autonomousInspectAndClick(activeTab, intent.target);
+        } else if (clickRes?.success) {
+          clickRes = { success: true, x: clickRes.x, y: clickRes.y, label: clickRes.label, tag: clickRes.role || 'ax' };
+        }
         // Asynchronously rendered UI (panels, menus, result grids) often needs
         // a beat after the click that opened it. Re-ground before failing.
         if (!clickRes?.success && clickRes?.reason === 'ELEMENT_NOT_FOUND') {
@@ -1383,15 +2869,23 @@ class AgentRuntime extends EventEmitter {
             clickRes = await this.autonomousInspectAndClick(activeTab, intent.target);
           }
         }
+        // D:\help coordinate fallback: grounding found nothing after retries —
+        // resolve the target loosely in-page and click its center coordinates
+        // with real mouse events, bypassing whatever blocked DOM grounding.
+        if (!clickRes?.success && clickRes?.reason === 'ELEMENT_NOT_FOUND' && activeTab?.view?.webContents) {
+          const coordRes = await this.attemptCoordinateFallback(activeTab, intent.target);
+          if (coordRes && coordRes.success) {
+            clickRes = { success: true, x: coordRes.x, y: coordRes.y, label: coordRes.label, tag: 'coord' };
+          }
+        }
         if (clickRes && clickRes.success) {
-          await new Promise((r) => setTimeout(r, 700));
           const domChanged = preClickState
-            ? this.interactionStateChanged(preClickState, await this.captureInteractionState())
+            ? await this.waitForPageChange(preClickState, { timeoutMs: 1600, giveUpMs: 800 })
             : true;
 
           if (domChanged) {
             this.emit('feedback', { message: `Clicked "${clickRes.label || intent.target}" at (${clickRes.x}, ${clickRes.y})`, level: 'success' });
-            executionResult = { success: true, label: clickRes.label || intent.target, x: clickRes.x, y: clickRes.y };
+            executionResult = { success: true, verified: true, label: clickRes.label || intent.target, x: clickRes.x, y: clickRes.y };
           } else {
             // The DOM element was clicked but nothing changed: escalate to the
             // vision model and only accept it if the page visibly responds.
@@ -1443,6 +2937,7 @@ class AgentRuntime extends EventEmitter {
           this.emit('action-finished', { type: ActionType.ANALYZE_IMAGES, count: images.length, candidates: images });
         } else {
           this.emit('feedback', { message: `No images matched criteria: "${intent.criteria}"`, level: 'warning' });
+          executionResult = { success: false, reason: 'NO_IMAGES_MATCHED', verified: false };
         }
         break;
       }
@@ -1475,12 +2970,19 @@ class AgentRuntime extends EventEmitter {
         const analysis = await this.router.analyzeThumbnailVision(screenshot, query, candidates);
         console.log('[AgentRuntime Vision] Analysis output:', analysis);
 
-        // 5. Ground and play the matched video candidate
+        // 5. Ground and play the matched video candidate.
+        // Bounds-check the model's index — an out-of-range matchedIndex must
+        // NOT silently play candidates[0] (arbitrary wrong video = real-world
+        // side effect). Only auto-pick the top candidate when the model gave
+        // no index at all.
         let target = null;
-        if (analysis && analysis.matchedIndex && candidates[analysis.matchedIndex - 1]) {
-          target = candidates[analysis.matchedIndex - 1];
-        } else if (candidates.length > 0) {
-          target = candidates[0];
+        const midx = analysis && Number(analysis.matchedIndex);
+        if (Number.isInteger(midx) && midx >= 1 && midx <= candidates.length) {
+          target = candidates[midx - 1];
+        } else if (analysis && analysis.matchedIndex == null && candidates.length === 1) {
+          target = candidates[0]; // single candidate: unambiguous
+        } else if (analysis && analysis.matchedIndex == null && analysis.confidence >= 0.8 && candidates.length > 0) {
+          target = candidates[0]; // high-confidence no-index pick
         }
 
         if (target && this.vision) {
@@ -1489,13 +2991,23 @@ class AgentRuntime extends EventEmitter {
             message: `Playing: "${target.title}" (${target.channel || 'YouTube'}) - Grounded via ${this.router.accounting.lastAssignedModel}!`,
             level: 'success'
           });
+          executionResult = { success: true, verified: true, target: target.title };
         } else {
-          this.emit('feedback', { message: `Could not identify video thumbnail matching: "${query}"`, level: 'warning' });
+          this.emit('feedback', { message: `Could not confidently identify video thumbnail matching: "${query}"`, level: 'warning' });
+          executionResult = { success: false, reason: 'NO_CONFIDENT_VIDEO_MATCH', verified: false };
         }
         break;
       }
 
       case ActionType.INPUT_TEXT: {
+        // Deterministic Privacy & Sensitive Field Guard (adapted from companion/src/guide/sensitive.js)
+        const { isSensitiveField, PRIVACY_REFUSAL } = require('./sensitiveGuard');
+        if (isSensitiveField(intent)) {
+          console.warn(`[AgentRuntime PrivacyGuard] Refused input into sensitive field: ${intent.target || intent.selector}`);
+          this.emit('feedback', { message: `🛡️ ${PRIVACY_REFUSAL}`, level: 'warning' });
+          executionResult = { success: false, refused: true, reason: 'SENSITIVE_FIELD_GUARD', message: PRIVACY_REFUSAL };
+          break;
+        }
         const rawPrompt = String(intent.raw || '').toLowerCase().trim();
         const textVal = String(intent.text || intent.value || '').trim();
 
@@ -1509,12 +3021,23 @@ class AgentRuntime extends EventEmitter {
         if (!hasExplicitTypingIntent && isGreetingOrCourtesy) {
           console.warn(`[AgentRuntime Guard] Blocked unintended text input "${textVal}": identified as conversational greeting, not a page input command.`);
           this.emit('feedback', { message: `Greeting recognized: "${textVal}". Standing by for browser commands.`, level: 'info' });
-          this.emit('jarvis-notification', { type: 'info', message: 'Ready for browser commands.' });
+          this.emit('adion-notification', { type: 'info', message: 'Ready for browser commands.' });
           executionResult = { success: true, greeting: true };
           break;
         }
 
         const selector = intent.selector || intent.target || '';
+        const submitGate = this.actionAuthorized({
+          kind: 'page',
+          fieldName: selector,
+          submit: intent.submit !== false
+        }, intent);
+        if (!submitGate.allowed) {
+          this.emit('feedback', { message: submitGate.message, level: 'warning' });
+          executionResult = { success: false, refused: true, reason: submitGate.reason };
+          break;
+        }
+
         const typeRes = await this.autonomousTypeIntoElement(activeTab, selector, textVal, {
           submit: intent.submit !== false,
           rawPrompt
@@ -1533,6 +3056,16 @@ class AgentRuntime extends EventEmitter {
         if (!cmd) {
           executionResult = { success: false, reason: 'No command provided for TERMINAL_EXEC' };
           this.emit('feedback', { message: 'Terminal execution failed: No command provided', level: 'warning' });
+          break;
+        }
+
+        // The shell is the largest blast radius in the product: nothing runs
+        // until the person's own words authorized this class of command.
+        const shellGate = this.actionAuthorized({ kind: 'shell', command: cmd }, intent);
+        if (!shellGate.allowed) {
+          this.emit('feedback', { message: shellGate.message, level: 'warning' });
+          this.emit('adion-notification', { type: 'warning', message: 'Command blocked: it was not authorized by the request.' });
+          executionResult = { success: false, refused: true, reason: shellGate.reason };
           break;
         }
 
@@ -1654,10 +3187,11 @@ class AgentRuntime extends EventEmitter {
       const tag = (modResult.renderedTag || 'button').toLowerCase();
 
       let modified = false;
+      const rxEsc = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
       // A. Match by exact element ID in source HTML
       if (elId) {
-        const tagRegex = new RegExp(`(<${tag}[^>]*\\bid=["']${elId}["'][^>]*>)`, 'i');
+        const tagRegex = new RegExp(`(<${tag}[^>]*\\bid=["']${rxEsc(elId)}["'][^>]*>)`, 'i');
         const match = content.match(tagRegex);
         if (match) {
           let openTag = match[1];
@@ -1683,7 +3217,7 @@ class AgentRuntime extends EventEmitter {
               content = content.replace(/(<span\s+id=["']valBass["'][^>]*>)[^<]*(<\/span>)/i, `$1${rawVal} dB$2`);
             }
           } else if (modResult.action === 'setText' && modResult.appliedValue) {
-            const fullTagRegex = new RegExp(`(<${tag}[^>]*\\bid=["']${elId}["'][^>]*>)([\\s\\S]*?)(<\\/${tag}>)`, 'i');
+            const fullTagRegex = new RegExp(`(<${tag}[^>]*\\bid=["']${rxEsc(elId)}["'][^>]*>)([\\s\\S]*?)(<\\/${tag}>)`, 'i');
             content = content.replace(fullTagRegex, `${openTag}${modResult.appliedValue}$3`);
             // If updating valBass display, keep sliderBass value in sync
             if (elId === 'valBass') {
@@ -1703,7 +3237,7 @@ class AgentRuntime extends EventEmitter {
       if (!modified && modResult.resolvedSelector) {
         const cleanSel = modResult.resolvedSelector.replace(/^[#\.]/, '').trim();
         if (cleanSel && !['button', 'btn', 'input', 'div', 'span', 'p'].includes(cleanSel.toLowerCase())) {
-          const altRegex = new RegExp(`(<${tag}[^>]*(?:id|data-id|data-testid)=["']${cleanSel}["'][^>]*>)`, 'i');
+          const altRegex = new RegExp(`(<${tag}[^>]*(?:id|data-id|data-testid)=["']${rxEsc(cleanSel)}["'][^>]*>)`, 'i');
           const match = content.match(altRegex);
           if (match) {
             let openTag = match[1];
@@ -1789,8 +3323,7 @@ class AgentRuntime extends EventEmitter {
       } catch (_) {}
     }
 
-    await new Promise((r) => setTimeout(r, 900));
-    const landed = this.interactionStateChanged(beforeState, await this.captureInteractionState());
+    const landed = await this.waitForPageChange(beforeState, { timeoutMs: 1800, giveUpMs: 900 });
     if (!landed) {
       this.emit('feedback', {
         message: `Visual click at (${match.x}, ${match.y}) produced no visible page change; not reporting success.`,
@@ -1843,17 +3376,49 @@ class AgentRuntime extends EventEmitter {
   }
 
   /**
+   * Full scrollable-page screenshot via CDP captureBeyondViewport — the whole
+   * document, not just the viewport. Used when the task needs to see content
+   * below the fold (long pages, feeds, documentation).
+   */
+  async captureFullPageBase64() {
+    try {
+      const tab = this.tabManager ? this.tabManager.getActiveTab() : null;
+      const contents = tab && tab.view ? tab.view.webContents : null;
+      if (!contents) return null;
+      if (this.cdp && !this.cdp.isAttached) await this.cdp.attach(contents);
+      if (!this.cdp || !this.cdp.isAttached) return null;
+      const png = await this.cdp.captureFullPageScreenshot(1280);
+      if (!png) return null;
+      const css = await contents.executeJavaScript('({ width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight })').catch(() => null);
+      return {
+        png,
+        width: css ? css.width : 1280,
+        height: css ? css.height : 0,
+        fullPage: true
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
    * Compact DOM + downscaled visual fingerprint. Used to prove that a
    * vision-grounded click actually changed what the user sees (canvas editors
    * expose no DOM for their content).
    */
-  async captureInteractionState() {
+  async captureInteractionState(options = {}) {
     const tab = this.tabManager ? this.tabManager.getActiveTab() : null;
     if (!tab || !tab.view) return null;
     const contents = tab.view.webContents;
     try {
-      const dom = await contents.executeJavaScript(`({ url: location.href, title: document.title, textLen: (document.body && document.body.innerText ? document.body.innerText.length : 0), nodes: document.querySelectorAll('*').length })`);
+      const dom = await contents.executeJavaScript(`({ url: location.href, title: document.title, textLen: (document.body && document.body.innerText ? document.body.innerText.length : 0), nodes: document.querySelectorAll('*').length, scrollY: Math.round(window.scrollY || 0), scrollX: Math.round(window.scrollX || 0), focused: (document.activeElement ? (document.activeElement.tagName + '|' + (document.activeElement.getAttribute('aria-label') || document.activeElement.placeholder || document.activeElement.name || '')).slice(0, 80) : '') })`);
+      // A capture without the expected signature (mocks, prerender, about:blank
+      // races) is "cannot verify", not "verified unchanged" — return null so
+      // callers treat the action as unverifiable rather than failed.
+      if (!dom || typeof dom !== 'object' || (dom.textLen === undefined && dom.nodes === undefined && !dom.url)) return null;
       let visual = null;
+      // Always capture visual sample (32x32 grayscale histogram) to catch DOM-invisible changes
+      // (canvas, infinite scroll, drag-drop, any UI updates without URL/innerText changes).
       const captured = await this.capturePageBase64();
       const shot = captured ? captured.png : null;
       if (shot) {
@@ -1889,8 +3454,16 @@ class AgentRuntime extends EventEmitter {
     const b = before.dom || {};
     const a = after.dom || {};
     if (b.url !== a.url) return true;
-    if (Math.abs((b.textLen || 0) - (a.textLen || 0)) > 0) return true;
-    if (Math.abs((b.nodes || 0) - (a.nodes || 0)) > 0) return true;
+    // Meaningful-change thresholds (D:\help ScreenWatcher-style jitter tolerance):
+    // SPAs like WhatsApp mutate textLen/nodes constantly (timestamps, unread
+    // badges, "typing…"), so any-delta detection reports false SUCCESS.
+    if (Math.abs((b.textLen || 0) - (a.textLen || 0)) > 40) return true;
+    if (Math.abs((b.nodes || 0) - (a.nodes || 0)) > 15) return true;
+    // Scroll position: a real scroll moves >80px; layout jitter stays under it.
+    if (Math.abs((b.scrollY || 0) - (a.scrollY || 0)) > 80) return true;
+    if (Math.abs((b.scrollX || 0) - (a.scrollX || 0)) > 80) return true;
+    // NOTE: focus-only changes are NOT page changes — clicking a row moves
+    // focus without opening anything (was causing false SUCCESS on clicks).
     if (Array.isArray(before.visual) && Array.isArray(after.visual) && before.visual.length === after.visual.length && before.visual.length > 0) {
       let changed = 0;
       for (let i = 0; i < before.visual.length; i++) {
@@ -1922,7 +3495,7 @@ class AgentRuntime extends EventEmitter {
 
         // 1. Find best element. A selector may name the field, or it may name a
         // form/container: resolve the editable control inside it.
-        const editableSelector = 'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]), textarea, [contenteditable="true"], [role="textbox"], [data-lexical-editor="true"], [data-slate-editor="true"]';
+        const editableSelector = 'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]), textarea, [contenteditable="true"], [role="textbox"], [data-lexical-editor="true"], [data-slate-editor="true"], div[contenteditable="true"]';
         const isTextInput = (el) => Boolean(el && (
           el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' ||
           el.isContentEditable || el.getAttribute('contenteditable') === 'true' ||
@@ -1953,22 +3526,35 @@ class AgentRuntime extends EventEmitter {
         // 2. If selector not found directly, or if selector was a description/fuzzy name
         if (!targetEl && sel) {
           const sLower = sel.toLowerCase();
-          const allInputs = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"], [role="textbox"]'));
+          const allInputs = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"], [role="textbox"], div[contenteditable="true"]'));
+          
+          // WhatsApp-specific search box patterns
+          if (sLower.includes('search') || sLower.includes('start new chat')) {
+            targetEl = allInputs.find(el => {
+              const p = (el.placeholder || el.getAttribute('placeholder') || '').toLowerCase();
+              const a = (el.getAttribute('aria-label') || '').toLowerCase();
+              const t = (el.getAttribute('title') || '').toLowerCase();
+              const dataTab = el.getAttribute('data-tab');
+              return p.includes('search') || a.includes('search') || t.includes('search') || dataTab === '3';
+            });
+          }
           
           // Match by name or type or id
-          targetEl = allInputs.find(el => {
-            const n = (el.name || el.getAttribute('name') || '').toLowerCase();
-            const tp = (el.type || '').toLowerCase();
-            const id = (el.id || '').toLowerCase();
-            const p = (el.placeholder || el.getAttribute('placeholder') || '').toLowerCase();
-            const a = (el.getAttribute('aria-label') || '').toLowerCase();
+          if (!targetEl) {
+            targetEl = allInputs.find(el => {
+              const n = (el.name || el.getAttribute('name') || '').toLowerCase();
+              const tp = (el.type || '').toLowerCase();
+              const id = (el.id || '').toLowerCase();
+              const p = (el.placeholder || el.getAttribute('placeholder') || '').toLowerCase();
+              const a = (el.getAttribute('aria-label') || '').toLowerCase();
 
-            if (sLower.includes('pass')) return tp === 'password' || n.includes('pass') || id.includes('pass');
-            if (sLower.includes('user') || sLower.includes('email') || sLower.includes('login') || sLower.includes('account')) {
-              return (tp === 'text' || tp === 'email') || n.includes('user') || n.includes('email') || id.includes('user') || id.includes('email');
-            }
-            return n.includes(sLower) || id.includes(sLower) || p.includes(sLower) || a.includes(sLower);
-          });
+              if (sLower.includes('pass')) return tp === 'password' || n.includes('pass') || id.includes('pass');
+              if (sLower.includes('user') || sLower.includes('email') || sLower.includes('login') || sLower.includes('account')) {
+                return (tp === 'text' || tp === 'email') || n.includes('user') || n.includes('email') || id.includes('user') || id.includes('email');
+              }
+              return n.includes(sLower) || id.includes(sLower) || p.includes(sLower) || a.includes(sLower);
+            });
+          }
         }
 
         if (!targetEl) {
@@ -2045,6 +3631,8 @@ class AgentRuntime extends EventEmitter {
 
         const isContentEditable = targetEl.isContentEditable || targetEl.getAttribute('contenteditable') === 'true';
 
+        // Hardware-level character input for better React/Electron compatibility
+        // First set the value via DOM, then dispatch hardware keystrokes for real framework state
         if (isContentEditable) {
           document.execCommand('selectAll', false, null);
           document.execCommand('insertText', false, txt);
@@ -2131,7 +3719,12 @@ class AgentRuntime extends EventEmitter {
     await this.renderChromeInspectOverlay(tab, targetSelectorOrQuery, 'TYPE', 2200);
 
     // Step 2: Dispatch Chromium native hardware Enter if submission requested
+    let submitVerified = null; // null = no submit attempted
     if (shouldSubmit) {
+      // Capture pre-submit state so we can verify the submit actually did
+      // something (message sent, search executed, form advanced) — typing
+      // being verified does NOT prove submission worked (D:\help done-check).
+      const preSubmitState = await this.captureInteractionState({ visual: false });
       await new Promise(r => setTimeout(r, 120));
       contents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
       contents.sendInputEvent({ type: 'char', keyCode: '\r' });
@@ -2145,20 +3738,32 @@ class AgentRuntime extends EventEmitter {
           })()
         `).catch(() => null);
       }
+
+      // Poll briefly for a real page reaction to the submit.
+      if (preSubmitState) {
+        const submitDeadline = Date.now() + 1600;
+        submitVerified = false;
+        while (Date.now() < submitDeadline) {
+          await new Promise(r => setTimeout(r, 140));
+          const now = await this.captureInteractionState({ visual: false });
+          if (now && this.interactionStateChanged(preSubmitState, now)) { submitVerified = true; break; }
+        }
+      }
     }
 
     const fieldLabel = domResult.field ? ` into "${domResult.field}"` : '';
-    const feedbackMsg = shouldSubmit ? `Typed "${text}"${fieldLabel} and submitted` : `Typed "${text}"${fieldLabel}`;
-    this.emit('feedback', { message: feedbackMsg, level: 'success' });
-    return { success: true, verified: domResult.verified !== false, typedValue: domResult.typedValue, field: domResult.field };
+    const submitNote = submitVerified === false ? ' (submit not confirmed — page did not visibly react)' : '';
+    const feedbackMsg = shouldSubmit ? `Typed "${text}"${fieldLabel} and submitted${submitNote}` : `Typed "${text}"${fieldLabel}`;
+    this.emit('feedback', { message: feedbackMsg, level: submitVerified === false ? 'warning' : 'success' });
+    return { success: true, verified: domResult.verified !== false, submitVerified, typedValue: domResult.typedValue, field: domResult.field };
   }
 
   /**
    * Real-Time Chrome DevTools-style Element Inspector & Dual Tracking HUD.
    * Renders the authentic Chrome Inspect highlight box (box model) and 
    * DevTools Tooltip Card (Tag, Classes, Dimensions, Color, Font, Accessibility:
-   * Contrast, Name, Role, Keyboard-focusable, plus active Jarvis action badge).
-   * Emits live telemetry to the browser shell and Jarvis Copilot side panel.
+   * Contrast, Name, Role, Keyboard-focusable, plus active Adion action badge).
+   * Emits live telemetry to the browser shell and Adion Copilot side panel.
    */
   async renderChromeInspectOverlay(tab, targetSelectorOrEl, action = 'INSPECT', durationMs = 2800, details = {}) {
     if (!tab || !tab.view) tab = this.tabManager ? this.tabManager.getActiveTab() : null;
@@ -2304,7 +3909,7 @@ class AgentRuntime extends EventEmitter {
             '</div>' +
             '<div style="border-top:1px dashed #d1d5db;margin-top:6px;padding-top:4px;font-size:10px;font-weight:700;letter-spacing:1px;color:#0284c7;display:flex;align-items:center;gap:6px;">' +
               '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#0284c7;box-shadow:0 0 6px #0284c7;"></span>' +
-              '<span>⚡ JARVIS ACTIVE: ' + actionName.toUpperCase() + '</span>' +
+              '<span>⚡ ADION ACTIVE: ' + actionName.toUpperCase() + '</span>' +
             '</div>';
 
           root.appendChild(card);
@@ -2360,6 +3965,272 @@ class AgentRuntime extends EventEmitter {
    * - Dispatches CDP Input.dispatchMouseEvent for absolute framework/React 18+ event registration
    */
   /**
+   * AXTree scene — D:\help's UIA screen-map equivalent. One CDP call returns
+   * every semantic control (role + name) Chromium exposes to assistive tech.
+   * Far more accurate and faster than DOM querySelectorAll heuristics.
+   */
+  async captureAXScene(tab) {
+    const contents = tab?.view?.webContents;
+    if (!contents) return [];
+    try {
+      if (this.cdp && !this.cdp.isAttached) await this.cdp.attach(contents);
+      if (!this.cdp || !this.cdp.isAttached) return [];
+      const nodes = await this.cdp.getAXTree();
+      const ACTIONABLE = new Set(['button','link','textbox','searchbox','combobox','listbox','option','tab','tablist','menu','menubar','menuitem','menuitemcheckbox','menuitemradio','checkbox','radio','radio button','switch','slider','spinbutton','treeitem','gridcell','row','cell','listitem','article','form','dialog','alertdialog','toolbar','navigation','main','heading','img','image','video','canvas','document','webarea','application','group','generic','inline text box','section','region','banner','contentinfo','search','complementary','figure','feed','summary','details','meter','progressbar','scrollbar','separator','statictext','tooltip','status','log','marquee','timer','directory','doc-cover','doc-backlink','doc-bibliography','doc-endnote','doc-footnote','doc-glossary','doc-notice','doc-tip','emphasis','strong','code','insertion','deletion','subscript','superscript','time','mark','suggestion','comment','paragraph','line break','page break','annotation','comment']);
+      const INTERACTIVE_ROLES = new Set(['button','link','textbox','searchbox','combobox','option','tab','menuitem','checkbox','radio','radio button','switch','listitem','treeitem','gridcell','row','cell','article','heading']);
+      const CONTENT_ROLES = new Set(['statictext','inline text box','paragraph','article','heading','listitem','row','cell','gridcell','comment','mark','strong','emphasis','time']);
+      // Two quotas scanned across the WHOLE tree: first-60-in-order floods on
+      // apps whose left pane (chat lists, nav trees) emits hundreds of text
+      // nodes before the main content pane is reached (WhatsApp msg-container).
+      const interactive = [];
+      const content = [];
+      for (const n of nodes) {
+        if (interactive.length >= 40 && content.length >= 40) break;
+        const role = String(n.role?.value || n.role || '').toLowerCase();
+        const name = String(n.name?.value || n.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+        if (!name || name.length < 3) continue;
+        const props = n.properties || [];
+        const has = (p) => props.some(pr => pr.name === p && (pr.value?.value === true || pr.value === true));
+        const isInteractive = has('focusable') || has('editable') || has('settable') || INTERACTIVE_ROLES.has(role);
+        const entry = { role, name, backendNodeId: n.backendDOMNodeId, id: n.nodeId };
+        if (isInteractive && interactive.length < 40) { interactive.push(entry); continue; }
+        // Content nodes need substance: skip icon-ish/tiny labels, keep real text.
+        if (CONTENT_ROLES.has(role) && content.length < 40 && name.length >= 4 && !/^[\d:.,\s]+$/.test(name)) {
+          content.push(entry);
+        }
+      }
+      return [...interactive, ...content];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /**
+   * Ground a click through the AXTree: score node names against the query,
+   * resolve the winner's backend node to viewport coords, click all three
+   * tiers, verify effect. D:\help's resolvePoint→mouse.click flow.
+   */
+  async groundClickAX(tab, query) {
+    const contents = tab?.view?.webContents;
+    if (!contents || !query) return { success: false, reason: 'no-tab-or-query' };
+    const scene = await this.captureAXScene(tab);
+    if (!scene.length) return { success: false, reason: 'AXTREE_EMPTY' };
+
+    const q = String(query).toLowerCase();
+    const qTokens = q.split(/[^a-z0-9@.]+/).filter(t => t.length > 2);
+    const tokenScore = typeof scoreTokenOverlap === 'function' ? scoreTokenOverlap : () => 0;
+    const scored = [];
+    for (const el of scene) {
+      const name = el.name.toLowerCase();
+      const nameTokens = name.split(/[^a-z0-9@.]+/).filter(t => t.length > 2);
+      
+      // Exact substring match is strongest signal
+      let sc = name.includes(q) ? 2.0 : tokenScore(q, el.name);
+      
+      const foundTokens = qTokens.length > 0 ? qTokens.filter(t => nameTokens.includes(t)).length : 0;
+      const coverage = qTokens.length > 0 ? foundTokens / qTokens.length : 0;
+
+      // Filter out elements that have zero token overlap and no substring match
+      if ((coverage === 0 || foundTokens === 0) && !name.includes(q)) {
+        continue;
+      }
+
+      // If query has 2+ tokens, require meaningful token coverage unless exact substring match
+      if (qTokens.length >= 2 && coverage < 0.35 && !name.includes(q)) {
+        continue;
+      }
+
+      // Token coverage bonus
+      if (qTokens.length > 0) {
+        if (coverage === 1) {
+          sc += 0.5; // All tokens present - strong signal
+        } else if (coverage >= 0.75) {
+          sc += 0.2; // Most tokens present
+        } else if (coverage === 0) {
+          sc -= 0.5; // No tokens match
+        }
+      }
+      
+      // Length penalty / bonus: only reward similar length if token overlap is already high
+      const nameLen = name.length;
+      const queryLen = q.length;
+      if (coverage >= 0.7 || name.includes(q)) {
+        if (nameLen >= queryLen - 2 && nameLen <= queryLen + 5) {
+          sc += 0.3; // Bonus for similar length only when tokens actually match
+        }
+      }
+      if (nameLen > queryLen + 15) {
+        sc -= 0.4; // Penalty for much longer names
+      }
+      
+      // Role bonus: prefer genuinely clickable roles for click targets
+      if (['button','link','textbox','option','tab','menuitem','listitem','gridcell','row'].includes(el.role)) sc += 0.08;
+      
+      scored.push({ ...el, score: sc });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    const best = scored[0];
+    if (!best || best.score < 0.5) return { success: false, reason: 'AXTREE_NO_MATCH', sceneSize: scene.length };
+    
+    // Strict validation: ensure the best match has sufficient token coverage
+    if (qTokens.length > 1 && !best.name.toLowerCase().includes(q)) {
+      const bestTokens = best.name.toLowerCase().split(/[^a-z0-9@.]+/).filter(t => t.length > 2);
+      const matchedTokens = qTokens.filter(t => bestTokens.includes(t));
+      const bestCoverage = matchedTokens.length / qTokens.length;
+      if (bestCoverage < 0.5) {
+        console.log(`[AgentRuntime AXClick] Rejecting candidate "${best.name}" due to low token coverage (${(bestCoverage * 100).toFixed(0)}% < 50%): matched [${matchedTokens.join(', ')}], missing [${qTokens.filter(t => !bestTokens.includes(t)).join(', ')}]`);
+        return { success: false, reason: 'AXTREE_TOKEN_MISMATCH', best: best.name, matched: matchedTokens };
+      }
+    }
+    
+    // Ambiguity rule: two candidates within 0.05 means no clear winner
+    if (scored.length > 1 && (best.score - scored[1].score) < 0.05) {
+      return { success: false, reason: 'AXTREE_AMBIGUOUS', candidates: [best.name, scored[1].name] };
+    }
+
+    const center = await this.cdp.getNodeCenter(best.backendNodeId);
+    if (!center) return { success: false, reason: 'AXTREE_NO_BOX', label: best.name };
+
+    const before = await this.captureInteractionState({ visual: false });
+    try {
+      contents.sendInputEvent({ type: 'mouseMove', x: center.x, y: center.y });
+      await new Promise(r => setTimeout(r, 20));
+      contents.sendInputEvent({ type: 'mouseDown', x: center.x, y: center.y, button: 'left', clickCount: 1 });
+      await new Promise(r => setTimeout(r, 40));
+      contents.sendInputEvent({ type: 'mouseUp', x: center.x, y: center.y, button: 'left', clickCount: 1 });
+    } catch (_) {}
+    if (this.cdp && this.cdp.isAttached) { try { await this.cdp.dispatchClick(center.x, center.y); } catch (_) {} }
+    await contents.executeJavaScript(`
+      (() => {
+        const el = document.elementFromPoint(${center.x}, ${center.y});
+        if (!el) return;
+        const opts = { bubbles: true, cancelable: true, clientX: ${center.x}, clientY: ${center.y}, button: 0, buttons: 1, view: window };
+        el.dispatchEvent(new PointerEvent('pointerdown', opts));
+        el.dispatchEvent(new MouseEvent('mousedown', opts));
+        el.dispatchEvent(new PointerEvent('pointerup', { ...opts, buttons: 0 }));
+        el.dispatchEvent(new MouseEvent('mouseup', { ...opts, buttons: 0 }));
+        el.dispatchEvent(new MouseEvent('click', { ...opts, buttons: 0 }));
+      })()
+    `).catch(() => null);
+
+    let changed = !before;
+    if (before) {
+      const dl = Date.now() + 1400;
+      while (Date.now() < dl) {
+        await new Promise(r => setTimeout(r, 120));
+        const now = await this.captureInteractionState({ visual: false });
+        if (now && this.interactionStateChanged(before, now)) { changed = true; break; }
+      }
+    }
+    console.log(`[AgentRuntime AXClick] "${best.name}" (${best.role}) @${center.x},${center.y} score=${best.score?.toFixed?.(2)} changed=${changed}`);
+    return { success: changed, x: center.x, y: center.y, label: best.name, role: best.role, score: best.score, verified: changed };
+  }
+
+  /**
+   * D:\help coordinate fallback: when DOM grounding can't resolve a target,
+   * find the best fuzzy element match in-page and click its center with real
+   * mouse events. Looser than autonomousInspectAndClick — token overlap on
+   * label/aria/text plus clickable-ancestor climb, no strict selector needed.
+   */
+  async attemptCoordinateFallback(tab, targetQuery) {
+    const contents = tab?.view?.webContents;
+    if (!contents || !targetQuery) return { success: false, reason: 'no-tab-or-query' };
+    const query = String(targetQuery);
+
+    const found = await contents.executeJavaScript(`
+      (() => {
+        try {
+          const q = ${JSON.stringify(query)}.toLowerCase();
+          const qTokens = q.split(/[^a-z0-9@.]+/).filter(t => t.length > 2);
+          const isVisible = (el) => {
+            const r = el.getBoundingClientRect();
+            const s = window.getComputedStyle(el);
+            return r.width > 8 && r.height > 8 && r.height <= window.innerHeight * 1.2 && r.bottom > 0 && r.top < window.innerHeight &&
+                   s.display !== 'none' && s.visibility !== 'hidden';
+          };
+          const labelOf = (el) => (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || el.getAttribute('data-tab') || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
+          const score = ${scoreTokenOverlap.toString()};
+          let best = null;
+          const candidates = document.querySelectorAll('button, a, [role="button"], [role="link"], [role="option"], [role="menuitem"], [tabindex], [data-tab], li, [class*="row"], [class*="item"], [class*="cell"], [class*="chat"], div[onclick], span');
+          for (const el of candidates) {
+            if (!isVisible(el)) continue;
+            const label = labelOf(el);
+            if (!label || label.length > 160) continue;
+            const labelLower = label.toLowerCase();
+            const labelTokens = labelLower.split(/[^a-z0-9@.]+/).filter(t => t.length > 2);
+            // Exact substring fast path
+            let sc = labelLower.includes(q) ? 1.0 : score(q, label);
+            // Token coverage check - require ALL tokens
+            if (qTokens.length > 0) {
+              const foundTokens = qTokens.filter(t => labelTokens.includes(t)).length;
+              const coverage = foundTokens / qTokens.length;
+              if (coverage === 1) {
+                sc += 0.4; // All tokens present
+              } else if (coverage === 0) {
+                sc -= 0.2; // No tokens match
+              }
+            }
+            if (sc < 0.35) continue;
+            // Prefer clickable ancestors: climb until role/tabindex/onclick
+            let target = el;
+            for (let p = el; p && p !== document.body; p = p.parentElement) {
+              const clickable = p.getAttribute('role') === 'button' || p.getAttribute('role') === 'link' ||
+                p.hasAttribute('onclick') || p.getAttribute('tabindex') !== null ||
+                /button|link/i.test(p.tagName);
+              if (clickable) { target = p; break; }
+              target = p;
+            }
+            const r = target.getBoundingClientRect();
+            const cx = Math.round(r.left + r.width / 2), cy = Math.round(r.top + r.height / 2);
+            if (!best || sc > best.score) best = { x: cx, y: cy, label: labelOf(target) || label, score: sc, tag: target.tagName };
+          }
+          return best;
+        } catch (e) { return { error: String(e) }; }
+      })()
+    `).catch(() => null);
+
+    if (!found || found.error || !Number.isFinite(found.x)) {
+      return { success: false, reason: found?.error || 'NO_COORD_MATCH' };
+    }
+
+    // Real OS-level mouse click at resolved coordinates + effect verification
+    const before = await this.captureInteractionState({ visual: false });
+    try {
+      contents.sendInputEvent({ type: 'mouseMove', x: found.x, y: found.y });
+      await new Promise(r => setTimeout(r, 20));
+      contents.sendInputEvent({ type: 'mouseDown', x: found.x, y: found.y, button: 'left', clickCount: 1 });
+      await new Promise(r => setTimeout(r, 40));
+      contents.sendInputEvent({ type: 'mouseUp', x: found.x, y: found.y, button: 'left', clickCount: 1 });
+    } catch (_) {}
+    if (this.cdp && this.cdp.isAttached) { try { await this.cdp.dispatchClick(found.x, found.y); } catch (_) {} }
+    // Tier 3: in-page DOM event sequence at the resolved point.
+    await contents.executeJavaScript(`
+      (() => {
+        const el = document.elementFromPoint(${found.x}, ${found.y});
+        if (!el) return;
+        const opts = { bubbles: true, cancelable: true, clientX: ${found.x}, clientY: ${found.y}, button: 0, buttons: 1, view: window };
+        el.dispatchEvent(new PointerEvent('pointerdown', opts));
+        el.dispatchEvent(new MouseEvent('mousedown', opts));
+        el.dispatchEvent(new PointerEvent('pointerup', { ...opts, buttons: 0 }));
+        el.dispatchEvent(new MouseEvent('mouseup', { ...opts, buttons: 0 }));
+        el.dispatchEvent(new MouseEvent('click', { ...opts, buttons: 0 }));
+      })()
+    `).catch(() => null);
+
+    let changed = !before;
+    if (before) {
+      const dl = Date.now() + 1400;
+      while (Date.now() < dl) {
+        await new Promise(r => setTimeout(r, 120));
+        const now = await this.captureInteractionState({ visual: false });
+        if (now && this.interactionStateChanged(before, now)) { changed = true; break; }
+      }
+    }
+    console.log(`[AgentRuntime CoordFallback] Clicked "${found.label}" at (${found.x},${found.y}) score=${found.score?.toFixed?.(2)} changed=${changed}`);
+    return { success: changed, x: found.x, y: found.y, label: found.label, verified: changed };
+  }
+
+  /**
    * Stable identity for a planned action, used to stop the goal loop from
    * repeating a click/navigation that already succeeded in this turn.
    */
@@ -2373,6 +4244,60 @@ class AgentRuntime extends EventEmitter {
   isRepeatGuardedType(type) {
     return ['CLICK_SELECTOR', 'INPUT_TEXT', 'NAVIGATE', 'NEW_TAB', 'SWITCH_TAB', 'WHATSAPP_CHAT_SEND', 'WHATSAPP_SEND']
       .includes(String(type || '').toUpperCase());
+  }
+
+  /**
+   * Deterministic authorization for an action the planner proposed.
+   * spec: { kind: 'shell', command } | { kind: 'page', label|fieldName|submit }
+   * The person's own words come from the intent the goal loop annotated with the
+   * raw request; the model is never asked again.
+   */
+  actionAuthorized(spec = {}, intent = {}) {
+    const own = String(
+      intent.raw || intent.rawPrompt || intent.prompt || intent.originalPrompt || ''
+    );
+    // Goal-loop continuations ("go", "next", "yes") re-plan sub-actions whose
+    // authorization lives in the ORIGINAL request ("reply to him"). Keep the
+    // last few authorizing prompts so the person's own words — not just the
+    // latest filler utterance — decide whether a send/buy/delete class was asked.
+    this.recentAuthPrompts = this.recentAuthPrompts || [];
+    if (own && !this.recentAuthPrompts.includes(own)) {
+      this.recentAuthPrompts.push(own);
+      if (this.recentAuthPrompts.length > 4) this.recentAuthPrompts.shift();
+    }
+    const prompt = this.recentAuthPrompts.length
+      ? this.recentAuthPrompts.join(' ')
+      : String(this.lastAuthorizingPrompt || '');
+    if (prompt) this.lastAuthorizingPrompt = prompt;
+    const verdict = evaluateAction(spec, prompt, intent);
+    if (!verdict.allowed) {
+      console.warn(`[AgentRuntime Consent] Refused ${spec.kind || 'action'}: ${verdict.reason}`);
+    }
+    return verdict;
+  }
+
+  /**
+   * Wait for the page to react to an action and then stop changing, instead of
+   * sleeping a fixed 700-900 ms and looking once. Returns true when the page
+   * visibly changed.
+   */
+  async waitForPageChange(before, options = {}) {
+    if (!before) return true;
+    const watcher = createSettleWatcher({
+      sample: () => this.captureInteractionState({ visual: false }),
+      changeTest: (base, current) => this.interactionStateChanged(base, current)
+    });
+    let outcome = { changed: false };
+    try {
+      outcome = await watcher.waitForSettle(before, Object.assign({ timeoutMs: 1600, giveUpMs: 800 }, options));
+    } catch (err) {
+      console.warn('[AgentRuntime Settle] watcher failed:', err.message);
+    }
+    if (outcome.changed) return true;
+    // Canvas, video and heavily virtualised pages mutate nothing observable in
+    // the DOM: fall back to the visual comparison once the screen has painted.
+    await new Promise((r) => setTimeout(r, 260));
+    return this.interactionStateChanged(before, await this.captureInteractionState());
   }
 
   async autonomousInspectAndClick(tab, targetQuery, options = {}) {
@@ -2404,6 +4329,9 @@ class AgentRuntime extends EventEmitter {
     if (this.cdp && !this.cdp.isAttached) {
       try { await this.cdp.attach(contents); } catch (_) {}
     }
+
+    // Capture pre-click state for effect verification.
+    const before = await this.captureInteractionState({ visual: false }).catch(() => null);
 
     // Step 1: In-page Live DOM Inspection & Coordinate Discovery via Universal Grounder
     const groundingScript = buildDOMGroundingScript(query, options);
@@ -2445,7 +4373,7 @@ class AgentRuntime extends EventEmitter {
     const { x, y, width, height, tag } = inspectResult;
     const label = inspectResult.name || inspectResult.label || query;
 
-    // Active Dual Tracking: Layer 2 - Emit real-time telemetry to browser shell & Jarvis Copilot side panel
+    // Active Dual Tracking: Layer 2 - Emit real-time telemetry to browser shell & Adion Copilot side panel
     this.emit('inspector-telemetry', {
       tag: (tag || 'el').toLowerCase(),
       classes: inspectResult.classes || '',
@@ -2469,6 +4397,17 @@ class AgentRuntime extends EventEmitter {
       try {
         await this.cdp.dispatchClick(x, y);
       } catch (_) {}
+    }
+
+    // Step 4: Verify the click actually changed the page before claiming success.
+    // A dispatched click is not proof of effect — React handlers may ignore it.
+    const changed = before ? await this.waitForPageChange(before, { timeoutMs: 1200, giveUpMs: 500 }) : true;
+    if (before && !changed) {
+      return {
+        success: false,
+        reason: 'CLICK_NO_EFFECT',
+        x, y, width, height, tag, label
+      };
     }
 
     const successMsg = `Inspected & Clicked <${tag.toLowerCase()}> "${label}" at (${x}, ${y})`;
@@ -2615,7 +4554,7 @@ class AgentRuntime extends EventEmitter {
             messageSent = true;
             const successMsg = `Message "${message}" successfully sent to +${phone || 'recipient'} on WhatsApp!`;
             this.emit('feedback', { message: successMsg, level: 'success' });
-            this.emit('jarvis-notification', { type: 'success', message: successMsg });
+            this.emit('adion-notification', { type: 'success', message: successMsg });
             console.log(`[AgentRuntime] ✅ ${successMsg}`);
             return { success: true, message: successMsg };
           }
@@ -2624,7 +4563,7 @@ class AgentRuntime extends EventEmitter {
             qrPromptEmitted = true;
             const qrNotice = `WhatsApp Web requires authentication. Please scan the QR code on screen; I will send "${message}" as soon as connected.`;
             this.emit('feedback', { message: qrNotice, level: 'warning' });
-            this.emit('jarvis-notification', { type: 'info', message: qrNotice });
+            this.emit('adion-notification', { type: 'info', message: qrNotice });
           }
         }
       } catch (_) {}
@@ -2639,7 +4578,7 @@ class AgentRuntime extends EventEmitter {
         : `Could not verify message delivery to +${phone || 'recipient'}. Action timed out.`;
       console.warn(`[AgentRuntime WhatsApp Handled]: ${failureNotice}`);
       this.emit('feedback', { message: failureNotice, level: 'warning' });
-      this.emit('jarvis-notification', { type: 'alert', message: failureNotice });
+      this.emit('adion-notification', { type: 'alert', message: failureNotice });
       return { success: false, reason: failureNotice };
     }
   }
@@ -2786,11 +4725,62 @@ class AgentRuntime extends EventEmitter {
   }
 
   /**
+   * Search workspace and filesystem for requested document/file
+   */
+  findFileOnDisk(fileName) {
+    if (!fileName) return null;
+    const cleanName = path.basename(String(fileName).trim().replace(/['"]/g, ''));
+    if (!cleanName) return null;
+
+    if (path.isAbsolute(fileName) && fs.existsSync(fileName)) {
+      return fileName;
+    }
+
+    const searchRoots = [
+      path.join(__dirname, '..', 'companion', 'reflex'),
+      path.join(__dirname, '..', 'companion'),
+      path.join(__dirname, '..'),
+      process.cwd(),
+      path.join(process.env.USERPROFILE || '', 'Documents'),
+      path.join(process.env.USERPROFILE || '', 'Desktop'),
+      path.join(process.env.USERPROFILE || '', 'Downloads')
+    ];
+
+    for (const root of searchRoots) {
+      if (!fs.existsSync(root)) continue;
+      const direct = path.join(root, cleanName);
+      if (fs.existsSync(direct)) return direct;
+
+      try {
+        const findInDir = (dir, depth = 0) => {
+          if (depth > 2) return null;
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          for (const ent of entries) {
+            if (ent.name === 'node_modules' || ent.name === '.git' || ent.name === '.cache') continue;
+            const full = path.join(dir, ent.name);
+            if (ent.isFile() && ent.name.toLowerCase() === cleanName.toLowerCase()) {
+              return full;
+            }
+            if (ent.isDirectory()) {
+              const res = findInDir(full, depth + 1);
+              if (res) return res;
+            }
+          }
+          return null;
+        };
+        const found = findInDir(root);
+        if (found) return found;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  /**
    * Autonomous in-page WhatsApp contact search, chat activation, and message dispatch.
    * Handles user intentions like "say thankyou to safal in whatsapp" directly
    * inside the authenticated WhatsApp Web interface (including locked/hidden chats).
    */
-  async sendWhatsAppChat(tab, contact = '', message = '', phone = null, secretCode = null) {
+  async sendWhatsAppChat(tab, contact = '', message = '', phone = null, secretCode = null, options = {}) {
     if (!tab || !tab.view) {
       console.warn('[AgentRuntime WhatsApp] ⚠️ No active tab view available to dispatch WhatsApp message');
       return { success: false, reason: 'No active tab view' };
@@ -2801,10 +4791,14 @@ class AgentRuntime extends EventEmitter {
       return { success: false, reason: 'No webContents' };
     }
 
+    const docFile = (options && options.file) || (/\.(?:js|json|pdf|docx?|xlsx?|txt|png|jpe?g|webp|zip|tar|gz|py|java|c|cpp|cs|ts|html|css|md|csv)\b/i.test(message) ? message.replace(/^(?:the\s+)?(?:doc(?:ument)?|file|attachment)\s+/i, '').trim() : null);
+    const resolvedFilePath = docFile ? this.findFileOnDisk(docFile) : null;
+    const isDocMode = Boolean(resolvedFilePath && fs.existsSync(resolvedFilePath));
+
     const stepTotal = secretCode ? '4' : '3';
-    console.log(`[AgentRuntime WhatsApp] 🚀 Initiating autonomous workflow: Send "${message}" to "${contact}"${secretCode ? ` (secretCode: ${secretCode})` : ''}`);
+    console.log(`[AgentRuntime WhatsApp] 🚀 Initiating autonomous workflow: Send "${message}" to "${contact}"${isDocMode ? ` [DOCUMENT ATTACHMENT: ${resolvedFilePath}]` : ''}${secretCode ? ` (secretCode: ${secretCode})` : ''}`);
     this.emit('feedback', { message: `📋 Step 1/${stepTotal} [SCAN & LOCATE]: Locating contact "${contact}" in WhatsApp...`, level: 'info' });
-    this.emit('jarvis-notification', { type: 'info', message: `Searching for contact "${contact}" in WhatsApp...` });
+    this.emit('adion-notification', { type: 'info', message: `Searching for contact "${contact}" in WhatsApp...` });
 
     let unlocked = false;
     let searchTyped = false;
@@ -2925,6 +4919,10 @@ class AgentRuntime extends EventEmitter {
             const isOpenChat = isMainOpen && Boolean(cleanTarget && cleanHeader && (cleanHeader.includes(cleanTarget) || cleanTarget.includes(cleanHeader)));
 
             // C. STRICT SAFETY: Only interact with composer IF the open chat is confirmed to match target contact!
+            if (isOpenChat && ${JSON.stringify(isDocMode)}) {
+              return { action: 'doc_send_ready' };
+            }
+
             const composer = findComposer();
             if (composer && isOpenChat) {
               const currentText = (composer.innerText || composer.textContent || '').trim();
@@ -3051,7 +5049,7 @@ class AgentRuntime extends EventEmitter {
           const qrMsg = `WhatsApp Web requires QR scan. Please link phone; will send "${message}" to "${contact}" automatically once linked.`;
           console.log(`[AgentRuntime WhatsApp] ⚠️ ${qrMsg}`);
           this.emit('feedback', { message: qrMsg, level: 'warning' });
-          this.emit('jarvis-notification', { type: 'info', message: qrMsg });
+          this.emit('adion-notification', { type: 'info', message: qrMsg });
         }
 
         if (result && result.action === 'unmatched_chat_open') {
@@ -3138,6 +5136,84 @@ class AgentRuntime extends EventEmitter {
           this.emit('feedback', { message: `📋 Step 3/${stepTotal} [COMPOSE & VERIFY]: Opened chat with ${matchLabel}. Typing message...`, level: 'info' });
         }
 
+        if (result && result.action === 'doc_send_ready' && isDocMode) {
+          lastProgressTime = Date.now();
+          const fileName = path.basename(resolvedFilePath);
+          console.log(`[AgentRuntime WhatsApp] 📄 Attaching and dispatching document "${fileName}" (${resolvedFilePath}) to "${contact}"...`);
+          this.emit('feedback', { message: `📋 Step 4/${stepTotal} [ATTACH & SEND]: Attaching document "${fileName}" to chat with "${contact}"...`, level: 'info' });
+
+          const fileContent = fs.readFileSync(resolvedFilePath, 'utf8');
+
+          // 1. Dispatch drop event on #main
+          await contents.executeJavaScript(`
+            (() => {
+              const main = document.querySelector('#main') || document.querySelector('div[data-testid="conversation-panel-wrapper"]');
+              if (!main) return { success: false, reason: 'no main' };
+              const content = ${JSON.stringify(fileContent)};
+              const file = new File([content], ${JSON.stringify(fileName)}, { type: 'text/javascript' });
+              const dt = new DataTransfer();
+              dt.items.add(file);
+              main.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: dt }));
+              main.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
+              main.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+              return { success: true };
+            })()
+          `).catch(() => null);
+
+          await new Promise(r => setTimeout(r, 1500));
+
+          // 2. Click Send button on document preview modal
+          const sendBtnCoords = await contents.executeJavaScript(`
+            (() => {
+              const sendBtn = Array.from(document.querySelectorAll('*')).find(el => {
+                const aria = el.getAttribute('aria-label') || el.getAttribute('title') || '';
+                return aria.includes('Send') && (aria.includes('selected') || aria === 'Send');
+              }) || document.querySelector('span[data-icon="send"]')?.closest('button');
+              if (!sendBtn) return null;
+              const r = sendBtn.getBoundingClientRect();
+              return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) };
+            })()
+          `).catch(() => null);
+
+          if (sendBtnCoords) {
+            contents.sendInputEvent({ type: 'mouseMove', x: sendBtnCoords.x, y: sendBtnCoords.y });
+            contents.sendInputEvent({ type: 'mouseDown', x: sendBtnCoords.x, y: sendBtnCoords.y, button: 'left', clickCount: 1 });
+            contents.sendInputEvent({ type: 'mouseUp', x: sendBtnCoords.x, y: sendBtnCoords.y, button: 'left', clickCount: 1 });
+          }
+          contents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+          contents.sendInputEvent({ type: 'char', keyCode: '\r' });
+          contents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+
+          // 3. Verify in live DOM that document message was sent!
+          for (let v = 0; v < 6; v++) {
+            await new Promise(r => setTimeout(r, 1000));
+            const docVerified = await contents.executeJavaScript(`
+              (() => {
+                const outBubbles = Array.from(document.querySelectorAll('#main div.message-out, #main [data-testid^="msg-container"]'));
+                return outBubbles.some(el => (el.innerText || el.textContent || '').includes(${JSON.stringify(fileName)}));
+              })()
+            `).catch(() => false);
+
+            if (docVerified) {
+              messageSent = true;
+              const successMsg = `🎯 TASK COMPLETED: Document "${fileName}" (${resolvedFilePath}) successfully delivered to "${contact}" on WhatsApp and verified in live DOM!`;
+              console.log(`[AgentRuntime WhatsApp] 🎉 ${successMsg} (verified_in_dom)`);
+              this.emit('feedback', { message: successMsg, level: 'success' });
+              this.emit('adion-notification', { type: 'success', message: successMsg });
+              return {
+                success: true,
+                task: 'WHATSAPP_DOCUMENT_DELIVERY',
+                recipient: contact,
+                document: fileName,
+                filePath: resolvedFilePath,
+                verifiedInDOM: true,
+                timestamp: new Date().toLocaleTimeString(),
+                summary: successMsg
+              };
+            }
+          }
+        }
+
         if (result && (result.action === 'composer_typed' || result.action === 'message_sent')) {
           lastProgressTime = Date.now();
           await this.renderChromeInspectOverlay(tab, '#main div[contenteditable="true"]', 'COMPOSE', 2000, { name: contact });
@@ -3194,7 +5270,7 @@ class AgentRuntime extends EventEmitter {
               const successMsg = `🎯 TASK COMPLETED: Message "${message}" successfully delivered to "${contact}" on WhatsApp and verified in live DOM!`;
               console.log(`[AgentRuntime WhatsApp] 🎉 ${successMsg} (verified_in_dom)`);
               this.emit('feedback', { message: successMsg, level: 'success' });
-              this.emit('jarvis-notification', { type: 'success', message: successMsg });
+              this.emit('adion-notification', { type: 'success', message: successMsg });
               return {
                 success: true,
                 task: 'WHATSAPP_MESSAGE_DELIVERY',
@@ -3209,7 +5285,8 @@ class AgentRuntime extends EventEmitter {
         }
 
         if (attempts % 4 === 0) {
-          console.log(`[AgentRuntime WhatsApp] Coordinating WhatsApp UI (attempt ${attempts}, status: ${result ? result.action : 'unknown'})...`);
+          const errDetail = result && result.action === 'eval_error' ? ` err="${String(result.error || '').slice(0, 120)}"` : '';
+          console.log(`[AgentRuntime WhatsApp] Coordinating WhatsApp UI (attempt ${attempts}, status: ${result ? result.action : 'unknown'}${errDetail})...`);
         }
       } catch (err) {
         console.warn(`[AgentRuntime WhatsApp Exception]:`, err.message);
@@ -3224,7 +5301,7 @@ class AgentRuntime extends EventEmitter {
         : `Could not verify delivery of "${message}" to "${contact}". Action did not complete within timeout.`;
       console.warn(`[AgentRuntime WhatsApp Handled]: ${failureNotice}`);
       this.emit('feedback', { message: failureNotice, level: 'warning' });
-      this.emit('jarvis-notification', { type: 'alert', message: failureNotice });
+      this.emit('adion-notification', { type: 'alert', message: failureNotice });
       return { success: false, reason: failureNotice };
     }
 
@@ -3295,10 +5372,27 @@ class AgentRuntime extends EventEmitter {
       `).catch(err => ({ success: false, reason: err.message }));
 
       if (res && res.success) {
+        // Verify the chat actually opened: the main pane must show a header
+        // with a contact name (not the "WhatsApp" landing state).
+        await new Promise(r => setTimeout(r, 900));
+        const opened = await contents.executeJavaScript(`
+          (() => {
+            const main = document.querySelector('#main');
+            if (!main) return false;
+            const header = main.querySelector('header');
+            const headerText = header ? (header.innerText || '').trim() : '';
+            // A real chat header contains a name and usually a back/phone icon;
+            // the landing pane shows "WhatsApp" or "Your personal messages".
+            return headerText.length > 1 && !/whatsapp|your personal messages|end-to-end/i.test(headerText);
+          })()
+        `).catch(() => false);
+        if (!opened) {
+          return { success: false, reason: 'Clicked unread item but no chat pane opened (page may still be syncing)' };
+        }
         const successMsg = `✅ Opened unread chat with "${res.chatName || 'contact'}" on WhatsApp Web!`;
         console.log(`[AgentRuntime WhatsApp] ${successMsg}`);
         this.emit('feedback', { message: successMsg, level: 'success' });
-        this.emit('jarvis-notification', { type: 'success', message: successMsg });
+        this.emit('adion-notification', { type: 'success', message: successMsg });
         return { success: true, message: successMsg };
       } else {
         const infoMsg = 'No unread messages found on WhatsApp Web.';
@@ -3343,8 +5437,42 @@ class AgentRuntime extends EventEmitter {
    * Retrieves active webpage title, headings, favicon, and clean article content
    * to provide real context for questions, summaries, and smart prompt suggestions.
    */
-  async getActivePageContext() {
-    const activeTab = this.tabManager ? this.tabManager.getActiveTab() : null;
+  async getActivePageContext(customTab = null) {
+    if (this.isPageShared === false) {
+      return {
+        url: '',
+        title: 'Sharing Paused',
+        favicon: '',
+        headings: [],
+        suggestions: ['Resume page sharing to allow AI context awareness'],
+        openTabs: [],
+        backgroundTabs: [],
+        isShared: false
+      };
+    }
+
+    const allTabs = (this.tabManager && this.tabManager.tabs)
+      ? Array.from(this.tabManager.tabs.values())
+      : [];
+
+    // Filter by sharedTabIds if user specified a subset
+    const sharedTabs = (Array.isArray(this.sharedTabIds))
+      ? allTabs.filter(t => this.sharedTabIds.includes(t.id))
+      : allTabs;
+
+    // Determine primary focus tab: customTab -> active tab (if shared) -> first shared tab -> null
+    let activeTab = customTab;
+    if (!activeTab && this.tabManager) {
+      const liveActive = this.tabManager.getActiveTab();
+      if (liveActive && sharedTabs.some(t => t.id === liveActive.id)) {
+        activeTab = liveActive;
+      } else if (sharedTabs.length > 0) {
+        activeTab = sharedTabs[0];
+      } else {
+        activeTab = liveActive;
+      }
+    }
+
     if (!activeTab) {
       return {
         url: 'adion://newtab',
@@ -3352,7 +5480,9 @@ class AgentRuntime extends EventEmitter {
         favicon: '',
         headings: [],
         suggestions: ['Explore top tech news', 'Check system diagnostics', 'Open GitHub'],
-        isShared: this.isPageShared !== false
+        openTabs: [],
+        backgroundTabs: [],
+        isShared: true
       };
     }
 
@@ -3362,10 +5492,79 @@ class AgentRuntime extends EventEmitter {
       favicon: activeTab.favicon || '',
       headings: [],
       suggestions: [],
-      isShared: this.isPageShared !== false
+      isShared: true,
+      openTabs: sharedTabs.map((t, idx) => ({
+        index: idx + 1,
+        id: t.id,
+        title: t.title || 'Untitled Tab',
+        url: t.url || '',
+        isActive: this.tabManager ? t.id === this.tabManager.activeTabId : false
+      }))
     };
 
+    // Multi-Tab Context Sharing (Chrome Gemini Architecture)
+    // Extract essential context from background shared tabs concurrently so the model has simultaneous multi-tab awareness
+    const backgroundTabs = sharedTabs.filter(t => t.id !== activeTab.id && t.view && t.view.webContents && !t.url.startsWith('adion://newtab'));
+    if (backgroundTabs.length > 0) {
+      try {
+        const bgPromises = backgroundTabs.slice(0, 8).map(async (bgTab) => {
+          try {
+            const bgData = await Promise.race([
+              bgTab.view.webContents.executeJavaScript(`
+                (() => {
+                  const headings = Array.from(document.querySelectorAll('h1, h2, h3'))
+                    .slice(0, 5)
+                    .map(h => (h.innerText || '').trim())
+                    .filter(t => t.length > 2 && t.length < 70);
+                  const buttons = Array.from(document.querySelectorAll('button, a[role="button"], a[class*="btn"], nav a, header a'))
+                    .slice(0, 8)
+                    .map(b => (b.innerText || b.value || b.getAttribute('title') || b.getAttribute('aria-label') || '').trim())
+                    .filter(t => t.length > 1 && t.length < 35);
+                  const snippet = (document.body ? document.body.innerText : '')
+                    .replace(/\\s+/g, ' ')
+                    .trim()
+                    .slice(0, 400);
+                  return { headings, buttons, snippet };
+                })()
+              `),
+              new Promise(res => setTimeout(() => res(null), 350))
+            ]);
+            if (bgData) {
+              return {
+                index: sharedTabs.indexOf(bgTab) + 1,
+                id: bgTab.id,
+                title: bgTab.title || 'Untitled',
+                url: bgTab.url || '',
+                headings: bgData.headings || [],
+                buttons: bgData.buttons || [],
+                snippet: bgData.snippet || ''
+              };
+            }
+          } catch (_) {}
+          return null;
+        });
+        const resolved = await Promise.all(bgPromises);
+        basicContext.backgroundTabs = resolved.filter(Boolean);
+      } catch (_) {}
+    }
+
     if (activeTab.view && activeTab.view.webContents && !activeTab.url.startsWith('adion://newtab')) {
+      // Primary scene: AXTree — semantic controls with roles, like D:\help's
+      // UIA screen map. One CDP call, ~100ms, no fragile DOM heuristics.
+      try {
+        const axScene = await this.captureAXScene(activeTab);
+        if (axScene.length > 0) {
+          // captureAXScene returns [interactive…, content…] — slice(0,40)
+          // alone would drop every content node (chat messages, article text).
+          // Balance the prompt sample: 20 controls + 20 content entries.
+          const axInteractive = axScene.filter(e => !['statictext','inline text box','paragraph','comment','mark','strong','emphasis','time'].includes(e.role)).slice(0, 20);
+          const axContent = axScene.filter(e => ['statictext','inline text box','paragraph','comment','mark','strong','emphasis','time','article','heading','listitem'].includes(e.role)).slice(0, 20);
+          basicContext.scene = [...axInteractive, ...axContent].map(e => ({
+            tag: e.role || 'ax', role: e.role, label: e.name, x: 0, y: 0, w: 0, h: 0
+          }));
+          basicContext.axScene = true;
+        }
+      } catch (_) {}
       try {
         const details = await activeTab.view.webContents.executeJavaScript(`
           (() => {
@@ -3391,7 +5590,48 @@ class AgentRuntime extends EventEmitter {
               .trim()
               .slice(0, 4000);
 
-            return { liveUrl, title, headings: headings.slice(0, 6), buttons: Array.from(new Set(buttons)), favicon, text };
+            // Interactive scene snapshot: every clickable/editable element with
+            // position — the planner's "eyes" for SPA UIs (chat rows, cards,
+            // custom controls) that aren't semantic <button>/<a> elements.
+            const isVisible = (el) => {
+              const r = el.getBoundingClientRect();
+              const s = window.getComputedStyle(el);
+              // Reject virtualised-list containers (e.g. 387x29381px wrappers):
+              // their centre is far outside the viewport, so clicks aimed at
+              // them land nowhere near the actual row.
+              return r.width > 8 && r.height > 8 && r.height <= window.innerHeight * 1.2 &&
+                     r.bottom > 0 && r.top < window.innerHeight &&
+                     s.display !== 'none' && s.visibility !== 'hidden' && s.pointerEvents !== 'none';
+            };
+            const labelOf = (el) => (el.innerText || el.value || el.getAttribute('aria-label') ||
+              el.getAttribute('title') || el.getAttribute('placeholder') || el.getAttribute('data-tab') || '').replace(/\\s+/g, ' ').trim().slice(0, 60);
+            const sceneSel = 'button, a, [role="button"], [role="link"], [role="tab"], [role="option"], [role="menuitem"], [contenteditable="true"], input, textarea, select, [tabindex]:not([tabindex="-1"]), [data-tab], [data-testid], [data-pre-plain-text], [dir="auto"], [class*="chat"], [class*="row"], [class*="item"], [class*="cell"], [class*="card"], [class*="message"]';
+            const seen = new Set();
+            const scene = [];
+            for (const el of document.querySelectorAll(sceneSel)) {
+              if (scene.length >= 40 || !isVisible(el)) continue;
+              const label = labelOf(el);
+              if (!label || seen.has(label)) continue;
+              seen.add(label);
+              const r = el.getBoundingClientRect();
+              scene.push({
+                tag: el.tagName.toLowerCase(),
+                role: el.getAttribute('role') || '',
+                label,
+                x: Math.round(r.x), y: Math.round(r.y),
+                w: Math.round(r.width), h: Math.round(r.height)
+              });
+            }
+            const scrollY = Math.round(window.scrollY || 0);
+
+            const activeEl = document.activeElement;
+            const activeElement = (activeEl && activeEl !== document.body && activeEl !== document.documentElement)
+              ? (activeEl.tagName.toLowerCase() + (activeEl.id ? '#' + activeEl.id : '') +
+                 (activeEl.getAttribute('placeholder') ? ' [placeholder="' + activeEl.getAttribute('placeholder') + '"]' : '') +
+                 (activeEl.value ? ' (value="' + activeEl.value.slice(0, 40) + '")' : ''))
+              : '';
+
+            return { liveUrl, title, headings: headings.slice(0, 8), buttons: Array.from(new Set(buttons)).slice(0, 30), favicon, text, scene, scrollY, activeElement };
           })()
         `).catch(() => null);
 
@@ -3403,6 +5643,15 @@ class AgentRuntime extends EventEmitter {
           if (details.title) basicContext.title = details.title;
           if (details.favicon) basicContext.favicon = details.favicon;
           if (Array.isArray(details.buttons)) basicContext.buttons = details.buttons;
+          if (details.activeElement) basicContext.activeElement = details.activeElement;
+
+          // Merge DOM scene with positions into basicContext.scene so planner has real element coordinates
+          if (Array.isArray(details.scene) && details.scene.length > 0) {
+            const seen = new Set(details.scene.map(e => e.label.toLowerCase()));
+            const axExtras = (basicContext.scene || []).filter(e => e.label && !seen.has(e.label.toLowerCase()));
+            basicContext.scene = [...details.scene, ...axExtras.slice(0, 15)];
+          }
+          if (Number.isFinite(details.scrollY)) basicContext.scrollY = details.scrollY;
           if (Array.isArray(details.headings) && details.headings.length > 0) {
             basicContext.headings = details.headings;
             // Generate smart contextual suggestions from headings (Chrome Gemini Style)
@@ -3419,28 +5668,187 @@ class AgentRuntime extends EventEmitter {
     }
 
     if (!basicContext.suggestions || basicContext.suggestions.length === 0) {
-      if (basicContext.url.includes('whatsapp.com')) {
-        basicContext.suggestions = [
-          'Say hi to recent chat',
-          'Search unread messages',
-          'Summarize latest messages'
-        ];
-      } else if (basicContext.url.includes('youtube.com')) {
-        basicContext.suggestions = [
-          'Summarize this video',
-          'Explain key topics in this video',
-          'Play next recommended video'
-        ];
-      } else {
-        basicContext.suggestions = [
-          'Summarize this page',
-          'Explain main points of this page',
-          'Extract key takeaways & links'
-        ];
-      }
+      // General-purpose suggestions derived from page signals, not site names.
+      const hasMessages = basicContext.scene && basicContext.scene.some(e =>
+        /message|chat|comment|reply/i.test((e.label || '') + ' ' + (e.role || '')));
+      const hasMedia = basicContext.scene && basicContext.scene.some(e =>
+        /video|player|media|audio/i.test((e.label || '') + ' ' + (e.role || '')));
+      basicContext.suggestions = hasMessages
+        ? ['Reply to the latest message', 'Summarize recent messages', 'Find unread conversations']
+        : hasMedia
+          ? ['Summarize this content', 'Explain key topics', 'Find related items']
+          : [
+              'Summarize this page',
+              'Explain main points of this page',
+              'Extract key takeaways & links'
+            ];
     }
 
     return basicContext;
+  }
+
+  /**
+   * Cancel the active task cleanly, clearing any pause resolvers and goal runs
+   */
+  cancelCurrentTask() {
+    this.goalRunId++;
+    if (this.taskPauseResolver) {
+      try { this.taskPauseResolver({ stop: true }); } catch (_) {}
+      this.taskPauseResolver = null;
+    }
+    if (this.currentTask) {
+      this.currentTask.status = 'STOPPED';
+      this.currentTask.pauseReason = 'Task canceled by user or system dismiss';
+      this.emitTaskModeUpdate();
+    }
+  }
+
+  /**
+   * Emit real-time Task Mode state update to UI renderer (Work Panel)
+   */
+  emitTaskModeUpdate() {
+    if (!this.currentTask) return;
+    this.emit('task-mode:update', {
+      id: this.currentTask.id,
+      goal: this.currentTask.goal,
+      status: this.currentTask.status,
+      mode: this.currentTask.mode,
+      stepNumber: this.currentTask.stepNumber,
+      maxSteps: this.currentTask.maxSteps,
+      completedSteps: this.currentTask.completedSteps || [],
+      currentStep: this.currentTask.currentStep || null,
+      remainingSteps: this.currentTask.remainingSteps || [],
+      touchedPages: this.currentTask.touchedPages || [],
+      artifacts: this.currentTask.artifacts || [],
+      pauseReason: this.currentTask.pauseReason || null,
+      sensitiveAction: this.currentTask.sensitiveAction || null,
+      consecutiveNoDeltaCount: this.currentTask.loopState?.consecutiveNoDeltaCount || 0
+    });
+  }
+
+  /**
+   * Human-in-the-Loop checkpoint handling (Gemini Task Mode):
+   * Allows user to Approve sensitive steps, Take over browser, Hand back control, or Stop.
+   */
+  handleTaskModeUserAction(action, data = {}) {
+    if (!this.currentTask) {
+      return { success: false, reason: 'No active task' };
+    }
+    console.log(`[AgentRuntime TaskMode] 👤 User action received: "${action}" for task ${this.currentTask.id}`);
+
+    if (action === 'approve') {
+      if (this.taskPauseResolver) {
+        const resolve = this.taskPauseResolver;
+        this.taskPauseResolver = null;
+        resolve({ approved: true });
+      }
+      this.currentTask.status = 'EXECUTING';
+      this.currentTask.pauseReason = null;
+      this.setState(AgentState.EXECUTING);
+      this.emitTaskModeUpdate();
+      this.emit('task-mode:resumed', this.currentTask);
+      this.emit('feedback', { message: '✓ Checkpoint approved by user. Proceeding with execution...', level: 'success' });
+      return { success: true, status: 'resumed' };
+    }
+
+    if (action === 'takeover') {
+      this.setState(AgentState.PAUSED_FOR_USER);
+      this.currentTask.status = 'PAUSED_FOR_USER';
+      this.currentTask.pauseReason = 'User takeover active: You have full control of the browser. Complete your interaction, then click "Hand Back Control".';
+      this.emitTaskModeUpdate();
+      this.emit('task-mode:paused', this.currentTask);
+      this.emit('feedback', { message: '🖐️ Manual Takeover Active: Browse freely. The AI is paused until you click "Hand Back Control".', level: 'info' });
+      return { success: true, status: 'paused_for_takeover' };
+    }
+
+    if (action === 'resume') {
+      if (this.taskPauseResolver) {
+        const resolve = this.taskPauseResolver;
+        this.taskPauseResolver = null;
+        resolve({ resume: true });
+      }
+      this.currentTask.status = 'PLANNING_NEXT';
+      this.currentTask.pauseReason = null;
+      this.setState(AgentState.PLANNING_NEXT);
+      this.emitTaskModeUpdate();
+      this.emit('task-mode:resumed', this.currentTask);
+      this.emit('feedback', { message: '▶️ Control handed back to AI: Re-sensing page DOM and resuming autonomous execution...', level: 'info' });
+      return { success: true, status: 'resumed' };
+    }
+
+    if (action === 'stop') {
+      if (this.taskPauseResolver) {
+        const resolve = this.taskPauseResolver;
+        this.taskPauseResolver = null;
+        resolve({ stop: true });
+      }
+      this.cancelCurrentTask();
+      this.currentTask.status = 'STOPPED';
+      this.currentTask.pauseReason = 'Task aborted by user.';
+      this.setState(AgentState.IDLE);
+      this.emitTaskModeUpdate();
+      this.emit('feedback', { message: '⏹️ Task stopped by user.', level: 'info' });
+      return { success: true, status: 'stopped' };
+    }
+
+    return { success: false, reason: `Unknown user action: ${action}` };
+  }
+
+  /**
+   * Determine whether an action requires a Human-in-the-Loop checkpoint before execution
+   */
+  isSensitiveActionForTaskMode(act, intent = {}) {
+    if (!act) return null;
+    const type = String(act.type || '').toUpperCase();
+    if (type === 'WHATSAPP_CHAT_SEND' || type === 'WHATSAPP_SEND') {
+      return { reason: `Sensitive Action: Sending message to "${intent.contact || intent.target || 'recipient'}"` };
+    }
+    const spec = {
+      kind: (type === 'TERMINAL_EXEC') ? 'shell' : 'page',
+      command: intent.command || act.params?.command,
+      label: act.params?.target || act.params?.label || intent.target,
+      text: act.params?.text || intent.text,
+      fieldName: act.params?.selector || act.params?.fieldName || intent.target,
+      submit: act.params?.enter || intent.enter || /submit|send|pay|buy/i.test(intent.target || '')
+    };
+    try {
+      const verdict = evaluateAction(spec, intent.raw || '', intent);
+      if (verdict.class === 'commit' || verdict.class === 'money' || verdict.family === 'money' || verdict.family === 'send') {
+        return { reason: `Checkpoint: ${verdict.reason || 'This action modifies account state or transmits data.'}` };
+      }
+      if (verdict.class === 'refused' || verdict.family === 'private-field') {
+        return { reason: 'Checkpoint: Sensitive private data requested. Please fill in credentials/passwords manually.' };
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /**
+   * Lightweight, zero-latency state hash for dynamic loop detection & DOM verification
+   */
+  async computePageStateHash(tab) {
+    if (!tab || !tab.view || !tab.view.webContents) return '';
+    try {
+      const contents = tab.view.webContents;
+      const res = await contents.executeJavaScript(`
+        (() => {
+          try {
+            const url = window.location.href;
+            const title = document.title;
+            const interactive = Array.from(document.querySelectorAll('button, a, input, [role="button"], [role="dialog"], #main, header'))
+              .slice(0, 35)
+              .map(el => (el.tagName + ':' + (el.id || '') + ':' + (el.getAttribute('aria-label') || el.innerText || '').slice(0, 20)).trim())
+              .join('|');
+            return url + '#' + title + '#' + interactive;
+          } catch (_) {
+            return window.location.href;
+          }
+        })()
+      `).catch(() => '');
+      return res || '';
+    } catch (_) {
+      return '';
+    }
   }
 }
 

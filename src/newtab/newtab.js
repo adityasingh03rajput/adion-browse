@@ -9,7 +9,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const statBlocked = document.getElementById('statBlocked');
   const statBandwidth = document.getElementById('statBandwidth');
   const statTime = document.getElementById('statTime');
-  const statZkpRewards = document.getElementById('statZkpRewards');
 
   // Clock & Date updater
   function updateClock() {
@@ -24,14 +23,44 @@ document.addEventListener('DOMContentLoaded', () => {
   updateClock();
   setInterval(updateClock, 1000);
 
-  // Speed Dial Shortcuts
+  // Speed Dial Shortcuts with Sleek Vector Icons
   const defaultShortcuts = [
-    { title: 'Brave Search', url: 'https://search.brave.com', letter: 'B', color: '#ff5500' },
-    { title: 'YouTube', url: 'https://youtube.com', letter: 'Y', color: '#ff0000' },
-    { title: 'GitHub', url: 'https://github.com', letter: 'G', color: '#ffffff' },
-    { title: 'Reddit', url: 'https://reddit.com', letter: 'R', color: '#ff4500' },
-    { title: 'Wikipedia', url: 'https://wikipedia.org', letter: 'W', color: '#ffffff' },
-    { title: 'DuckDuckGo', url: 'https://duckduckgo.com', letter: 'D', color: '#de5833' }
+    {
+      title: 'Brave Search',
+      url: 'https://search.brave.com',
+      color: '#ff5500',
+      iconSvg: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>'
+    },
+    {
+      title: 'YouTube',
+      url: 'https://youtube.com',
+      color: '#ff0033',
+      iconSvg: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="4" ry="4"></rect><polygon points="10 8 16 12 10 16 10 8" fill="currentColor"></polygon></svg>'
+    },
+    {
+      title: 'GitHub',
+      url: 'https://github.com',
+      color: '#00f2fe',
+      iconSvg: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>'
+    },
+    {
+      title: 'Reddit',
+      url: 'https://reddit.com',
+      color: '#ff4500',
+      iconSvg: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M8 12a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0zm5 0a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0z"></path><path d="M9 16c1.5 1 4.5 1 6 0"></path></svg>'
+    },
+    {
+      title: 'Wikipedia',
+      url: 'https://wikipedia.org',
+      color: '#ffffff',
+      iconSvg: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>'
+    },
+    {
+      title: 'DuckDuckGo',
+      url: 'https://duckduckgo.com',
+      color: '#10b981',
+      iconSvg: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>'
+    }
   ];
 
   function renderShortcuts() {
@@ -43,7 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       card.innerHTML = `
         <div class="shortcut-icon" style="color: ${sc.color};">
-          ${sc.letter}
+          ${sc.iconSvg}
         </div>
         <div class="shortcut-title">${sc.title}</div>
       `;

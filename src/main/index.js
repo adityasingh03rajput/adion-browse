@@ -1,9 +1,11 @@
 const { app, BrowserWindow, ipcMain, session, Menu } = require('electron');
+const { CHROME_USER_AGENT, SEC_CH_UA, CHROME_MAJOR } = require('./userAgent');
 const path = require('path');
 const shield = require('./shield');
 const store = require('./store');
 const TabManager = require('./tabManager');
 const ControlPlane = require('../control-plane/controlPlane');
+const profiles = require('./profiles');
 
 // Single instance lock to prevent multi-process database and cache lock conflicts
 const gotTheLock = app.requestSingleInstanceLock();
@@ -13,14 +15,18 @@ if (!gotTheLock) {
   process.exit(0);
 }
 
-// Standard modern Google Chrome User-Agent (prevents web apps like WhatsApp Web, Slack, etc. from rejecting Electron)
-const CHROME_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 app.userAgentFallback = CHROME_USER_AGENT;
 
 // Silence non-critical Chromium C++ net warnings and grant continuous media streams
 app.commandLine.appendSwitch('log-level', '3');
 app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
 app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer');
+
+// OAuth workaround: hide automation indicators and disable features that fingerprint Electron
+app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
+app.commandLine.appendSwitch('disable-features', 'OutOfBlinkCors,BlockInsecurePrivateNetworkRequests');
+app.commandLine.appendSwitch('disable-web-security', false);
+app.commandLine.appendSwitch('disable-site-isolation-trials', true);
 
 // Main Electron process
 let mainWindow = null;
@@ -101,6 +107,92 @@ app.on('child-process-gone', (event, details) => {
   console.warn(`[Adion Process] Chromium child process exited: ${details.type} (${details.reason}, exitCode: ${details.exitCode})`);
 });
 
+// Google OAuth blocks embedded browsers partly because Electron lacks the
+// window.chrome object real Chrome exposes. Inject a minimal shim on Google
+// pages so the sign-in flow sees a consistent browser fingerprint.
+app.on('web-contents-created', (event, contents) => {
+  contents.on('dom-ready', () => {
+    try {
+      const url = contents.getURL() || '';
+      if (!/google\.(com|co\.in|co\.uk|ca|com\.au)/i.test(url)) return;
+      contents.executeJavaScript(`(() => {
+        if (window.chrome && window.chrome.app && window.chrome.runtime && navigator.userAgentData) return;
+        const now = () => Date.now() / 1000;
+        const loadTimes = () => ({ commitLoadTime: now(), finishDocumentLoadTime: now(), finishLoadTime: now(), firstPaintTime: now(), firstPaintAfterLoadTime: 0, navigationType: 'Other', wasAlternateProtocolAvailable: false, wasFetchedViaSpdy: true, wasNpnNegotiated: true, npnNegotiatedProtocol: 'h2' });
+        const csi = () => ({ onloadT: Date.now(), pageT: performance.now(), startE: performance.timeOrigin, tran: 15 });
+        window.chrome = window.chrome || {};
+        window.chrome.app = window.chrome.app || { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } };
+        window.chrome.runtime = window.chrome.runtime || { OnInstalledReason: { CHROME_UPDATE: 'chrome_update', INSTALL: 'install', SHARED_MODULE_UPDATE: 'shared_module_update', UPDATE: 'update' }, OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' }, PlatformArch: { ARM: 'arm', ARM64: 'arm64', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' }, PlatformNaclArch: { ARM: 'arm', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' }, PlatformOs: { ANDROID: 'android', CROS: 'cros', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win' }, RequestUpdateCheckStatus: { NO_UPDATE: 'no_update', THROTTLED: 'throttled', UPDATE_AVAILABLE: 'update_available' } };
+        window.chrome.csi = window.chrome.csi || csi;
+        window.chrome.loadTimes = window.chrome.loadTimes || loadTimes;
+        // Client Hints JS API — real Chrome exposes navigator.userAgentData
+        if (!navigator.userAgentData) {
+          const brands = [
+            { brand: 'Not_A Brand', version: '99' },
+            { brand: 'Chromium', version: '${CHROME_MAJOR}' },
+            { brand: 'Google Chrome', version: '${CHROME_MAJOR}' }
+          ];
+          const uaData = {
+            brands, mobile: false, platform: 'Windows',
+            getHighEntropyValues: (hints) => Promise.resolve(Object.assign({
+              architecture: 'x86', bitness: '64', brands,
+              fullVersionList: brands.map(b => ({ brand: b.brand, version: b.version + '.0.0.0' })),
+              mobile: false, model: '', platform: 'Windows', platformVersion: '15.0.0',
+              uaFullVersion: '${CHROME_MAJOR}.0.0.0', wow64: false
+            }, hints && hints.includes ? {} : {})),
+            toJSON: () => ({ brands, mobile: false, platform: 'Windows' })
+          };
+          try { Object.defineProperty(navigator, 'userAgentData', { get: () => uaData, configurable: true }); } catch (_) { navigator.userAgentData = uaData; }
+        }
+        // Chrome ships built-in PDF viewer plugins; Electron reports an empty list
+        try {
+          if (!navigator.plugins || navigator.plugins.length === 0) {
+            const makePlugin = (name, filename, desc) => ({ name, filename, description: desc, length: 1, 0: { type: 'application/pdf', suffixes: 'pdf', description: desc } });
+            const arr = [
+              makePlugin('PDF Viewer', 'internal-pdf-viewer', 'Portable Document Format'),
+              makePlugin('Chrome PDF Viewer', 'internal-pdf-viewer', 'Portable Document Format'),
+              makePlugin('Chromium PDF Viewer', 'internal-pdf-viewer', 'Portable Document Format'),
+              makePlugin('Microsoft Edge PDF Viewer', 'internal-pdf-viewer', 'Portable Document Format'),
+              makePlugin('WebKit built-in PDF', 'internal-pdf-viewer', 'Portable Document Format')
+            ];
+            arr.item = (i) => arr[i];
+            arr.namedItem = (n) => arr.find(p => p.name === n);
+            arr.refresh = () => {};
+            Object.defineProperty(navigator, 'plugins', { get: () => arr, configurable: true });
+          }
+        } catch (_) {}
+        // NetworkInformation API — Chrome exposes connection info, Electron often lacks it
+        try {
+          if (!navigator.connection) {
+            const conn = {
+              effectiveType: '4g', downlink: 10, downlinkMax: 10, rtt: 50, saveData: false,
+              type: 'unknown',
+              addEventListener: () => {}, removeEventListener: () => {},
+              dispatchEvent: () => true, onchange: null
+            };
+            Object.defineProperty(navigator, 'connection', { get: () => conn, configurable: true });
+          }
+        } catch (_) {}
+        // speechSynthesis voices — Chrome ships OS voices; Electron returns empty list
+        try {
+          if (window.speechSynthesis && (!speechSynthesis.getVoices || speechSynthesis.getVoices().length === 0)) {
+            const mk = (name, lang) => Object.assign(new SpeechSynthesisVoice(), { name, lang, localService: true, default: false, voiceURI: name });
+            const voices = [mk('Microsoft David - English (United States)', 'en-US'), mk('Microsoft Zira - English (United States)', 'en-US'), mk('Google US English', 'en-US')];
+            speechSynthesis.getVoices = () => voices;
+          }
+        } catch (_) {}
+        // Real Chrome has non-zero outer dimensions; some embedded contexts report 0
+        try {
+          if (window.outerWidth === 0 || window.outerHeight === 0) {
+            Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth, configurable: true });
+            Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight + 88, configurable: true });
+          }
+        } catch (_) {}
+      })();`).catch(() => {});
+    } catch (_) {}
+  });
+});
+
 app.on('second-instance', () => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -125,6 +217,8 @@ async function createWindow() {
     }
   });
 
+  mainWindow.setMaxListeners(50);
+
   // Native keyboard shortcuts for DevTools (F12 / Ctrl+Shift+I)
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown') {
@@ -143,7 +237,7 @@ async function createWindow() {
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const requestHeaders = { ...details.requestHeaders };
     requestHeaders['User-Agent'] = CHROME_USER_AGENT;
-    requestHeaders['sec-ch-ua'] = '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"';
+    requestHeaders['sec-ch-ua'] = SEC_CH_UA;
     requestHeaders['sec-ch-ua-mobile'] = '?0';
     requestHeaders['sec-ch-ua-platform'] = '"Windows"';
     callback({ requestHeaders });
@@ -170,6 +264,56 @@ async function createWindow() {
 
   // Initialize Tab Manager
   tabManager = new TabManager(mainWindow);
+  const configuredSessions = new Set([session.defaultSession]);
+  const configureProfileSession = (sess) => {
+    if (!sess || configuredSessions.has(sess)) return;
+    configuredSessions.add(sess);
+    try { sess.setUserAgent(CHROME_USER_AGENT); } catch (_) {}
+    try {
+      sess.webRequest.onBeforeSendHeaders((details, callback) => {
+        const requestHeaders = { ...details.requestHeaders };
+        requestHeaders['User-Agent'] = CHROME_USER_AGENT;
+        requestHeaders['sec-ch-ua'] = SEC_CH_UA;
+        requestHeaders['sec-ch-ua-mobile'] = '?0';
+        requestHeaders['sec-ch-ua-platform'] = '"Windows"';
+        callback({ requestHeaders });
+      });
+    } catch (_) {}
+    try { shield.init(sess); } catch (_) {}
+  };
+  tabManager.getProfilePartition = () => {
+    const partition = profiles.partitionFor();
+    try { configureProfileSession(session.fromPartition(partition)); } catch (_) {}
+    return partition;
+  };
+
+  // Profile management IPC
+  const sendProfiles = () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('profile-updated', profiles.list());
+    }
+  };
+  ipcMain.handle('profile:list', () => profiles.list());
+  ipcMain.handle('profile:create', (e, name) => {
+    const p = profiles.create(name || 'New Profile');
+    sendProfiles();
+    return p;
+  });
+  ipcMain.handle('profile:switch', (e, id) => {
+    const p = profiles.switch(id);
+    if (p && tabManager) {
+      tabManager.closeAllTabs();
+      tabManager.createTab('adion://newtab');
+      controlPlane && controlPlane.onActiveTabChanged && controlPlane.onActiveTabChanged(tabManager.getActiveTab());
+    }
+    sendProfiles();
+    return p;
+  });
+  ipcMain.handle('profile:delete', (e, id) => {
+    const ok = profiles.remove(id);
+    sendProfiles();
+    return ok;
+  });
 
   // Resolve per-site shield policy against the tab's top-level page, not the
   // subresource host (a tracker is served from a third-party domain).
@@ -379,8 +523,18 @@ function setupIPC() {
     return store.get('settings');
   });
 
-  ipcMain.handle('update-setting', (e, { key, value }) => {
-    store.setSetting(key, value);
+  ipcMain.handle('update-setting', (e, payload, maybeVal) => {
+    let key, value;
+    if (typeof payload === 'string') {
+      key = payload;
+      value = maybeVal;
+    } else if (payload && typeof payload === 'object') {
+      key = payload.key;
+      value = payload.value;
+    }
+    if (key !== undefined) {
+      store.setSetting(key, value);
+    }
     return store.get('settings');
   });
 

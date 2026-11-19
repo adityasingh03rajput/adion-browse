@@ -34,6 +34,22 @@ class GeminiProvider extends BaseProvider {
     const modelToUse = options.model || this.model || 'gemini-2.0-flash';
     const endpoint = `${this.apiUrl.replace(/\/$/, '')}/${modelToUse}:generateContent?key=${this.apiKey}`;
 
+    const userParts = [];
+    if (options.imageDataUrl && typeof options.imageDataUrl === 'string') {
+      const parts = options.imageDataUrl.split(',');
+      const mime = (parts[0].match(/:(.*?);/) || [])[1] || 'image/jpeg';
+      const base64Data = parts[1] || parts[0];
+      if (base64Data) {
+        userParts.push({
+          inlineData: {
+            mimeType: mime,
+            data: base64Data
+          }
+        });
+      }
+    }
+    userParts.push({ text: prompt });
+
     const payload = {
       systemInstruction: {
         parts: [
@@ -49,7 +65,7 @@ class GeminiProvider extends BaseProvider {
         })),
         {
           role: 'user',
-          parts: [{ text: prompt }]
+          parts: userParts
         }
       ],
       generationConfig: {

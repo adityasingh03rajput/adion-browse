@@ -33,6 +33,7 @@ class CDPBridge {
         await this.sendCommand('Page.enable');
         await this.sendCommand('DOM.enable');
         await this.sendCommand('Runtime.enable');
+        try { await this.sendCommand('Accessibility.enable'); } catch (_) {}
 
         this.currentWebContents.debugger.on('detach', (event, reason) => {
           this.isAttached = false;
@@ -88,37 +89,70 @@ class CDPBridge {
   }
 
   /**
-   * Dispatch synthetic mouse click at exact pixel coordinates
+   * Dispatch synthetic mouse click at exact pixel coordinates.
+   * Scrolls element into view first if it is below the viewport fold,
+   * then dispatches the full hardware-equivalent CDP event sequence.
    */
   async dispatchClick(x, y, button = 'left', clickCount = 1) {
     if (!this.isAttached) throw new Error('CDP not attached');
 
+    const cx = Math.round(x);
+    const cy = Math.round(y);
+
+    // Scroll element into view if below/above the visible fold before clicking.
+    // This prevents clicks landing on empty space when the page has scrolled.
+    try {
+      const layout = await this.sendCommand('Page.getLayoutMetrics', {}, 2000).catch(() => null);
+      const viewport = layout && layout.cssVisualViewport;
+      if (viewport) {
+        const { pageY, clientHeight } = viewport;
+        if (cy < pageY || cy > pageY + clientHeight) {
+          await this.sendCommand('Input.dispatchMouseEvent', {
+            type: 'mouseWheel',
+            x: cx,
+            y: Math.min(Math.max(cy, 0), clientHeight),
+            deltaX: 0,
+            deltaY: cy - (pageY + clientHeight / 2)
+          });
+          // Brief settle after scroll
+          await new Promise(r => setTimeout(r, 120));
+        }
+      }
+    } catch (_) {}
+
     // 1. Move to coordinates
     await this.sendCommand('Input.dispatchMouseEvent', {
       type: 'mouseMoved',
-      x: Math.round(x),
-      y: Math.round(y)
+      x: cx,
+      y: cy,
+      button: 'none',
+      buttons: 0
     });
 
     // 2. Mouse Press
     await this.sendCommand('Input.dispatchMouseEvent', {
       type: 'mousePressed',
-      x: Math.round(x),
-      y: Math.round(y),
+      x: cx,
+      y: cy,
       button,
+      buttons: 1,
       clickCount
     });
+
+    // Brief settle between press and release (matches real hardware timing)
+    await new Promise(r => setTimeout(r, 30));
 
     // 3. Mouse Release
     await this.sendCommand('Input.dispatchMouseEvent', {
       type: 'mouseReleased',
-      x: Math.round(x),
-      y: Math.round(y),
+      x: cx,
+      y: cy,
       button,
+      buttons: 0,
       clickCount
     });
 
-    return { x, y, clicked: true };
+    return { x: cx, y: cy, clicked: true };
   }
 
   /**
@@ -128,16 +162,26 @@ class CDPBridge {
     if (!this.isAttached) throw new Error('CDP not attached');
 
     const stepDelta = deltaY / steps;
-    for (let i = 0; i < steps; i++) {
-      await this.sendCommand('Input.dispatchMouseEvent', {
-        type: 'mouseWheel',
-        x: 400,
-        y: 400,
-        deltaX: 0,
-        deltaY: Math.round(stepDelta)
-      });
-      if (delayMs > 0 && i < steps - 1) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+    try {
+      for (let i = 0; i < steps; i++) {
+        await this.sendCommand('Input.dispatchMouseEvent', {
+          type: 'mouseWheel',
+          x: 400,
+          y: 400,
+          deltaX: 0,
+          deltaY: Math.round(stepDelta)
+        }, 1500);
+        if (delayMs > 0 && i < steps - 1) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+    } catch (err) {
+      // Fallback: If CDP Input.dispatchMouseEvent times out or gets blocked (e.g. by payment iframes/overlays),
+      // smoothly scroll via window.scrollBy so execution never stalls.
+      if (this.currentWebContents) {
+        await this.currentWebContents.executeJavaScript(`
+          try { window.scrollBy({ top: ${deltaY}, left: 0, behavior: 'smooth' }); } catch(_) {}
+        `).catch(() => {});
       }
     }
     return { scrolled: deltaY };
@@ -155,6 +199,28 @@ class CDPBridge {
       fromSurface: true
     });
     return result.data; // Base64 encoded string
+  }
+
+  /**
+   * Capture the ENTIRE scrollable page (beyond the viewport) — D:\help's
+   * full-screen grab equivalent. captureBeyondViewport stitches the full
+   * document height; may be large on infinite-scroll pages, so callers
+   * should downscale before use.
+   */
+  async captureFullPageScreenshot(maxWidth = 1280) {
+    if (!this.isAttached) throw new Error('CDP not attached');
+    const metrics = await this.sendCommand('Page.getLayoutMetrics', {}, 3000).catch(() => null);
+    const css = metrics && metrics.cssContentSize ? metrics.cssContentSize : null;
+    const clip = css && css.width && css.height
+      ? { x: 0, y: 0, width: Math.min(css.width, maxWidth * 2), height: Math.min(css.height, 16000), scale: 1 }
+      : undefined;
+    const result = await this.sendCommand('Page.captureScreenshot', {
+      format: 'png',
+      fromSurface: true,
+      captureBeyondViewport: true,
+      ...(clip ? { clip } : {})
+    }, 15000);
+    return result.data;
   }
 
   /**
@@ -1015,6 +1081,42 @@ class CDPBridge {
     `;
     try {
       return await this.evaluate(expr);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * Full accessibility tree — the browser equivalent of D:\help's UIA screen
+   * map. One CDP call returns every semantic node (role, name, states) that
+   * Chromium exposes to assistive tech. Fast (~50-200ms) vs multi-second
+   * DOM-grounding scripts.
+   */
+  async getAXTree() {
+    if (!this.isAttached) throw new Error('CDP not attached');
+    const res = await this.sendCommand('Accessibility.getFullAXTree', {}, 6000);
+    return res && Array.isArray(res.nodes) ? res.nodes : [];
+  }
+
+  /**
+   * Viewport-center coordinates of an AX node, resolved via its backend DOM
+   * node. Returns {x, y} in CSS pixels or null when the node has no box.
+   */
+  async getNodeCenter(backendNodeId) {
+    if (!this.isAttached || !backendNodeId) return null;
+    try {
+      const res = await this.sendCommand('DOM.getContentQuads', { backendNodeId }, 3000);
+      const quads = res && res.quads;
+      if (!quads || !quads.length) return null;
+      // quads are flat [x1,y1,x2,y2,...] arrays in root-frame CSS px
+      const q = quads[0];
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (let i = 0; i + 1 < q.length; i += 2) {
+        minX = Math.min(minX, q[i]); maxX = Math.max(maxX, q[i]);
+        minY = Math.min(minY, q[i + 1]); maxY = Math.max(maxY, q[i + 1]);
+      }
+      if (!Number.isFinite(minX)) return null;
+      return { x: Math.round((minX + maxX) / 2), y: Math.round((minY + maxY) / 2), w: Math.round(maxX - minX), h: Math.round(maxY - minY) };
     } catch (_) {
       return null;
     }

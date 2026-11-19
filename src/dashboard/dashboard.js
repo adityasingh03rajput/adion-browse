@@ -35,10 +35,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const time = new Date().toLocaleTimeString();
     const el = document.createElement('div');
     el.className = `log-entry ${level}`;
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     el.innerHTML = `
-      <span class="log-time">[${time}]</span>
-      <span class="log-tag">${tag}</span>
-      <span class="log-msg">${message}</span>
+      <span class="log-time">[${esc(time)}]</span>
+      <span class="log-tag">${esc(tag)}</span>
+      <span class="log-msg">${esc(message)}</span>
     `;
     logsContainer.appendChild(el);
     logsContainer.scrollTop = logsContainer.scrollHeight;
@@ -176,9 +177,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const cmd = `modify dom selector "${selector}" action "${action}" value "${value}"`;
         await window.adionAPI.agent.sendCommand(cmd);
         domVerificationReceipt.className = 'verification-receipt verified';
+        const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
         domVerificationReceipt.innerHTML = `
           <strong>✓ Render Update Verified via CDP</strong><br>
-          Target: <code>${selector}</code> | Action: <code>${action}</code> | Applied Value: <code>${value}</code><br>
+          Target: <code>${esc(selector)}</code> | Action: <code>${esc(action)}</code> | Applied Value: <code>${esc(value)}</code><br>
           <span style="color:var(--text-muted); font-size:11px;">Timestamp: ${new Date().toISOString()}</span>
         `;
         addLog('RENDER_VERIFIED', `DOM element "${selector}" modified and rendered update verified instantly!`, 'success');
@@ -187,9 +189,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } else {
       domVerificationReceipt.className = 'verification-receipt verified';
+      const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
       domVerificationReceipt.innerHTML = `
         <strong>✓ DOM Modification Executed</strong><br>
-        Target: <code>${selector}</code> | Action: <code>${action}</code> | Applied Value: <code>${value}</code>
+        Target: <code>${esc(selector)}</code> | Action: <code>${esc(action)}</code> | Applied Value: <code>${esc(value)}</code>
       `;
     }
   });

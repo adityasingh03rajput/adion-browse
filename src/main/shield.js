@@ -11,24 +11,33 @@ class AdionShieldEngine {
 
   async init(session) {
     try {
+      if (this.blocker) {
+        // Blocker already loaded — just attach this session (e.g. profile partitions)
+        this.attachSession(session);
+        return;
+      }
       console.log('[Adion Shields] Initializing tracker & ad blocking engine...');
       this.blocker = await ElectronBlocker.fromPrebuiltAdsAndTracking(fetch);
 
       // Enable in the provided session
-      if (session) {
-        this.blocker.enableBlockingInSession(session);
-      }
+      this.attachSession(session);
 
       // Listen for blocked requests
       this.blocker.on('request-blocked', (request) => {
         this.handleBlockedRequest(request);
       });
 
-      this.setupCustomRules(session);
       console.log('[Adion Shields] Shields engine active with EasyList & Ghostery databases.');
     } catch (err) {
       console.error('[Adion Shields] Failed to initialize blocker:', err);
     }
+  }
+
+  /** Attach blocking + custom rules to an additional session (profile partition). */
+  attachSession(session) {
+    if (!session || !this.blocker) return;
+    try { this.blocker.enableBlockingInSession(session); } catch (_) {}
+    this.setupCustomRules(session);
   }
 
   setupCustomRules(session) {

@@ -10,6 +10,11 @@ class STTEngine {
   constructor(options = {}) {
     this.whisperEndpoint = options.whisperEndpoint || 'http://127.0.0.1:8080/inference';
     this.sampleRate = 16000;
+    // Voice-garble fix: the acoustic guesser must NEVER invent a command from
+    // noise/silence. Default OFF — Whisper silence returns '' instead.
+    // Enable only for offline demos: new STTEngine({ acousticFallback: true }).
+    this.acousticFallback = options.acousticFallback === true;
+    this.acousticMinRms = options.acousticMinRms || 0.03;
   }
 
   /**
@@ -49,15 +54,23 @@ class STTEngine {
       }
     }
 
-    // 3. Fast Acoustic & Phonetic Pattern Matcher
-    if (!rawTranscript) {
-      const classifiedText = this.classifyAcousticCommand(pcmBuffer);
-      console.log(`[STTEngine] Acoustic Classifier matched: "${classifiedText}"`);
-      rawTranscript = classifiedText;
+    // 3. Fast Acoustic & Phonetic Pattern Matcher (GATED — see constructor).
+    // Previously this ALWAYS invented a command ('scroll down', 'open youtube',
+    // ...) from any noise/silence whenever Whisper came back empty. Now it only
+    // runs when explicitly enabled AND the audio is loud enough to be speech.
+    if (!rawTranscript && this.acousticFallback) {
+      const rms = this.rmsOf(pcmBuffer);
+      if (rms >= this.acousticMinRms) {
+        const classifiedText = this.classifyAcousticCommand(pcmBuffer);
+        console.log(`[STTEngine] Acoustic Classifier matched: "${classifiedText}" (rms ${rms.toFixed(4)})`);
+        rawTranscript = classifiedText;
+      } else {
+        console.log(`[STTEngine] Acoustic fallback skipped: too quiet (rms ${rms.toFixed(4)}) — returning silence`);
+      }
     }
 
     // 4. Transcription Normalization, Phonetic Error Correction & Hallucination Filter
-    const cleaned = this.cleanAndNormalizeTranscript(rawTranscript);
+    const cleaned = this.cleanAndNormalizeTranscript(rawTranscript, pcmBuffer);
     if (cleaned !== rawTranscript) {
       console.log(`[STTEngine] Normalized transcript: "${cleaned}" (raw was: "${rawTranscript}")`);
     }
@@ -68,7 +81,7 @@ class STTEngine {
    * Cleans listening errors, normalizes phonetic greeting slips (e.g. "hie", "hei"),
    * and discards ambient video subtitle / outro hallucinations.
    */
-  cleanAndNormalizeTranscript(rawInput) {
+  cleanAndNormalizeTranscript(rawInput, pcmBuffer) {
     if (!rawInput || typeof rawInput !== 'string') return '';
     let text = rawInput.trim();
 
@@ -97,10 +110,59 @@ class STTEngine {
       }
     }
 
+    // A2. Bare-pleasantries / non-content guard (voice-garble fix): Whisper
+    // returns "Thank you." or "." for pure digital silence/noise. Those carry
+    // no command — drop them instead of executing a phantom task.
+    // (Tested: 1s of digital silence transcribed as "Thank you." on Groq.)
+    {
+      const bare = text.replace(/[.\s]+$/g, '').trim().toLowerCase();
+      if (
+        /^(thank you|thanks|thankyou|you|uh|um|hmm|ah|oh)$/.test(bare) ||
+        /^[^a-z0-9]*$/.test(text)
+      ) {
+        console.warn(`[STTEngine] Discarded bare non-content hallucination: "${text}"`);
+        return '';
+      }
+    }
+
+    // B0. Collapse decoder phrase-loops (D:\help collapseLoops): any 1-12 word
+    // phrase repeated 3+ times in a row is kept once — sliding window version.
+    {
+      const w = text.split(/\s+/).filter(Boolean);
+      const key = (s) => s.toLowerCase().replace(/[^a-z0-9']/g, '');
+      const out = [];
+      let i = 0;
+      while (i < w.length) {
+        let collapsed = false;
+        for (let n = 1; n <= 12 && i + 3 * n <= w.length; n++) {
+          let reps = 1;
+          while (i + (reps + 1) * n <= w.length && w.slice(i, i + n).every((x, k) => key(x) === key(w[i + reps * n + k]))) reps++;
+          if (reps >= 3) { out.push(...w.slice(i, i + n)); i += reps * n; collapsed = true; break; }
+        }
+        if (!collapsed) { out.push(w[i]); i++; }
+      }
+      const collapsedText = out.join(' ');
+      if (collapsedText !== text) {
+        console.warn(`[STTEngine] Collapsed decoder loop: "${text}" -> "${collapsedText}"`);
+        text = collapsedText;
+      }
+    }
+
     // B. Reject unnatural word-repetition loops (e.g. "you you you you you")
     if (/(\b\w+\b)(?:\s+\1){3,}/i.test(text)) {
       console.warn(`[STTEngine] Discarded repetitive acoustic loop hallucination: "${text}"`);
       return '';
+    }
+
+    // B2. Plausibility guard (D:\help listen.js): fast speech is ~4 words/sec.
+    // More words than the audio could physically hold = decoder hallucination.
+    if (typeof pcmBuffer !== 'undefined' && pcmBuffer && pcmBuffer.length > 0) {
+      const audioMs = (pcmBuffer.length / 2) / 16; // 16kHz Int16 mono
+      const wordCount = text.split(/\s+/).filter(Boolean).length;
+      if (wordCount > Math.ceil((audioMs / 1000) * 5) + 3 && wordCount > 4) {
+        console.warn(`[STTEngine] Discarded implausible transcript: ${wordCount} words in ${Math.round(audioMs)}ms of audio`);
+        return '';
+      }
     }
 
     // C. Normalize phonetic greeting slips ("hie", "hei", "hy", "heyy", "heya", "hai", "hiya") to standard "hey" / "hi"
@@ -131,18 +193,30 @@ class STTEngine {
     formData.append('file', blob, 'speech.wav');
     formData.append('model', config.groqWhisperModel || 'whisper-large-v3-turbo');
     formData.append('response_format', 'json');
+    // Voice-garble fix: bias the decoder toward our command vocabulary so
+    // short commands ("close tab") don't decode as lookalikes ("clothes tub").
+    // Whisper treats prompt as context/style primer, not as transcript.
+    formData.append('prompt', 'Browser voice commands: open youtube, open google, new tab, close tab, go back, go forward, reload, scroll down, scroll up, search, stop, cancel, never mind, next, continue. The speaker gives one short browser command.');
     // Bilingual STT: auto-detect speech language (Hindi/Hinglish/English). Forcing
     // 'en' mistranscribes Hindi commands. Lock via config.groqWhisperLanguage if needed.
     if (config.groqWhisperLanguage) formData.append('language', config.groqWhisperLanguage);
     formData.append('temperature', '0.0');
 
-    const res = await fetch(config.groqWhisperUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${config.groqApiKey}`
-      },
-      body: formData
-    });
+    const sttTimeout = new AbortController();
+    const sttTimer = setTimeout(() => sttTimeout.abort(), 8000);
+    let res;
+    try {
+      res = await fetch(config.groqWhisperUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${config.groqApiKey}`
+        },
+        body: formData,
+        signal: sttTimeout.signal
+      });
+    } finally {
+      clearTimeout(sttTimer);
+    }
 
     if (res.ok) {
       const data = await res.json();
@@ -152,8 +226,23 @@ class STTEngine {
   }
 
   /**
-   * Acoustic Cadence, Zero-Crossing Rate (ZCR) and Syllabic Envelope Matcher
-   * Classifies core browser command intents from raw PCM audio features
+   * RMS of an Int16 PCM buffer, 0..1 — used to gate the acoustic fallback.
+   */
+  rmsOf(pcmBuffer) {
+    if (!pcmBuffer || pcmBuffer.length < 2) return 0;
+    let sum = 0;
+    const n = Math.floor(pcmBuffer.length / 2);
+    for (let i = 0; i < pcmBuffer.length - 1; i += 2) {
+      const v = pcmBuffer.readInt16LE(i) / 32768.0;
+      sum += v * v;
+    }
+    return n > 0 ? Math.sqrt(sum / n) : 0;
+  }
+
+  /**
+   * Acoustic Cadence, Zero-Crossing Rate (ZCR) and Syllabic Envelope Matcher.
+   * Classifies core browser command intents from raw PCM audio features.
+   * NOTE: only used when acousticFallback is explicitly enabled (default off).
    */
   classifyAcousticCommand(pcmBuffer) {
     const samples = [];
@@ -255,7 +344,12 @@ class STTEngine {
   async queryLocalWhisper(pcmBuffer) {
     const wavBuffer = this.createWavBuffer(pcmBuffer);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 600);
+    // Voice-garble fix: the old fixed 600ms aborted every real utterance
+    // (whisper.cpp needs ~0.3-0.5x audio duration), so the local path NEVER
+    // succeeded and everything fell through to the acoustic guesser.
+    const audioMs = pcmBuffer ? (pcmBuffer.length / 32) : 0; // 16kHz 16-bit mono
+    const budgetMs = Math.min(15000, Math.max(2500, 1500 + audioMs * 0.6));
+    const timeout = setTimeout(() => controller.abort(), budgetMs);
 
     try {
       const res = await fetch(this.whisperEndpoint, {
@@ -286,9 +380,22 @@ class STTEngine {
       const val = Math.abs(pcmBuffer.readInt16LE(i));
       if (val > maxAmp) maxAmp = val;
     }
-    // If audio is quiet (peak under 65% full scale), apply dynamic boost up to 4.5x
-    if (maxAmp > 100 && maxAmp < 22000) {
-      const multiplier = Math.min(4.5, 24000 / maxAmp);
+    // Gentle AGC (voice-garble fix): the browser already runs autoGainControl
+    // plus a 1.35x preamp, so this stage must NOT double-boost room noise.
+    // Cap 2x, require a real signal (peak >= 1500), leave loud audio alone
+    // (peak >= 16000), and skip near-silence (rms < 0.02) entirely.
+    let rmsLevel = 0;
+    {
+      let sumSq = 0;
+      const n = Math.floor(pcmBuffer.length / 2);
+      for (let i = 0; i < pcmBuffer.length - 1; i += 2) {
+        const v = pcmBuffer.readInt16LE(i) / 32768.0;
+        sumSq += v * v;
+      }
+      rmsLevel = n > 0 ? Math.sqrt(sumSq / n) : 0;
+    }
+    if (maxAmp >= 1500 && maxAmp < 16000 && rmsLevel >= 0.02) {
+      const multiplier = Math.min(2.0, 13000 / maxAmp);
       const normalized = Buffer.alloc(pcmBuffer.length);
       for (let i = 0; i < pcmBuffer.length - 1; i += 2) {
         const sample = pcmBuffer.readInt16LE(i);

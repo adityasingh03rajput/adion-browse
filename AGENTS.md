@@ -29,3 +29,8 @@ Modern web applications ignore synthetic JavaScript DOM events (`el.value = ...`
 - Maintain zero-cost model routing and <0.5ms preprocessing benchmarks (`py -m pytest bench_tokens.py`).
 - Keep code clean, modular, and maintainable.
 
+## 7. No Dummy Data, No Hardcoded Fakes, No Cheap Shortcuts
+- **Everything must be real**: no mock responses, placeholder credentials, fake success states, hardcoded dummy accounts, or stubbed APIs presented as working features.
+- **No cheap coding**: never fake a capability to pass a test or demo — if a feature cannot genuinely work (e.g., a third-party flow that blocks embedded browsers), say so honestly and implement the correct real-world alternative instead of simulating it.
+- **Honest degradation**: when an external service rejects the environment (CAPTCHA, bot detection, OAuth policy), surface the real error and offer legitimate workarounds — never silently substitute fake data.
+

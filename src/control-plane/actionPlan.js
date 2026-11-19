@@ -9,7 +9,7 @@
 const PARAM_KEYS = [
   'url', 'query', 'direction', 'amount', 'target', 'selector', 'text',
   'command', 'value', 'attribute', 'action', 'message', 'contact', 'phone',
-  'secretCode', 'panel', 'key', 'x', 'y', 'path'
+  'secretCode', 'panel', 'key', 'keys', 'x', 'y', 'path', 'id', 'name', 'app', 'enter', 'shortcut'
 ];
 
 const TYPE_ALIASES = {
@@ -33,7 +33,10 @@ const TYPE_ALIASES = {
   EXEC: 'TERMINAL_EXEC',
   SHELL: 'TERMINAL_EXEC',
   ANSWER: 'PAGE_ANALYSIS_OR_QA',
-  CHAT: 'PAGE_ANALYSIS_OR_QA'
+  CHAT: 'PAGE_ANALYSIS_OR_QA',
+  PAGE_ANALYSIS: 'PAGE_ANALYSIS_OR_QA',
+  PAGE_ANALYSIS_OR_QA: 'PAGE_ANALYSIS_OR_QA',
+  QA: 'PAGE_ANALYSIS_OR_QA'
 };
 
 /**
@@ -81,6 +84,9 @@ function normalizeAction(action) {
   if (action.params && typeof action.params === 'object' && !Array.isArray(action.params)) {
     Object.assign(params, action.params);
   }
+  if (action.args && typeof action.args === 'object' && !Array.isArray(action.args)) {
+    Object.assign(params, action.args);
+  }
   for (const key of PARAM_KEYS) {
     if (params[key] === undefined && action[key] !== undefined) {
       params[key] = action[key];
@@ -95,7 +101,12 @@ function normalizeAction(action) {
     else if (action.down) params.direction = 'down';
   }
 
-  return { type, params };
+  const result = { type, params };
+  if (action.args || Object.keys(params).length > 0) {
+    result.args = { ...params, ...(action.args || {}) };
+  }
+  if (action.name) result.name = action.name;
+  return result;
 }
 
 function normalizePlan(parsed) {
@@ -124,6 +135,14 @@ function normalizePlan(parsed) {
           ? task.status
           : 'pending'
       }));
+  }
+
+  // BUA self-correction pattern: memory and next_goal fields for compressed history
+  if (parsed.memory && typeof parsed.memory === 'string') {
+    plan.memory = parsed.memory.trim();
+  }
+  if (parsed.next_goal && typeof parsed.next_goal === 'string') {
+    plan.next_goal = parsed.next_goal.trim();
   }
 
   plan.goalAccomplished = parsed.goalAccomplished === true || parsed.accomplished === true;
@@ -166,6 +185,7 @@ function parsePlanResponse(raw) {
 
 module.exports = {
   PARAM_KEYS,
+  TYPE_ALIASES,
   repairTruncatedJSON,
   normalizeAction,
   normalizePlan,
