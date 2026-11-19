@@ -167,5 +167,16 @@ contextBridge.exposeInMainWorld('adionAPI', {
     getProviders: () => ipcRenderer.invoke('ai:get-providers'),
     setProvider: (providerName) => ipcRenderer.invoke('ai:set-provider', providerName),
     configureProvider: (data) => ipcRenderer.invoke('ai:configure-provider', data)
+  },
+
+  // Extensible Skills System (Claude / Antigravity Style)
+  skills: {
+    list: () => ipcRenderer.invoke('skills:list'),
+    get: (id) => ipcRenderer.invoke('skills:get', id),
+    add: (skillData) => ipcRenderer.invoke('skills:add', skillData),
+    update: (id, updates) => ipcRenderer.invoke('skills:update', { id, updates }),
+    delete: (id) => ipcRenderer.invoke('skills:delete', id),
+    toggle: (id, enabled) => ipcRenderer.invoke('skills:toggle', { id, enabled }),
+    onUpdated: (callback) => ipcRenderer.on('skills:updated', (e, data) => callback(data))
   }
 });

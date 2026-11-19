@@ -59,7 +59,30 @@
     - **Tool Suite**: Browser navigation, clicking, scrolling, DOM inspection, screenshots
     - **Optional Standby**: Disabled by default; toggle in Settings without restart
 
-    ### 6. 🔄 Multi-Provider Routing
+    ### 6. 🧩 Extensible AI Skills Engine (Claude / Antigravity Architecture)
+    - **Modular Capabilities**: Add ANY custom skill simply by dropping a `SKILL.md` into the `skills/` directory or clicking **+ Add Skill** in Copilot.
+    - **YAML Frontmatter + Markdown Directives**: Standard skill definition format:
+      ```markdown
+      ---
+      name: my-researcher
+      title: Specialized Market Researcher
+      trigger: /market
+      description: Scrapes pricing, competitors, and reviews
+      ---
+      # Execution Directives
+      1. Formulate multiple distinct search queries...
+      ```
+    - **Zero-Latency Slash Dispatch**: Type `/` in the Copilot chat bar to launch the dynamic, filterable skills popover.
+    - **Built-in Starter Skills**:
+      - 🔍 `/research` (`deep-research`): Multi-source deep web intelligence & cross-referenced synthesis
+      - 📑 `/summarize` (`page-summary`): High-signal cognitive thesis, empirical data, and action items
+      - 📊 `/extract` (`data-extractor`): Scrapes repeating tables/cards into Markdown tables and JSON
+      - 🏷️ `/price` (`price-tracker`): Price comparison, deal validation, and discount checking
+      - 💻 `/review` (`code-reviewer`): GitHub/GitLab PR and code quality/security auditing
+      - 📝 `/autofill` (`form-autofill`): Multi-field form completion with semantic field grounding
+      - 🖥️ `/pc_use` (`computer-use`): Host PC PowerShell/Bash workspace automation
+
+    ### 7. 🔄 Multi-Provider Routing
     - **OpenAI**: gpt-4o, gpt-4o-mini
     - **Anthropic**: claude-3-5-sonnet, claude-3-5-haiku
     - **Google Gemini**: gemini-2.0-flash

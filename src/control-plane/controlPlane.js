@@ -178,6 +178,12 @@ class ControlPlane {
       this.sendToUI('adion:notification', data);
     });
 
+    if (this.runtime.skillManager) {
+      this.runtime.skillManager.on('updated', (skills) => {
+        this.sendToUI(IPCChannels.SKILLS_UPDATED, skills);
+      });
+    }
+
     this.runtime.on('terminal-output', (data) => {
       this.sendToUI('agent:terminal-output', data);
     });
@@ -551,6 +557,53 @@ class ControlPlane {
     ipcMain.handle('terminal:get-history', () => {
       return this.terminalBridge ? this.terminalBridge.history : [];
     });
+
+    // Extensible AI Skills System (Claude / Antigravity Style)
+    ipcMain.handle(IPCChannels.SKILLS_LIST, () => {
+      return this.runtime.skillManager ? this.runtime.skillManager.getAllSkills() : [];
+    });
+
+    ipcMain.handle(IPCChannels.SKILLS_GET, (event, id) => {
+      return this.runtime.skillManager ? this.runtime.skillManager.getSkill(id) : null;
+    });
+
+    ipcMain.handle(IPCChannels.SKILLS_ADD, (event, skillData) => {
+      if (!this.runtime.skillManager) return { error: 'Skill manager not initialized' };
+      try {
+        const created = this.runtime.skillManager.createSkill(skillData);
+        return { success: true, skill: created };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle(IPCChannels.SKILLS_UPDATE, (event, { id, updates }) => {
+      if (!this.runtime.skillManager) return { error: 'Skill manager not initialized' };
+      try {
+        const updated = this.runtime.skillManager.updateSkill(id, updates);
+        return { success: true, skill: updated };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle(IPCChannels.SKILLS_DELETE, (event, id) => {
+      if (!this.runtime.skillManager) return { error: 'Skill manager not initialized' };
+      try {
+        return this.runtime.skillManager.deleteSkill(id);
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle(IPCChannels.SKILLS_TOGGLE, (event, { id, enabled }) => {
+      if (!this.runtime.skillManager) return { error: 'Skill manager not initialized' };
+      try {
+        return this.runtime.skillManager.toggleSkill(id, enabled);
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
   }
 
   /**
@@ -568,6 +621,11 @@ class ControlPlane {
   }
 
   destroy() {
+    if (this.runtime && this.runtime.skillManager) {
+      try {
+        this.runtime.skillManager.destroy();
+      } catch (_) {}
+    }
     if (this.terminalBridge) {
       try {
         this.terminalBridge.stop();

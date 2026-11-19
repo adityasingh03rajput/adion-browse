@@ -484,6 +484,69 @@
     </div>
   </div>
 
+  <!-- Claude-Style Extensible AI Skills Modal -->
+  <div class="modal-overlay" id="modalCreateSkill">
+    <div class="modal-card skill-create-card">
+      <div class="modal-header">
+        <div class="task-modal-brand">
+          <div class="task-modal-icon-badge" style="background: rgba(0, 242, 254, 0.15); border-color: rgba(0, 242, 254, 0.4);">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00f2fe" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+          </div>
+          <div>
+            <h3 style="margin: 0; font-size: 15px; color: var(--text-main); font-weight: 600;">CREATE & INSTALL AI SKILL</h3>
+            <span style="font-size: 11.5px; color: var(--text-muted);">Define specialized instructions, triggers, and execution rules (Claude / Antigravity style)</span>
+          </div>
+        </div>
+        <button class="btn-close-sm" id="btnCloseCreateSkillModal">&times;</button>
+      </div>
+      <div class="modal-body skill-modal-body" style="padding-top: 14px;">
+        <div style="display: flex; gap: 12px;">
+          <div class="model-config-group" style="flex: 1.2;">
+            <label class="config-label" for="inputSkillTitle">Skill Title</label>
+            <input type="text" id="inputSkillTitle" class="config-input" placeholder="e.g. Hacker News Digest" autocomplete="off" required>
+          </div>
+          <div class="model-config-group" style="flex: 0.8;">
+            <label class="config-label" for="inputSkillTrigger">Slash Command Trigger</label>
+            <input type="text" id="inputSkillTrigger" class="config-input" placeholder="e.g. /hn or /digest" autocomplete="off" required>
+          </div>
+        </div>
+
+        <div class="model-config-group">
+          <label class="config-label" for="inputSkillDesc">Short Description</label>
+          <input type="text" id="inputSkillDesc" class="config-input" placeholder="e.g. Extract and summarize top discussions and tech breakthroughs" autocomplete="off" required>
+        </div>
+
+        <div class="model-config-group">
+          <div class="config-label-row">
+            <label class="config-label" for="inputSkillInstructions">Skill Directives & System Prompt (Markdown)</label>
+            <div class="config-quick-presets">
+              <span class="preset-label">Templates:</span>
+              <button type="button" class="preset-pill skill-template-btn" data-tmpl="research">Research</button>
+              <button type="button" class="preset-pill skill-template-btn" data-tmpl="scraper">Scraper</button>
+              <button type="button" class="preset-pill skill-template-btn" data-tmpl="review">Reviewer</button>
+              <button type="button" class="preset-pill skill-template-btn" data-tmpl="summary">Summarizer</button>
+            </div>
+          </div>
+          <textarea id="inputSkillInstructions" class="config-input" rows="8" style="resize: vertical; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 11.5px; line-height: 1.5; padding: 10px;" placeholder="# Instructions for the AI Agent when this skill is invoked:
+1. Steps to execute
+2. Constraints and formatting rules
+3. Output structure (JSON or Markdown)"></textarea>
+        </div>
+
+        <div class="model-config-feedback" id="skillConfigFeedback" style="display:none;"></div>
+      </div>
+      <div class="modal-footer model-config-footer">
+        <button class="btn-modal-secondary" id="btnCancelCreateSkill">Cancel</button>
+        <button class="btn-modal-primary" id="btnSaveCreateSkill">
+          <span>Install & Activate Skill</span>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Live Telemetry & Diagnostics Overlay -->
   <div class="telemetry-overlay" id="telemetryOverlay">
     <div class="telemetry-panel">
@@ -925,103 +988,27 @@
         </div>
       </div>
 
-      <!-- Skills Popover Menu -->
+      <!-- Extensible Skills Popover Menu (Claude / Antigravity Style) -->
       <div class="skills-menu-popover" id="skillsQuickMenu">
         <div class="skills-menu-header">
-          <span class="skills-header-title">AI Tools & Skills</span>
-          <span class="skills-header-hint">Type / to filter</span>
+          <div class="skills-header-brand">
+            <span class="skills-header-title">AI Skills & Extensions</span>
+            <span class="skills-header-hint">Type / to trigger</span>
+          </div>
+          <button class="btn-skills-add-new" id="btnOpenCreateSkillModal" title="Add Custom Skill (+)">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            <span>Add Skill</span>
+          </button>
         </div>
-        <div class="skills-menu-list">
-          <div class="skill-menu-item" data-action="/task" title="Toggle Gemini Task Mode">
-            <span class="skill-icon">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-            </span>
-            <div class="skill-info">
-              <span class="skill-name">Gemini Task Mode</span>
-              <span class="skill-desc">Stateful loop, Work Panel, & takeover checkpoints</span>
-            </div>
-            <span class="skill-tag">/task</span>
-          </div>
-          <div class="skill-menu-item" data-action="/pc_use " title="Computer Use">
-            <span class="skill-icon">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
-            </span>
-            <div class="skill-info">
-              <span class="skill-name">Computer Use (PC)</span>
-              <span class="skill-desc">Execute commands & tasks on local workspace</span>
-            </div>
-            <span class="skill-tag">/pc_use</span>
-          </div>
-          <div class="skill-menu-item" data-action="/terminal " title="Execute terminal command">
-            <span class="skill-icon">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
-            </span>
-            <div class="skill-info">
-              <span class="skill-name">Terminal Command</span>
-              <span class="skill-desc">Run local system command directly on PC</span>
-            </div>
-            <span class="skill-tag">/terminal</span>
-          </div>
-          <div class="skill-menu-item" data-action="/summarize" title="Summarize the active webpage">
-            <span class="skill-icon">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
-            </span>
-            <div class="skill-info">
-              <span class="skill-name">Summarize Page</span>
-              <span class="skill-desc">Synthesize key points from current page</span>
-            </div>
-            <span class="skill-tag">/summarize</span>
-          </div>
-          <div class="skill-menu-item" data-action="/whatsapp " title="Send a WhatsApp message">
-            <span class="skill-icon">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
-            </span>
-            <div class="skill-info">
-              <span class="skill-name">WhatsApp Message</span>
-              <span class="skill-desc">Text contacts with hardware dispatch</span>
-            </div>
-            <span class="skill-tag">/whatsapp</span>
-          </div>
-          <div class="skill-menu-item" data-action="/search " title="Search within current site or web">
-            <span class="skill-icon">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-            </span>
-            <div class="skill-info">
-              <span class="skill-name">Scoped Site Search</span>
-              <span class="skill-desc">Search content within active site</span>
-            </div>
-            <span class="skill-tag">/search</span>
-          </div>
-          <div class="skill-menu-item" data-action="/inspect " title="Inspect elements">
-            <span class="skill-icon">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="22" y1="12" x2="18" y2="12"></line><line x1="6" y1="12" x2="2" y2="12"></line><line x1="12" y1="6" x2="12" y2="2"></line><line x1="12" y1="22" x2="12" y2="18"></line></svg>
-            </span>
-            <div class="skill-info">
-              <span class="skill-name">Live Inspect & Click</span>
-              <span class="skill-desc">Highlight and interact with page elements</span>
-            </div>
-            <span class="skill-tag">/inspect</span>
-          </div>
-          <div class="skill-menu-item" data-action="/explain " title="Explain active page content">
-            <span class="skill-icon">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-            </span>
-            <div class="skill-info">
-              <span class="skill-name">Explain Content</span>
-              <span class="skill-desc">Deep cognitive reasoning on shared content</span>
-            </div>
-            <span class="skill-tag">/explain</span>
-          </div>
-          <div class="skill-menu-item" data-action="/devtools" title="Toggle Developer Tools">
-            <span class="skill-icon">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
-            </span>
-            <div class="skill-info">
-              <span class="skill-name">Developer Tools</span>
-              <span class="skill-desc">Toggle DevTools Elements & Console</span>
-            </div>
-            <span class="skill-tag">/devtools</span>
-          </div>
+        <div class="skills-menu-search-box">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="skillsMenuFilterInput" class="skills-menu-filter-input" placeholder="Search skills (e.g. /research, price)..." autocomplete="off">
+        </div>
+        <div class="skills-menu-list" id="skillsMenuList">
+          <!-- Dynamically populated from window.adionAPI.skills -->
+        </div>
+        <div class="skills-menu-footer">
+          <span class="skills-footer-tip">Drop any <code>SKILL.md</code> into <code>skills/</code> folder</span>
         </div>
       </div>
 

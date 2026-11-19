@@ -323,11 +323,21 @@ Use this JSON schema:
       }).join('\n') + '\n';
     }
 
+    let activeSkillSection = '';
+    if (pageContext.activeSkill) {
+      const sk = pageContext.activeSkill;
+      activeSkillSection = `\n[SPECIALIZED AI SKILL ACTIVATED: ${sk.title.toUpperCase()} (${sk.trigger})]:
+- Skill Identifier: ${sk.name}
+- Skill Description: ${sk.description || ''}
+- Core Skill Directives & Execution Instructions:
+${sk.instructions || ''}\n`;
+    }
+
     const prompt = `
 Current Active Page:
 - URL: ${pageContext.url || 'adion://newtab'}
 - Title: ${pageContext.title || 'New Tab'}${elementsInfo}
-${openTabsSection}${computerUseSection}${completedPrefixSection}${entityContextSection}
+${openTabsSection}${computerUseSection}${completedPrefixSection}${entityContextSection}${activeSkillSection}
 User Command: "${userInput}"
 
 Conversational & Goal Execution Instructions:
@@ -1065,6 +1075,12 @@ JSON Action Plan:
         ).join('\n')}`
       : '';
 
+    let activeSkillSection = '';
+    if (pageContext.activeSkill) {
+      const sk = pageContext.activeSkill;
+      activeSkillSection = `\n\n[Active Specialized AI Skill: ${sk.title} (${sk.trigger})]\n${sk.instructions}`;
+    }
+
     const prompt = `You are Adion Browse, an AI assistant that helps users navigate and understand web pages.
 
 User Question: "${query}"
@@ -1072,9 +1088,9 @@ User Question: "${query}"
 Current Page:
 - URL: ${pageContext.url || 'unknown'}
 - Title: ${pageContext.title || 'unknown'}
-${contextSnippet}
+${contextSnippet}${activeSkillSection}
 
-Answer the user's question concisely and accurately based on the page context and conversation history. 
+Answer the user's question concisely and accurately based on the page context, active skill instructions, and conversation history. 
 If the answer cannot be determined from the page, say so honestly. Keep your response under 3 sentences.
 ${historySnippet}
 

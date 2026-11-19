@@ -109,7 +109,16 @@ const IPCChannels = {
   TASK_MODE_UPDATE: 'task-mode:update',
   TASK_MODE_PAUSED: 'task-mode:paused',
   TASK_MODE_RESUMED: 'task-mode:resumed',
-  TASK_MODE_COMPLETED: 'task-mode:completed'
+  TASK_MODE_COMPLETED: 'task-mode:completed',
+
+  // Extensible Skills System (Claude / Antigravity Architecture)
+  SKILLS_LIST: 'skills:list',
+  SKILLS_GET: 'skills:get',
+  SKILLS_ADD: 'skills:add',
+  SKILLS_UPDATE: 'skills:update',
+  SKILLS_DELETE: 'skills:delete',
+  SKILLS_TOGGLE: 'skills:toggle',
+  SKILLS_UPDATED: 'skills:updated'
 };
 
 module.exports = {

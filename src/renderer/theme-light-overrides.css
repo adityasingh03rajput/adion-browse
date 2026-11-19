@@ -909,9 +909,19 @@ html[data-theme="light"] .skill-name {
 html[data-theme="light"] .skill-desc {
   color: #616a74;
 }
+html[data-theme="light"] .skills-menu-search-box {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+html[data-theme="light"] .skills-menu-filter-input {
+  color: #0c1319;
+}
+html[data-theme="light"] .skills-menu-footer {
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
 html[data-theme="light"] .skill-tag {
-  color: #01f3ff;
-  background: rgba(1, 243, 255, 0.1);
+  color: #008fa0;
+  background: rgba(1, 243, 255, 0.15);
 }
 html[data-theme="light"] .model-menu-popover {
   background: #dee1eb;

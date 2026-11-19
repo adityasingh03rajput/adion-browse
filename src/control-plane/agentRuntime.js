@@ -16,6 +16,7 @@ const { scoreTokenOverlap } = require('./tokenMatch');
 const { evaluateAction } = require('./actionConsent');
 const { createSettleWatcher } = require('./settleWatcher');
 const JarvisSession = require('./jarvisSession');
+const SkillManager = require('./skills/skillManager');
 
 class AgentRuntime extends EventEmitter {
   constructor(tabManager, cdpBridge, contextEngine, visionGrounder, securityVault, sessionManager = null, terminalBridge = null) {
@@ -30,6 +31,9 @@ class AgentRuntime extends EventEmitter {
     this.terminalBridge = terminalBridge;
     this.stt = new STTEngine();
     this.model = new ModelClient();
+    this.skillManager = new SkillManager(this);
+    this.skillManager.init();
+    this.activeSkill = null;
     this.state = AgentState.IDLE;
     this.currentTask = null;
     this.taskModeEnabled = true;
@@ -790,6 +794,67 @@ class AgentRuntime extends EventEmitter {
     this.setState(AgentState.PARSING_INTENT, { input: exactPrompt });
     this.emit('feedback', { message: `Autonomous Agent coordinating: "${text}"`, level: 'info' });
 
+    // Meta Skills Commands (/skills, /skill list, /skill add, /skill delete, /skill toggle)
+    if (this.skillManager) {
+      if (/^\/skills?(?:\s+list)?\s*$/i.test(exactPrompt)) {
+        const list = this.skillManager.getAllSkills();
+        const formatted = list.map((s, i) => `${i + 1}. **${s.title}** (\`${s.trigger}\`) — ${s.description}${s.enabled ? '' : ' *(disabled)*'}`).join('\n');
+        const msg = `🧩 **Installed AI Skills (${list.length})**:\n\n${formatted}\n\n*Type any \`/<command>\` to run, or click **+ Add Skill** in Copilot.*`;
+        this.emit('feedback', { message: msg, level: 'info' });
+        this.setState(AgentState.IDLE);
+        return;
+      }
+
+      const addMatch = exactPrompt.match(/^\/skills?\s+add\s+([a-zA-Z0-9_\-]+)\s+(\/[a-zA-Z0-9_\-]+)\s+([\s\S]+)$/i);
+      if (addMatch) {
+        const [_, name, trigger, desc] = addMatch;
+        const created = this.skillManager.createSkill({
+          name,
+          trigger,
+          title: name.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+          description: desc.trim(),
+          instructions: `Directives for ${name}:\n1. Analyze user request and execute with specialized precision.\n2. Adhere to description: ${desc.trim()}`
+        });
+        const msg = `✨ **Skill Created & Installed**: **${created.title}** (\`${created.trigger}\`)\n${created.description}`;
+        this.emit('feedback', { message: msg, level: 'success' });
+        this.emit('adion-notification', { type: 'success', message: `Skill ${created.title} installed!` });
+        this.setState(AgentState.IDLE);
+        return;
+      }
+    }
+
+    // Match Custom or Built-In Skill Trigger (e.g. /research, /price, /summarize, /extract, /review, or any user-added skill)
+    let matchedSkill = this.skillManager ? this.skillManager.findMatchingSkill(exactPrompt) : null;
+    let plannedText = text;
+
+    if (matchedSkill) {
+      this.activeSkill = matchedSkill.skill;
+      this.emit('feedback', {
+        message: `🎯 Activated Skill: **${this.activeSkill.title}** (\`${this.activeSkill.trigger}\`)`,
+        level: 'info'
+      });
+      this.emit('adion-notification', {
+        type: 'info',
+        message: `Skill: ${this.activeSkill.title}`
+      });
+
+      if (matchedSkill.query) {
+        plannedText = matchedSkill.query;
+      } else {
+        if (this.activeSkill.name === 'page-summary' || this.activeSkill.name === 'summarize') {
+          plannedText = 'summarize the main points and key takeaways of this page';
+        } else if (this.activeSkill.name === 'data-extractor' || this.activeSkill.name === 'extract') {
+          plannedText = 'extract structured data, tables, and listings from this page';
+        } else if (this.activeSkill.name === 'code-reviewer' || this.activeSkill.name === 'review') {
+          plannedText = 'review the visible code and pull request changes for bugs and quality';
+        } else {
+          plannedText = `execute ${this.activeSkill.title}`;
+        }
+      }
+    } else {
+      this.activeSkill = null;
+    }
+
     // Detect Computer Use / Local Workspace Mode (/pc, /pc_use, /computer, /workspace)
     if (/^\/(?:task_mode|task)\b/i.test(exactPrompt)) {
       const sub = exactPrompt.replace(/^\/(?:task_mode|task)\s*/i, '').trim();
@@ -803,11 +868,11 @@ class AgentRuntime extends EventEmitter {
       }
     }
 
-    const isComputerUse = /^\/(?:pc_use|pc|computer|workspace)\b/i.test(exactPrompt) ||
+    const isComputerUse = (matchedSkill && (matchedSkill.skill.name === 'computer-use' || matchedSkill.skill.trigger === '/pc_use')) ||
+                          /^\/(?:pc_use|pc|computer|workspace)\b/i.test(exactPrompt) ||
                           /^(?:run\s+on\s+(?:pc|computer|workspace)|on\s+(?:my\s+)?(?:pc|computer|workspace))\b/i.test(exactPrompt);
 
-    let plannedText = text;
-    if (isComputerUse) {
+    if (isComputerUse && !matchedSkill) {
       plannedText = text.replace(/^(?:\/pc_use\s+|\/pc\s+|\/computer\s+|\/workspace\s+|run\s+on\s+(?:pc|computer|workspace)\s+|on\s+(?:my\s+)?(?:pc|computer|workspace)\s*)/i, '').trim();
       if (!plannedText) plannedText = 'inspect current directory and system status';
     }
@@ -831,6 +896,9 @@ class AgentRuntime extends EventEmitter {
     try {
       activeTab = this.tabManager ? this.tabManager.getActiveTab() : null;
       pageContext = activeTab ? { url: activeTab.url, title: activeTab.title } : {};
+      if (this.activeSkill) {
+        pageContext.activeSkill = this.activeSkill;
+      }
       if (this.lastDOMSelector) {
         pageContext.lastDOMSelector = this.lastDOMSelector;
       }
@@ -1502,6 +1570,9 @@ class AgentRuntime extends EventEmitter {
           const livePageContext = isComputerUse
             ? { ...pageContext, terminal: this.terminalBridge ? this.terminalBridge.getStatus() : null }
             : await this.getActivePageContext(currentTab);
+          if (livePageContext && this.activeSkill) {
+            livePageContext.activeSkill = this.activeSkill;
+          }
 
           // Build augmented conversational history containing live goal execution progress
           const completedActionSummaries = Array.from(new Set(

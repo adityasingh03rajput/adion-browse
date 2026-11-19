@@ -281,7 +281,8 @@ document.addEventListener('DOMContentLoaded', () => {
       (telemetryOverlay && telemetryOverlay.classList.contains('show')) ||
       (adionPanelOverlay && adionPanelOverlay.classList.contains('open')) ||
       (taskModal && taskModal.classList.contains('show')) ||
-      (modelConfigModal && modelConfigModal.classList.contains('show'))
+      (modelConfigModal && modelConfigModal.classList.contains('show')) ||
+      (document.getElementById('modalCreateSkill') && document.getElementById('modalCreateSkill').classList.contains('show'))
     );
     if (window.adionAPI && typeof window.adionAPI.setOverlayActive === 'function') {
       window.adionAPI.setOverlayActive(isAnyOpen);
@@ -296,6 +297,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (except !== 'telemetry' && telemetryOverlay) telemetryOverlay.classList.remove('show');
     if (except !== 'adion' && adionPanelOverlay) adionPanelOverlay.classList.remove('open');
     if (except !== 'modelConfig' && modelConfigModal) modelConfigModal.classList.remove('show');
+    const modalCreateSkill = document.getElementById('modalCreateSkill');
+    if (except !== 'createSkill' && modalCreateSkill) modalCreateSkill.classList.remove('show');
     if (except !== 'task' && taskModal) {
       taskModal.classList.remove('show');
       if (btnTextAgent) btnTextAgent.classList.remove('active');
@@ -1339,15 +1342,191 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- Quick Tools & Skills Menu Controller (+ Button & / Shortcut) ---
+  // --- Extensible AI Skills Engine Controller (Claude / Antigravity Style) ---
   const btnSidePanelAdd = document.getElementById('btnSidePanelAdd');
   const skillsQuickMenu = document.getElementById('skillsQuickMenu');
+  const skillsMenuList = document.getElementById('skillsMenuList');
+  const skillsMenuFilterInput = document.getElementById('skillsMenuFilterInput');
+  const btnOpenCreateSkillModal = document.getElementById('btnOpenCreateSkillModal');
+  const modalCreateSkill = document.getElementById('modalCreateSkill');
+  const btnCloseCreateSkillModal = document.getElementById('btnCloseCreateSkillModal');
+  const btnCancelCreateSkill = document.getElementById('btnCancelCreateSkill');
+  const btnSaveCreateSkill = document.getElementById('btnSaveCreateSkill');
+  const inputSkillTitle = document.getElementById('inputSkillTitle');
+  const inputSkillTrigger = document.getElementById('inputSkillTrigger');
+  const inputSkillDesc = document.getElementById('inputSkillDesc');
+  const inputSkillInstructions = document.getElementById('inputSkillInstructions');
+  const skillConfigFeedback = document.getElementById('skillConfigFeedback');
+
+  const escapeHtml = (str) => String(str || '').replace(/[&<>'"]/g, tag => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    "'": '&#39;',
+    '"': '&quot;'
+  }[tag] || tag));
+
+  let activeSkillsCache = [];
+
+  function getSkillIconSVG(iconName) {
+    switch (iconName) {
+      case 'search':
+        return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>';
+      case 'book':
+        return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>';
+      case 'database':
+        return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>';
+      case 'tag':
+        return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>';
+      case 'code':
+        return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>';
+      case 'edit':
+        return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
+      case 'terminal':
+        return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>';
+      default:
+        return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>';
+    }
+  }
+
+  function renderSkillsMenu(filter = '') {
+    if (!skillsMenuList) return;
+    skillsMenuList.innerHTML = '';
+
+    const cleanFilter = (filter || '').trim().toLowerCase().replace(/^\//, '');
+
+    const filtered = activeSkillsCache.filter(skill => {
+      if (!cleanFilter) return true;
+      const matchTrigger = (skill.trigger || '').toLowerCase().includes(cleanFilter);
+      const matchTitle = (skill.title || '').toLowerCase().includes(cleanFilter);
+      const matchDesc = (skill.description || '').toLowerCase().includes(cleanFilter);
+      const matchTag = Array.isArray(skill.tags) && skill.tags.some(t => t.toLowerCase().includes(cleanFilter));
+      return matchTrigger || matchTitle || matchDesc || matchTag;
+    });
+
+    if (filtered.length === 0) {
+      const emptyEl = document.createElement('div');
+      emptyEl.className = 'skills-empty-state';
+      emptyEl.style.cssText = 'padding: 16px 10px; text-align: center; color: #8b949e; font-size: 11.5px;';
+      emptyEl.innerHTML = `No skills match "<strong>${escapeHtml(cleanFilter)}</strong>".<br><a href="#" id="linkCreateFilteredSkill" style="color:#00f2fe; text-decoration:none; display:inline-block; margin-top:6px;">+ Create custom skill</a>`;
+      skillsMenuList.appendChild(emptyEl);
+      const link = emptyEl.querySelector('#linkCreateFilteredSkill');
+      if (link) {
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          openCreateSkillModal(cleanFilter);
+        });
+      }
+      return;
+    }
+
+    filtered.forEach(skill => {
+      const item = document.createElement('div');
+      item.className = `skill-menu-item${skill.enabled ? '' : ' disabled'}`;
+      item.setAttribute('data-skill-id', skill.id);
+      item.setAttribute('data-action', skill.trigger || `/${skill.name}`);
+      item.title = `${skill.title}: ${skill.description}`;
+
+      const iconSpan = document.createElement('span');
+      iconSpan.className = 'skill-icon';
+      iconSpan.innerHTML = getSkillIconSVG(skill.icon);
+
+      const infoDiv = document.createElement('div');
+      infoDiv.className = 'skill-info';
+      infoDiv.innerHTML = `
+        <span class="skill-name">${escapeHtml(skill.title)}</span>
+        <span class="skill-desc">${escapeHtml(skill.description)}</span>
+      `;
+
+      const rightDiv = document.createElement('div');
+      rightDiv.className = 'skill-item-right';
+
+      const tagSpan = document.createElement('span');
+      tagSpan.className = 'skill-tag';
+      tagSpan.textContent = skill.trigger || `/${skill.name}`;
+      rightDiv.appendChild(tagSpan);
+
+      if (!skill.isBuiltin) {
+        const btnDelete = document.createElement('button');
+        btnDelete.className = 'btn-skill-delete';
+        btnDelete.title = 'Delete Custom Skill';
+        btnDelete.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
+        btnDelete.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (confirm(`Delete skill "${skill.title}"?`)) {
+            try {
+              if (window.adionAPI && window.adionAPI.skills) {
+                await window.adionAPI.skills.delete(skill.id);
+                showAdionToast(`Skill "${skill.title}" deleted`, 'info');
+              }
+            } catch (err) {
+              showAdionToast(`Failed to delete skill: ${err.message}`, 'alert');
+            }
+          }
+        });
+        rightDiv.appendChild(btnDelete);
+      }
+
+      item.appendChild(iconSpan);
+      item.appendChild(infoDiv);
+      item.appendChild(rightDiv);
+
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeSkillsMenu();
+        const action = skill.trigger || `/${skill.name}`;
+
+        if (action === '/task') {
+          if (typeof handleTaskModeToggle === 'function') {
+            handleTaskModeToggle();
+          } else if (window.adionAPI && window.adionAPI.taskMode) {
+            window.adionAPI.taskMode.toggle();
+          }
+        } else if (action === '/devtools') {
+          if (window.adionAPI && window.adionAPI.tabs) {
+            window.adionAPI.tabs.toggleDevTools();
+          }
+        } else {
+          if (sidePanelInput) {
+            sidePanelInput.value = action + ' ';
+            sidePanelInput.focus();
+            const len = sidePanelInput.value.length;
+            sidePanelInput.setSelectionRange(len, len);
+          }
+        }
+      });
+
+      skillsMenuList.appendChild(item);
+    });
+  }
+
+  async function loadSkillsList() {
+    try {
+      if (window.adionAPI && window.adionAPI.skills && typeof window.adionAPI.skills.list === 'function') {
+        const skills = await window.adionAPI.skills.list();
+        if (Array.isArray(skills)) {
+          activeSkillsCache = skills;
+          const currentFilter = skillsMenuFilterInput ? skillsMenuFilterInput.value : '';
+          renderSkillsMenu(currentFilter);
+        }
+      }
+    } catch (err) {
+      console.warn('[Copilot] Failed to load skills list:', err.message);
+    }
+  }
 
   function toggleSkillsMenu() {
     if (!skillsQuickMenu) return;
     const isOpen = skillsQuickMenu.classList.toggle('open');
     if (btnSidePanelAdd) {
       btnSidePanelAdd.classList.toggle('active', isOpen);
+    }
+    if (isOpen) {
+      loadSkillsList();
+      if (skillsMenuFilterInput) {
+        skillsMenuFilterInput.value = '';
+        skillsMenuFilterInput.focus();
+      }
     }
   }
 
@@ -1359,6 +1538,37 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function openCreateSkillModal(suggestedTrigger = '') {
+    closeSkillsMenu();
+    closeAllModalsExcept('createSkill');
+    if (modalCreateSkill) {
+      modalCreateSkill.classList.add('show');
+      updateOverlayState();
+      if (suggestedTrigger) {
+        const clean = suggestedTrigger.replace(/^\//, '');
+        if (inputSkillTitle) inputSkillTitle.value = clean.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        if (inputSkillTrigger) inputSkillTrigger.value = `/${clean}`;
+      } else {
+        if (inputSkillTitle) inputSkillTitle.value = '';
+        if (inputSkillTrigger) inputSkillTrigger.value = '';
+        if (inputSkillDesc) inputSkillDesc.value = '';
+        if (inputSkillInstructions) inputSkillInstructions.value = '';
+      }
+      if (skillConfigFeedback) {
+        skillConfigFeedback.style.display = 'none';
+        skillConfigFeedback.textContent = '';
+      }
+      if (inputSkillTitle) inputSkillTitle.focus();
+    }
+  }
+
+  function closeCreateSkillModal() {
+    if (modalCreateSkill) {
+      modalCreateSkill.classList.remove('show');
+      updateOverlayState();
+    }
+  }
+
   if (btnSidePanelAdd) {
     btnSidePanelAdd.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1366,51 +1576,162 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  if (skillsQuickMenu) {
-    skillsQuickMenu.querySelectorAll('.skill-menu-item').forEach(item => {
-      item.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const action = item.getAttribute('data-action');
-        closeSkillsMenu();
-        if (!action) return;
+  if (btnOpenCreateSkillModal) {
+    btnOpenCreateSkillModal.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openCreateSkillModal();
+    });
+  }
 
-        if (action === '/task') {
-          if (typeof handleTaskModeToggle === 'function') {
-            handleTaskModeToggle();
-          } else if (window.adionAPI && window.adionAPI.taskMode) {
-            window.adionAPI.taskMode.toggle();
-          }
-        } else if (action === '/summarize') {
-          submitSidePanelTask('summarize this page');
-        } else if (action === '/devtools') {
-          if (window.adionAPI && window.adionAPI.tabs) {
-            window.adionAPI.tabs.toggleDevTools();
-          }
-        } else {
-          if (sidePanelInput) {
-            sidePanelInput.value = action;
-            sidePanelInput.focus();
-            sidePanelInput.setSelectionRange(action.length, action.length);
+  if (btnCloseCreateSkillModal) {
+    btnCloseCreateSkillModal.addEventListener('click', () => closeCreateSkillModal());
+  }
+
+  if (btnCancelCreateSkill) {
+    btnCancelCreateSkill.addEventListener('click', () => closeCreateSkillModal());
+  }
+
+  // Preset Template Chips
+  document.querySelectorAll('.skill-template-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tmpl = btn.getAttribute('data-tmpl');
+      if (tmpl === 'research') {
+        if (!inputSkillTitle.value) inputSkillTitle.value = 'Academic & Market Researcher';
+        if (!inputSkillTrigger.value) inputSkillTrigger.value = '/research';
+        if (!inputSkillDesc.value) inputSkillDesc.value = 'Conduct deep multi-source research with verified factual citations';
+        inputSkillInstructions.value = `# Deep Academic & Market Research Directives
+1. Formulate 2-4 distinct search queries covering diverse perspectives.
+2. Cross-reference claims, numbers, and dates against authoritative sources.
+3. Synthesize findings into:
+   - Executive Briefing
+   - Verified Findings & Empirical Data
+   - Counter-Arguments & Nuances
+   - Direct Source Links & Citations`;
+      } else if (tmpl === 'scraper') {
+        if (!inputSkillTitle.value) inputSkillTitle.value = 'Structured Data Scraper';
+        if (!inputSkillTrigger.value) inputSkillTrigger.value = '/scrape';
+        if (!inputSkillDesc.value) inputSkillDesc.value = 'Extract page tables and listings into Markdown tables and JSON';
+        inputSkillInstructions.value = `# Structured Data Scraper Directives
+1. Identify repeating rows, cards, or table elements on the page.
+2. Clean and normalize fields into uniform columns.
+3. Emit output as both a clean Markdown table and a structured JSON block.
+4. Report total items extracted.`;
+      } else if (tmpl === 'review') {
+        if (!inputSkillTitle.value) inputSkillTitle.value = 'Code & Security Auditor';
+        if (!inputSkillTrigger.value) inputSkillTrigger.value = '/audit';
+        if (!inputSkillDesc.value) inputSkillDesc.value = 'Inspect pull requests and code for vulnerabilities and performance bugs';
+        inputSkillInstructions.value = `# Code & Security Auditor Directives
+1. Scan code for race conditions, unhandled exceptions, and injection risks.
+2. Evaluate architecture, modularity, and resource cleanup.
+3. For every issue flagged, provide a specific file & line reference and a tested, copy-pasteable drop-in replacement.`;
+      } else if (tmpl === 'summary') {
+        if (!inputSkillTitle.value) inputSkillTitle.value = 'Executive Briefing Distiller';
+        if (!inputSkillTrigger.value) inputSkillTrigger.value = '/brief';
+        if (!inputSkillDesc.value) inputSkillDesc.value = 'Distill high-signal executive briefings from lengthy articles and docs';
+        inputSkillInstructions.value = `# Executive Briefing Distiller Directives
+1. State the core thesis in 1-2 punchy sentences.
+2. List 4-6 high-signal bullet points covering key facts, dates, and numbers.
+3. Conclude with actionable takeaways and next steps.`;
+      }
+    });
+  });
+
+  if (btnSaveCreateSkill) {
+    btnSaveCreateSkill.addEventListener('click', async () => {
+      const title = (inputSkillTitle ? inputSkillTitle.value : '').trim();
+      let trigger = (inputSkillTrigger ? inputSkillTrigger.value : '').trim();
+      const description = (inputSkillDesc ? inputSkillDesc.value : '').trim();
+      const instructions = (inputSkillInstructions ? inputSkillInstructions.value : '').trim();
+
+      if (!title) {
+        if (skillConfigFeedback) {
+          skillConfigFeedback.style.display = 'block';
+          skillConfigFeedback.className = 'model-config-feedback error';
+          skillConfigFeedback.textContent = 'Please enter a Skill Title.';
+        }
+        return;
+      }
+
+      if (!trigger) {
+        trigger = `/${title.toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`;
+      } else if (!trigger.startsWith('/')) {
+        trigger = `/${trigger}`;
+      }
+
+      try {
+        if (window.adionAPI && window.adionAPI.skills) {
+          btnSaveCreateSkill.disabled = true;
+          const result = await window.adionAPI.skills.add({
+            title,
+            trigger,
+            description: description || `Specialized autonomous skill for ${title}`,
+            instructions: instructions || `# Directives for ${title}\n1. Execute user requests with specialized accuracy.`
+          });
+
+          btnSaveCreateSkill.disabled = false;
+          if (result && result.error) {
+            if (skillConfigFeedback) {
+              skillConfigFeedback.style.display = 'block';
+              skillConfigFeedback.className = 'model-config-feedback error';
+              skillConfigFeedback.textContent = `Error: ${result.error}`;
+            }
+          } else {
+            closeCreateSkillModal();
+            showAdionToast(`Skill "${title}" installed & active! (${trigger})`, 'success');
+            await loadSkillsList();
           }
         }
-      });
+      } catch (err) {
+        btnSaveCreateSkill.disabled = false;
+        if (skillConfigFeedback) {
+          skillConfigFeedback.style.display = 'block';
+          skillConfigFeedback.className = 'model-config-feedback error';
+          skillConfigFeedback.textContent = `Error: ${err.message}`;
+        }
+      }
+    });
+  }
+
+  if (skillsMenuFilterInput) {
+    skillsMenuFilterInput.addEventListener('input', () => {
+      renderSkillsMenu(skillsMenuFilterInput.value);
     });
   }
 
   if (sidePanelInput) {
     sidePanelInput.addEventListener('input', () => {
-      if (sidePanelInput.value.trim() === '/') {
+      const val = sidePanelInput.value;
+      if (val.startsWith('/')) {
         skillsQuickMenu?.classList.add('open');
         btnSidePanelAdd?.classList.add('active');
-      } else if (!sidePanelInput.value.startsWith('/')) {
+        const filterStr = val.slice(1);
+        renderSkillsMenu(filterStr);
+      } else {
         closeSkillsMenu();
       }
     });
   }
 
+  // Real-time listener for skill file modifications on disk
+  if (window.adionAPI && window.adionAPI.skills && typeof window.adionAPI.skills.onUpdated === 'function') {
+    window.adionAPI.skills.onUpdated((skills) => {
+      if (Array.isArray(skills)) {
+        activeSkillsCache = skills;
+        const currentFilter = skillsMenuFilterInput ? skillsMenuFilterInput.value : '';
+        renderSkillsMenu(currentFilter);
+      }
+    });
+  }
+
+  // Pre-load skills on start
+  loadSkillsList();
+
   document.addEventListener('click', (e) => {
     if (skillsQuickMenu && !skillsQuickMenu.contains(e.target) && e.target !== btnSidePanelAdd) {
       closeSkillsMenu();
+    }
+    if (modalCreateSkill && modalCreateSkill.classList.contains('show') && (e.target === modalCreateSkill || (!modalCreateSkill.querySelector('.modal-card').contains(e.target) && e.target !== btnOpenCreateSkillModal))) {
+      closeCreateSkillModal();
     }
   });
 
@@ -1418,6 +1739,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Escape') {
       if (skillsQuickMenu && skillsQuickMenu.classList.contains('open')) {
         closeSkillsMenu();
+      }
+      if (modalCreateSkill && modalCreateSkill.classList.contains('show')) {
+        closeCreateSkillModal();
       }
       if (modelSelectorMenu && modelSelectorMenu.classList.contains('open')) {
         closeModelMenu();
