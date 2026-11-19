@@ -926,7 +926,7 @@ class AgentRuntime extends EventEmitter {
       // Full PC control: drive the desktop through the Windows sidecars. /pc falls
       // through to the terminal path when they are unavailable, so it keeps working
       // on machines where PowerShell is blocked.
-      const pcGoal = /^inspect current directory/i.test(plannedText) ? 'read this' : plannedText;
+      const pcGoal = plannedText;
       if (isComputerUse && this.pcEngine && this.pcEngine.platform === 'win32') {
         try {
           this.setState(AgentState.EXECUTING_ACTION, { action: 'PC_TASK' });
@@ -1466,8 +1466,8 @@ class AgentRuntime extends EventEmitter {
             if (!isSuccess) {
               allSubActionsSucceeded = false;
               turnOutcomeMsg = execRes?.crossQuestion || execRes?.message || execRes?.reason || 'Action could not be executed';
-              // If cross-question, missing target, or PC control failure, stop immediately and report truthfully instead of blind retries
-              if (execRes?.crossQuestion || execRes?.reason === 'TARGET_NOT_FOUND' || act.type === ActionType.PC_PRESS || act.type === 'PC_PRESS') {
+              // If cross-question or target missing entirely, stop and report truthfully instead of blind retries
+              if (execRes?.crossQuestion || execRes?.reason === 'TARGET_NOT_FOUND') {
                 goalAccomplished = true;
                 goalAborted = true;
                 finalFeedback = execRes?.message || execRes?.crossQuestion || execRes?.reason || turnOutcomeMsg;
@@ -1478,10 +1478,10 @@ class AgentRuntime extends EventEmitter {
               // panel is not proof the user's goal is complete. Only the planner
               // may set goalAccomplished, based on the observed page state.
               console.log(`[AgentRuntime GoalLoop] Click succeeded on "${intent.target}"; waiting for planner verification before completing the goal.`);
-            } else if (act.type === ActionType.CLOSE_TAB && isSuccess && i === actionsInTurn.length - 1) {
+            } else if (act.type === ActionType.CLOSE_TAB && isSuccess && i === actionsInTurn.length - 1 && (currentPlan.goalAccomplished || /close/i.test(exactPrompt))) {
               goalAccomplished = true;
               finalFeedback = execRes?.message || `Closed requested tabs.`;
-            } else if (act.type === ActionType.SWITCH_TAB && isSuccess && (i === actionsInTurn.length - 1 || /\b(switch|go\s*to|focus)\b/i.test(exactPrompt))) {
+            } else if (act.type === ActionType.SWITCH_TAB && isSuccess && (currentPlan.goalAccomplished || (i === actionsInTurn.length - 1 && /\b(switch|go\s*to|focus)\b/i.test(exactPrompt)))) {
               goalAccomplished = true;
               finalFeedback = execRes?.message || `Switched to requested tab.`;
             } else if (act.type === ActionType.NAVIGATE && isSuccess && i === actionsInTurn.length - 1) {
@@ -1490,15 +1490,12 @@ class AgentRuntime extends EventEmitter {
                 goalAccomplished = true;
                 finalFeedback = `Navigated to ${intent.url || 'target page'}.`;
               }
-            } else if ((act.type === ActionType.PC_PRESS || act.type === 'PC_PRESS') && isSuccess) {
-              goalAccomplished = true;
-              finalFeedback = execRes?.report || `Dispatched keyboard shortcut.`;
-            } else if ((act.type === ActionType.PC_MOVE || act.type === 'PC_MOVE') && isSuccess && i === actionsInTurn.length - 1) {
-              // mouse.move is deterministic: the OS put the cursor where asked.
-              // Screenshots rarely render the cursor, so "verify by looking"
-              // re-plans screenshot->move forever — trust it like a press.
-              goalAccomplished = true;
-              finalFeedback = execRes?.report || 'Mouse moved to target.';
+            } else if ((act.type === ActionType.PC_PRESS || act.type === 'PC_PRESS') && isSuccess && i === actionsInTurn.length - 1) {
+              const isStandaloneShortcut = /^(?:(?:press|hit|type\s+key|shortcut)\s+[a-zA-Z0-9+_\-\s]+|enter|escape|tab|space)$/i.test(exactPrompt.trim());
+              if (isStandaloneShortcut || currentPlan.goalAccomplished === true) {
+                goalAccomplished = true;
+                finalFeedback = execRes?.report || `Dispatched keyboard shortcut.`;
+              }
             } else if (currentPlan.goalAccomplished === true && isSuccess && i === actionsInTurn.length - 1) {
               goalAccomplished = true;
               finalFeedback = currentPlan.thought || 'Goal accomplished.';
@@ -1665,50 +1662,6 @@ class AgentRuntime extends EventEmitter {
               }
               
               if (nextPlan.actions.length === 0 || (nextPlan.goalAccomplished === true && nextPlan.actions.length === 0)) {
-                // Physical Verification Safety Net for Computer Use:
-                if (isComputerUse) {
-                  const fileMatch = exactPrompt.match(/(?:create|make|write)\s+([a-zA-Z0-9_\-\.\/\\]+\.[a-zA-Z0-9]+)/i) ||
-                                    (nextPlan.thought || '').match(/created\s+['"]?([a-zA-Z0-9_\-\.\/\\]+\.[a-zA-Z0-9]+)/i);
-                  if (fileMatch) {
-                    let targetPath = fileMatch[1];
-                    const dirMatch = exactPrompt.match(/([a-zA-Z]:[\\\/][^\s,]+)/i);
-                    if (dirMatch && !targetPath.includes(':')) {
-                      targetPath = `${dirMatch[1].replace(/[\\\/]$/, '')}\\${targetPath}`;
-                    }
-
-                    const exists = fs.existsSync(targetPath);
-                    if (!exists) {
-                      console.warn(`[AgentRuntime Guard] Physical verification failed: ${targetPath} does not exist on disk! Enforcing creation...`);
-                      const contentMatch = exactPrompt.match(/(?:say(?:ing)?|with(?:\s+content)?)\s+['"]?([^.'"]+)['"]?/i);
-                      const fileContent = contentMatch ? contentMatch[1].trim() : 'hello';
-
-                      const psCmd = `if (!(Test-Path "${path.dirname(targetPath)}")) { New-Item -ItemType Directory -Force -Path "${path.dirname(targetPath)}" | Out-Null }; Set-Content -Path "${targetPath}" -Value @"\n${fileContent}\n"@; if (Test-Path "${targetPath}") { Write-Output "Successfully created: ${targetPath}" } else { Write-Error "Failed to create: ${targetPath}" }`;
-
-                      this.emit('feedback', {
-                        message: `⚡ Enforcing verified creation of ${targetPath} on local disk...`,
-                        level: 'info'
-                      });
-
-                      const synthRes = await this.executeIntent({
-                        type: ActionType.TERMINAL_EXEC,
-                        command: psCmd,
-                        targetFile: targetPath
-                      });
-
-                      if (synthRes && fs.existsSync(targetPath)) {
-                        this.lastReferencedFile = targetPath;
-                        goalAccomplished = true;
-                        finalFeedback = `Verified on physical disk: Created ${targetPath} with content: "${fileContent}".`;
-                        if (activeTasks && activeTasks.length > 0) {
-                          activeTasks.forEach(t => { t.status = 'completed'; });
-                          this.emit('task-breakdown', { prompt: exactPrompt, tasks: activeTasks });
-                        }
-                        break;
-                      }
-                    }
-                  }
-                }
-
                 goalAccomplished = true;
                 finalFeedback = nextPlan.thought || finalFeedback;
                 if (activeTasks && activeTasks.length > 0) {
@@ -2886,34 +2839,6 @@ class AgentRuntime extends EventEmitter {
         }
 
         const targetLower = (intent.target || '').toLowerCase();
-        // Check if referring to Chrome shell buttons
-        if (/(developer tools|devtools|dev tools|code button|developer button)/i.test(targetLower)) {
-          this.tabManager.toggleDevTools();
-          this.emit('feedback', { message: 'Toggled Developer Tools', level: 'success' });
-          executionResult = { success: true, verified: 'dispatched' };
-          break;
-        }
-        if (/(settings|gear)/i.test(targetLower)) {
-          this.emit('shell-action', { action: 'OPEN_SETTINGS' });
-          this.emit('feedback', { message: 'Opened Settings', level: 'success' });
-          executionResult = { success: true, verified: 'dispatched' };
-          break;
-        }
-        if (/(bookmark button|star button|toggle bookmark|add bookmark)/i.test(targetLower)) {
-          return this.executeIntent({ type: ActionType.TOGGLE_BOOKMARK });
-        }
-        if (/(bookmark menu|bookmarks list|open bookmarks|show bookmarks)/i.test(targetLower)) {
-          this.emit('shell-action', { action: 'OPEN_BOOKMARKS' });
-          this.emit('feedback', { message: 'Opened Bookmarks', level: 'success' });
-          executionResult = { success: true, verified: 'dispatched' };
-          break;
-        }
-        if (/(history)/i.test(targetLower)) {
-          this.emit('shell-action', { action: 'OPEN_HISTORY' });
-          this.emit('feedback', { message: 'Opened History', level: 'success' });
-          executionResult = { success: true, verified: 'dispatched' };
-          break;
-        }
 
         // Auth Gate Protection: Never attempt to autonomously complete third-party OAuth flows
         // (Google, Apple, Facebook sign-in) without user interaction.
@@ -3260,11 +3185,16 @@ class AgentRuntime extends EventEmitter {
 
     // 2. Fallback to workspace file lookup
     if (!targetPath) {
-      if (targetUrl.includes('audio.html')) {
-        targetPath = path.resolve(process.cwd(), 'audio.html');
-      } else if (targetUrl.includes('dashboard.html')) {
-        targetPath = path.resolve(process.cwd(), 'src/dashboard/dashboard.html');
-      }
+      try {
+        const u = new URL(targetUrl.startsWith('http') || targetUrl.startsWith('file:') ? targetUrl : `file:///${targetUrl}`);
+        const candidateName = path.basename(u.pathname);
+        if (candidateName) {
+          const workspaceCandidate = path.resolve(process.cwd(), candidateName);
+          if (fs.existsSync(workspaceCandidate)) {
+            targetPath = workspaceCandidate;
+          }
+        }
+      } catch (_) {}
     }
 
     if (!targetPath || !fs.existsSync(targetPath)) {
@@ -3303,20 +3233,9 @@ class AgentRuntime extends EventEmitter {
               }
             }
             content = content.replace(tagRegex, openTag);
-            // If updating bass slider, keep #valBass display span in sync
-            if (elId === 'sliderBass' && rawVal) {
-              content = content.replace(/(<span\s+id=["']valBass["'][^>]*>)[^<]*(<\/span>)/i, `$1${rawVal} dB$2`);
-            }
           } else if (modResult.action === 'setText' && modResult.appliedValue) {
             const fullTagRegex = new RegExp(`(<${tag}[^>]*\\bid=["']${rxEsc(elId)}["'][^>]*>)([\\s\\S]*?)(<\\/${tag}>)`, 'i');
             content = content.replace(fullTagRegex, `${openTag}${modResult.appliedValue}$3`);
-            // If updating valBass display, keep sliderBass value in sync
-            if (elId === 'valBass') {
-              const rawVal = String(modResult.appliedValue).replace(/[^\d\.-]/g, '');
-              if (rawVal) {
-                content = content.replace(/(<input[^>]*id=["']sliderBass["'][^>]*value=["'])[^"']*(")/i, `$1${rawVal}$2`);
-              }
-            }
           } else {
             content = content.replace(tagRegex, openTag);
           }
@@ -5498,7 +5417,7 @@ class AgentRuntime extends EventEmitter {
   }
 
   /**
-   * Generic autonomous continuator for intermediate prompts ("Continue on browser", "Continue in web")
+   * Generic autonomous continuator for intermediate portal screens ("Continue in browser", "Use web version", "Open in web")
    */
   async autoHandleContinuations(tab) {
     if (!tab || !tab.view) return;
@@ -5507,17 +5426,11 @@ class AgentRuntime extends EventEmitter {
       if (!contents || typeof contents.executeJavaScript !== 'function') return;
       await contents.executeJavaScript(`
         (() => {
-          // Check for WhatsApp intermediate web link
-          const waWeb = Array.from(document.querySelectorAll('a, button')).find(el => 
-            /use WhatsApp Web/i.test(el.textContent) || (el.href && el.href.includes('web.whatsapp.com'))
-          );
-          if (waWeb) { waWeb.click(); return 'waWeb'; }
-
-          // Check for standard "Continue on browser" / "Continue in browser" buttons
-          const continueBrowser = Array.from(document.querySelectorAll('a, button')).find(el => 
-            /continue (?:on|in) (?:browser|web)/i.test(el.textContent)
-          );
-          if (continueBrowser) { continueBrowser.click(); return 'continueBrowser'; }
+          const continueBtn = Array.from(document.querySelectorAll('a, button')).find(el => {
+            const text = (el.textContent || '').trim();
+            return /continue (?:on|in) (?:browser|web)|use (?:the )?web (?:app|client|version)?|open in (?:browser|web)/i.test(text);
+          });
+          if (continueBtn) { continueBtn.click(); return 'continueWeb'; }
           return null;
         })()
       `).catch(() => null);

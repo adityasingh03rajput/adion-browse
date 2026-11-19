@@ -933,17 +933,21 @@ class MCPServer extends EventEmitter {
 
       case 'audio_adjust_slider': {
         const { parameter, value } = args;
-        let selector = '#sliderBass, Bass Frequency Boost';
-        let elementId = 'sliderBass';
+        let selector = parameter || 'input[type="range"]';
+        let elementId = parameter || 'slider';
         let unit = 'dB';
 
         if (parameter === 'vad') {
-          selector = '#sliderVad, Voice Activity Threshold';
+          selector = 'Voice Activity Threshold, [id*="vad" i], input[type="range"]';
           elementId = 'sliderVad';
           unit = 'RMS';
         } else if (parameter === 'noise') {
-          selector = '#sliderNoise, Noise Suppression';
+          selector = 'Noise Suppression, [id*="noise" i], input[type="range"]';
           elementId = 'sliderNoise';
+          unit = 'dB';
+        } else if (parameter === 'bass') {
+          selector = 'Bass Frequency Boost, [id*="bass" i], input[type="range"]';
+          elementId = 'sliderBass';
           unit = 'dB';
         }
 

@@ -821,9 +821,18 @@ class CDPBridge {
             targetSlider = eqContainer.querySelector('input[type="range"]');
             pairedValueNode = eqContainer.querySelector('[id*="val" i], span:last-child');
           }
-          if (!targetSlider && (rawSelector.toLowerCase().includes('bass') || rawSelector.toLowerCase().includes('base'))) {
-            targetSlider = document.getElementById('sliderBass') || document.querySelector('input[type="range"][id*="bass" i]');
-            pairedValueNode = document.getElementById('valBass');
+          if (!targetSlider) {
+            // General semantic lookup: find input[type="range"] matching selector tokens in aria-label, name, id, or container label
+            const selTokens = rawSelector.toLowerCase().split(/[\s,._-]+/).filter(t => t.length > 2);
+            const allSliders = Array.from(document.querySelectorAll('input[type="range"]'));
+            targetSlider = allSliders.find(s => {
+              const text = [s.id, s.name, s.getAttribute('aria-label') || '', s.closest('label, .slider-container, div')?.innerText || ''].join(' ').toLowerCase();
+              return selTokens.some(tok => text.includes(tok));
+            }) || null;
+            if (targetSlider) {
+              pairedValueNode = targetSlider.parentElement?.querySelector('[id*="val" i], span:last-child, output') ||
+                                (targetSlider.id ? document.getElementById('val' + targetSlider.id.replace(/^slider/i, '')) : null);
+            }
           }
         }
 

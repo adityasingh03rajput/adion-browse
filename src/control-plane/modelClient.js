@@ -659,18 +659,19 @@ JSON Action Plan:
       };
     }
 
-    // 7. DSP sliders (audio.html) (e.g. "change bass frequency boost from 0 to 10 dB")
-    if (lower.includes('bass') && (lower.includes('boost') || lower.includes('slider') || lower.includes('frequency'))) {
-      const valMatch = raw.match(/(?:to|from\s+\d+\s+to)\s+(\d+)/i);
-      const val = valMatch ? valMatch[1] : '10';
+    // 7. General Slider / Range controls (e.g. "change volume to 80", "set brightness to 50", "adjust bass boost to 10 dB")
+    const sliderMatch = raw.match(/(?:set|change|adjust)\s+(?:the\s+)?([a-zA-Z0-9\s_-]+?)\s+(?:slider|control|level|setting)?\s*(?:to|from\s+\d+\s+to)\s*(-?\d+(?:\.\d+)?)/i);
+    if (sliderMatch) {
+      const label = sliderMatch[1].trim();
+      const val = sliderMatch[2].trim();
       return {
-        thought: `Adjusting bass boost to ${val} dB.`,
+        thought: `Adjusting ${label} to ${val}.`,
         actions: [{
           type: 'MODIFY_DOM',
           params: {
-            selector: '#sliderBass, Bass Frequency Boost',
+            selector: label,
             action: 'setValue',
-            value: String(val)
+            value: val
           }
         }],
         goalAccomplished: true
