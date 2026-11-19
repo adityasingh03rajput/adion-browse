@@ -437,6 +437,39 @@ class SkillManager extends EventEmitter {
   }
 
   /**
+   * Import and install skills from a URL, raw Markdown link, or GitHub repository.
+   * - If given a direct .md URL (e.g. Gist, raw URL), downloads and registers the skill directly.
+   * - If given a GitHub repository, searches for SKILL.md definitions or synthesizes from README.
+   */
+  async importFromSource(sourceUrl) {
+    if (!sourceUrl) throw new Error('Source URL or repository required');
+    const clean = String(sourceUrl).trim();
+
+    // 1. Direct Markdown URL import
+    if (/^https?:\/\/.*\.md(\?.*)?$/i.test(clean)) {
+      console.log(`[SkillManager] 🌐 Downloading direct skill definition from ${clean}...`);
+      const res = await fetch(clean);
+      if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch ${clean}`);
+      const content = await res.text();
+      const parsed = this.parseSkillContent(content);
+      const skillDir = path.join(this.skillsDir, parsed.name);
+      if (!fs.existsSync(skillDir)) fs.mkdirSync(skillDir, { recursive: true });
+      const targetPath = path.join(skillDir, 'SKILL.md');
+      fs.writeFileSync(targetPath, content, 'utf8');
+      this.reloadSkills();
+      return {
+        success: true,
+        source: clean,
+        count: 1,
+        skills: [this.getSkill(parsed.id) || parsed]
+      };
+    }
+
+    // 2. GitHub repository import
+    return this.importFromGitHub(clean);
+  }
+
+  /**
    * Import and install skills directly from a GitHub repository or URL.
    * Auto-detects SKILL.md files inside the repository (e.g. .agents/skills/ or skills/)
    * or synthesizes a skill from the repository's README.
@@ -484,6 +517,7 @@ class SkillManager extends EventEmitter {
     // 1. Check if the repository contains pre-defined SKILL.md files
     const skillFiles = (tree || []).filter(f => f.path.endsWith('/SKILL.md') || f.path === 'SKILL.md');
     const importedSkills = [];
+    const seenNames = new Set();
 
     if (skillFiles.length > 0) {
       for (const item of skillFiles) {
@@ -493,6 +527,8 @@ class SkillManager extends EventEmitter {
           if (res.ok) {
             const content = await res.text();
             let skill = this.parseSkillContent(content, item.path);
+            if (seenNames.has(skill.name)) continue;
+            seenNames.add(skill.name);
 
             // Ensure unique, clean folder and trigger
             const skillDir = path.join(this.skillsDir, skill.name);

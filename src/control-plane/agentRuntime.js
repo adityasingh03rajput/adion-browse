@@ -794,7 +794,7 @@ class AgentRuntime extends EventEmitter {
     this.setState(AgentState.PARSING_INTENT, { input: exactPrompt });
     this.emit('feedback', { message: `Autonomous Agent coordinating: "${text}"`, level: 'info' });
 
-    // Meta Skills Commands (/skills, /skill list, /skill add, /skill delete, /skill toggle, GitHub Skill Import)
+    // Meta Skills Commands (/skills, /skill list, /skill add, /skill delete, /skill toggle)
     if (this.skillManager) {
       if (/^\/skills?(?:\s+list)?\s*$/i.test(exactPrompt)) {
         const list = this.skillManager.getAllSkills();
@@ -805,27 +805,23 @@ class AgentRuntime extends EventEmitter {
         return;
       }
 
-      // GitHub URL Skill Import ("https://github.com/morluto/rea add this into your skills")
-      const ghUrlMatch = exactPrompt.match(/(?:https?:\/\/github\.com\/([a-zA-Z0-9_\-\.]+)\/([a-zA-Z0-9_\-\.]+))/i);
-      const isSkillImportIntent = ghUrlMatch && /\b(skill|skills|add|install|import|bring)\b/i.test(exactPrompt);
-
-      if (isSkillImportIntent || /^\/skills?\s+(?:import|install|clone)\s+(https?:\/\/github\.com\/[^\s]+)/i.test(exactPrompt)) {
-        const targetUrl = ghUrlMatch ? ghUrlMatch[0] : exactPrompt.match(/https?:\/\/github\.com\/[^\s]+/i)?.[0];
-        if (targetUrl) {
-          this.emit('feedback', { message: `🌐 Inspecting and importing skills from ${targetUrl}...`, level: 'info' });
-          try {
-            const importRes = await this.skillManager.importFromGitHub(targetUrl);
-            const titles = importRes.skills.map(s => `**${s.title}** (\`${s.trigger}\`)`).join(', ');
-            const feedbackMsg = `✨ **Skill Imported Successfully from GitHub!**\n\nFound and installed ${importRes.count} skill(s) from **${importRes.owner}/${importRes.repo}**:\n${titles}\n\n*You can now type any of these triggers in chat to execute this capability.*`;
-            this.emit('feedback', { message: feedbackMsg, level: 'success' });
-            this.emit('adion-notification', { type: 'success', message: `Imported ${importRes.count} skill(s) from ${importRes.repo}!` });
-            this.setState(AgentState.IDLE);
-            return;
-          } catch (err) {
-            this.emit('feedback', { message: `⚠️ Failed to import skill from ${targetUrl}: ${err.message}`, level: 'warning' });
-            this.setState(AgentState.IDLE);
-            return;
-          }
+      // Explicit slash command to import a skill from a URL / repository: /skill import <url>
+      const importCmdMatch = exactPrompt.match(/^\/skills?\s+(?:import|install)\s+(https?:\/\/[^\s]+)/i);
+      if (importCmdMatch) {
+        const targetUrl = importCmdMatch[1];
+        this.emit('feedback', { message: `🌐 Inspecting skill source at ${targetUrl}...`, level: 'info' });
+        try {
+          const importRes = await this.skillManager.importFromGitHub(targetUrl);
+          const titles = importRes.skills.map(s => `**${s.title}** (\`${s.trigger}\`)`).join(', ');
+          const feedbackMsg = `✨ **Skill Imported Successfully**: Installed ${importRes.count} skill(s) from **${importRes.owner}/${importRes.repo}**:\n${titles}\n\n*Use \`/<command>\` to trigger.*`;
+          this.emit('feedback', { message: feedbackMsg, level: 'success' });
+          this.emit('adion-notification', { type: 'success', message: `Imported ${importRes.count} skill(s)` });
+          this.setState(AgentState.IDLE);
+          return;
+        } catch (err) {
+          this.emit('feedback', { message: `⚠️ Skill import error: ${err.message}`, level: 'warning' });
+          this.setState(AgentState.IDLE);
+          return;
         }
       }
 
