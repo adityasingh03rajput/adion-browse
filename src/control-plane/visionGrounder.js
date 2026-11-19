@@ -75,6 +75,30 @@ class VisionGrounder {
     }
     if (!screenshot) return { success: false, reason: 'empty-screenshot' };
 
+    // Tier 1 (Zero-Token Local OCR): Resolve via local WinRT OCR before calling cloud vision
+    // Instantly resolves canvas text, chart buttons, PDF controls, and web game labels with 0 cloud tokens
+    try {
+      const { findTextInBase64 } = require('../pc/ocr');
+      const ocrMatch = await findTextInBase64(screenshot, naturalQuery);
+      if (ocrMatch && ocrMatch.found) {
+        console.log(`[VisionGrounder] 🎯 Resolved "${naturalQuery}" via local WinRT OCR at (${ocrMatch.x}, ${ocrMatch.y}) [0 cloud tokens]`);
+        this.lastUsedModel = 'local-winrt-ocr';
+        return {
+          success: true,
+          found: true,
+          x: ocrMatch.x,
+          y: ocrMatch.y,
+          width: ocrMatch.width,
+          height: ocrMatch.height,
+          label: ocrMatch.label,
+          confidence: ocrMatch.confidence || 0.96,
+          model: 'local-winrt-ocr'
+        };
+      }
+    } catch (ocrErr) {
+      console.warn('[VisionGrounder] Local WinRT OCR pass skipped:', ocrErr.message);
+    }
+
     const cssWidth = Math.max(1, Math.round(viewport?.width || 1280));
     const cssHeight = Math.max(1, Math.round(viewport?.height || 720));
     imageWidth = Math.max(1, Math.round(imageWidth || cssWidth));

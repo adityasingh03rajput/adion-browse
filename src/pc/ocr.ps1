@@ -1,6 +1,10 @@
-param([Parameter(Mandatory = $true)][string]$Path)
+param(
+  [Parameter(Mandatory = $true)][string]$Path,
+  [Parameter(Mandatory = $false)][string]$Mode = 'text'
+)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
+$OutputEncoding = [Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
 $null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime]
@@ -20,5 +24,32 @@ $bitmap  = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.
 $engine  = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
 if (-not $engine) { [Console]::Error.WriteLine('no OCR language installed'); exit 2 }
 $result  = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
-[Console]::Out.Write($result.Text)
+
+if ($Mode -eq 'words' -or $Mode -eq 'json') {
+  $wordList = New-Object System.Collections.Generic.List[Object]
+  if ($result.Lines) {
+    foreach ($line in $result.Lines) {
+      if ($line.Words) {
+        foreach ($w in $line.Words) {
+          $rect = $w.BoundingRect
+          $wordList.Add(@{
+            text = $w.Text
+            x = [int][Math]::Round($rect.X)
+            y = [int][Math]::Round($rect.Y)
+            w = [int][Math]::Round($rect.Width)
+            h = [int][Math]::Round($rect.Height)
+          })
+        }
+      }
+    }
+  }
+  $obj = @{
+    text = $result.Text
+    words = $wordList
+  }
+  [Console]::Out.Write((ConvertTo-Json -InputObject $obj -Compress -Depth 4))
+} else {
+  [Console]::Out.Write($result.Text)
+}
+
 $stream.Dispose()

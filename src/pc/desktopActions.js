@@ -248,6 +248,36 @@ function createDesktopActions(deps = {}) {
           }
         } catch (_) { /* fall through to honest failure */ }
       }
+
+      // Local WinRT OCR fallback for non-UIA desktop windows and custom canvas apps
+      if (!target && (args.text || args.target)) {
+        try {
+          const { findTextInBase64 } = require('./ocr');
+          const { captureDisplay } = require('./screenCapture');
+          const cap = await captureDisplay();
+          if (cap && cap.dataUrl) {
+            const b64 = cap.dataUrl.replace(/^data:image\/\w+;base64,/, '');
+            const query = args.text || args.target;
+            const ocrHit = await findTextInBase64(b64, query);
+            if (ocrHit && ocrHit.found) {
+              const scaleX = cap.pxWidth && cap.width ? cap.pxWidth / cap.width : 1;
+              const scaleY = cap.pxHeight && cap.height ? cap.pxHeight / cap.height : 1;
+              const realX = Math.round(ocrHit.x * scaleX);
+              const realY = Math.round(ocrHit.y * scaleY);
+              target = {
+                point: { x: realX, y: realY },
+                rect: { x: realX - ocrHit.width / 2, y: realY - ocrHit.height / 2, w: ocrHit.width, h: ocrHit.height },
+                name: ocrHit.label,
+                type: 'ocr-text'
+              };
+              console.log(`[DesktopActions] 🎯 Resolved desktop text "${query}" via local WinRT OCR at (${realX}, ${realY}) [0 cloud tokens]`);
+            }
+          }
+        } catch (ocrErr) {
+          /* fall through to honest failure */
+        }
+      }
+
       if (!target) return { ok: false, report: 'no element id and no screen point to click' };
       const label = target.name || args.text || args.target || '';
       const gate = evaluateAction({ kind: 'page', label }, ctx.prompt || '');
