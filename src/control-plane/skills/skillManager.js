@@ -436,6 +436,139 @@ class SkillManager extends EventEmitter {
     return { success: true, id: skill.id, enabled: willEnable };
   }
 
+  /**
+   * Import and install skills directly from a GitHub repository or URL.
+   * Auto-detects SKILL.md files inside the repository (e.g. .agents/skills/ or skills/)
+   * or synthesizes a skill from the repository's README.
+   */
+  async importFromGitHub(urlOrRepo) {
+    if (!urlOrRepo) throw new Error('Repository URL or owner/repo required');
+
+    // Parse owner and repo
+    const clean = String(urlOrRepo).trim().replace(/\/+$/, '');
+    const ghMatch = clean.match(/(?:github\.com\/|^)([a-zA-Z0-9_\-\.]+)\/([a-zA-Z0-9_\-\.]+)/i);
+    if (!ghMatch) {
+      throw new Error(`Invalid GitHub repository format: "${urlOrRepo}". Expected https://github.com/owner/repo or owner/repo`);
+    }
+
+    const owner = ghMatch[1];
+    const repo = ghMatch[2].replace(/\.git$/i, '');
+
+    console.log(`[SkillManager] 🌐 Fetching skills from GitHub repository: ${owner}/${repo}...`);
+
+    let branch = 'main';
+    let tree = null;
+
+    try {
+      const treeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/main?recursive=1`, {
+        headers: { 'User-Agent': 'Adion-Browse' }
+      });
+      if (treeRes.ok) {
+        const data = await treeRes.json();
+        tree = data.tree || [];
+      } else {
+        // Fallback to master branch
+        branch = 'master';
+        const fallbackRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/master?recursive=1`, {
+          headers: { 'User-Agent': 'Adion-Browse' }
+        });
+        if (fallbackRes.ok) {
+          const data = await fallbackRes.json();
+          tree = data.tree || [];
+        }
+      }
+    } catch (e) {
+      console.warn('[SkillManager] GitHub API tree fetch notice:', e.message);
+    }
+
+    // 1. Check if the repository contains pre-defined SKILL.md files
+    const skillFiles = (tree || []).filter(f => f.path.endsWith('/SKILL.md') || f.path === 'SKILL.md');
+    const importedSkills = [];
+
+    if (skillFiles.length > 0) {
+      for (const item of skillFiles) {
+        try {
+          const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${item.path}`;
+          const res = await fetch(rawUrl);
+          if (res.ok) {
+            const content = await res.text();
+            let skill = this.parseSkillContent(content, item.path);
+
+            // Ensure unique, clean folder and trigger
+            const skillDir = path.join(this.skillsDir, skill.name);
+            if (!fs.existsSync(skillDir)) fs.mkdirSync(skillDir, { recursive: true });
+
+            const targetPath = path.join(skillDir, 'SKILL.md');
+            fs.writeFileSync(targetPath, content, 'utf8');
+
+            skill = this.parseSkillContent(content, targetPath);
+            this.skills.set(skill.id, skill);
+            importedSkills.push(skill);
+            console.log(`[SkillManager] ✅ Imported skill "${skill.title}" (${skill.trigger}) from ${owner}/${repo}`);
+          }
+        } catch (err) {
+          console.warn(`[SkillManager] Error importing skill file ${item.path}:`, err.message);
+        }
+      }
+    }
+
+    // 2. If no SKILL.md found, synthesize a skill from the repo's README
+    if (importedSkills.length === 0) {
+      try {
+        const readmeRes = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${branch}/README.md`);
+        let readmeContent = '';
+        if (readmeRes.ok) {
+          readmeContent = await readmeRes.text();
+        }
+
+        let repoDesc = '';
+        try {
+          const repoInfoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+            headers: { 'User-Agent': 'Adion-Browse' }
+          });
+          if (repoInfoRes.ok) {
+            const repoData = await repoInfoRes.json();
+            repoDesc = repoData.description || '';
+          }
+        } catch (_) {}
+
+        const skillName = repo.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+        const skillTitle = repo.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        const skillTrigger = `/${skillName}`;
+        const description = repoDesc || `Tool & capability from https://github.com/${owner}/${repo}`;
+
+        const instructions = `# ${skillTitle} (${owner}/${repo}) Instructions\n` +
+          `You have the ${skillTitle} capability installed from https://github.com/${owner}/${repo}.\n\n` +
+          `## Project Overview & Directives:\n` +
+          (readmeContent.slice(0, 3000) || `Use this tool when operating on tasks related to ${skillTitle}.`);
+
+        const created = this.createSkill({
+          name: skillName,
+          title: skillTitle,
+          trigger: skillTrigger,
+          description,
+          instructions,
+          tags: [owner, repo, 'github-import'],
+          icon: 'zap'
+        });
+
+        importedSkills.push(created);
+        console.log(`[SkillManager] ✨ Synthesized skill "${skillTitle}" (${skillTrigger}) from README`);
+      } catch (err) {
+        throw new Error(`Failed to import from GitHub ${owner}/${repo}: ${err.message}`);
+      }
+    }
+
+    this.reloadSkills();
+    return {
+      success: true,
+      owner,
+      repo,
+      count: importedSkills.length,
+      skills: importedSkills
+    };
+  }
+
   _loadDisabledStatus() {
     try {
       if (fs.existsSync(this.statusFilePath)) {
