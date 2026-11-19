@@ -1485,10 +1485,19 @@ class AgentRuntime extends EventEmitter {
               goalAccomplished = true;
               finalFeedback = execRes?.message || `Switched to requested tab.`;
             } else if (act.type === ActionType.NAVIGATE && isSuccess && i === actionsInTurn.length - 1) {
-              const isPureNavCommand = /^(?:(?:kill\s+this\s+tab\s+and\s+)?(?:open|go\s+to|navigate\s+to|visit)\s+([a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}|https?:\/\/[^\s]+)\s*(?:please)?[\.\!]?)$/i.test(exactPrompt.trim());
-              if (isPureNavCommand) {
+              const hasSubsequentAction = /\b(and|then|after|find|search|look|click|read|summarize|tell|extract|type|fill|buy|check|press)\b/i.test(exactPrompt);
+              const allTasksDone = activeTasks && activeTasks.length > 0 && activeTasks.every(t => t.status === 'completed');
+              const isPureNav = /^(?:(?:kill\s+this\s+tab\s+and\s+)?(?:open|go\s+to|navigate\s+to|visit)\s+[\w\s\-\.\/:#?&=]+(?:please)?[\.\!]?)$/i.test(exactPrompt.trim()) && !hasSubsequentAction;
+              if (currentPlan.goalAccomplished || isPureNav || (allTasksDone && !hasSubsequentAction)) {
                 goalAccomplished = true;
                 finalFeedback = `Navigated to ${intent.url || 'target page'}.`;
+              }
+            } else if (act.type === ActionType.TERMINAL_EXEC && isSuccess && i === actionsInTurn.length - 1) {
+              const hasSubsequentAction = /\b(and|then|after|verify|check|run|exec)\b/i.test(exactPrompt);
+              const allTasksDone = activeTasks && activeTasks.length > 0 && activeTasks.every(t => t.status === 'completed');
+              if (currentPlan.goalAccomplished || (allTasksDone && !hasSubsequentAction)) {
+                goalAccomplished = true;
+                finalFeedback = execRes?.stdout || execRes?.message || `Executed terminal command successfully.`;
               }
             } else if ((act.type === ActionType.PC_PRESS || act.type === 'PC_PRESS') && isSuccess && i === actionsInTurn.length - 1) {
               const isStandaloneShortcut = /^(?:(?:press|hit|type\s+key|shortcut)\s+[a-zA-Z0-9+_\-\s]+|enter|escape|tab|space)$/i.test(exactPrompt.trim());
@@ -1540,8 +1549,11 @@ class AgentRuntime extends EventEmitter {
             finalFeedback = currentPlan.thought || turnOutcomeMsg || 'Task step executed.';
           }
 
-          // Check if the model explicitly marked the overall goal as accomplished
-          if (currentPlan.goalAccomplished === true && allSubActionsSucceeded) {
+          // Check if the model explicitly marked the overall goal as accomplished,
+          // or if all decomposed subtasks are completed and every action succeeded without pending work
+          const hasSubsequentAction = /\b(and|then|after|find|search|look|click|read|summarize|tell|extract|type|fill|buy|check|press)\b/i.test(exactPrompt);
+          const allTasksCompleted = activeTasks && activeTasks.length > 0 && activeTasks.every(t => t.status === 'completed');
+          if ((currentPlan.goalAccomplished === true || (allTasksCompleted && !hasSubsequentAction)) && allSubActionsSucceeded) {
             goalAccomplished = true;
             if (activeTasks && activeTasks.length > 0) {
               activeTasks.forEach(t => { t.status = 'completed'; });
