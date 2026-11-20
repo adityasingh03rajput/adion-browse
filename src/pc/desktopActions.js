@@ -393,7 +393,46 @@ function createDesktopActions(deps = {}) {
         } catch (_) {}
       }
 
-      const field = await focusedField();
+      let field = await focusedField();
+
+      // Intelligent Auto-Redirection Guard:
+      // If keyboard focus is currently on a SEARCH box and text is a long multi-word message (> 25 chars),
+      // the agent is trying to send a message, NOT search for a paragraph! Auto-locate and focus the composer.
+      const isSearchBox = field && /search|find|filter/i.test(field.name || '');
+      const isLongMessage = text.length > 25 && /\s/.test(text.trim());
+      if (isSearchBox && isLongMessage) {
+        console.warn(`[DesktopActions] ⚠️ Detected attempt to type long message (${text.length} chars) into search field "${field.name}". Re-routing focus to message composer...`);
+        const composerLabels = ['Type a message', 'Type a message...', 'Message', 'Write a message', 'Send a message'];
+        let composerTarget = null;
+        for (const label of composerLabels) {
+          composerTarget = await resolvePoint({ text: label }, ctx);
+          if (composerTarget && composerTarget.point) break;
+        }
+
+        // OCR position fallback: find 'message' or 'type' text near the bottom 25% of the window
+        if (!composerTarget && ctx.ocr && Array.isArray(ctx.ocr.lines)) {
+          const winRect = ctx.fg && ctx.fg.rect ? ctx.fg.rect : { x: 0, y: 0, w: 1920, h: 1080 };
+          const bottomBound = winRect.y + (winRect.h * 0.75);
+          const hit = ctx.ocr.lines.find(l => (l.y + l.h / 2) >= bottomBound && /message|type/i.test(l.text || ''));
+          if (hit) {
+            composerTarget = { point: { x: Math.round(hit.x + hit.w / 2), y: Math.round(hit.y + hit.h / 2) } };
+          }
+        }
+
+        if (composerTarget && composerTarget.point) {
+          console.log(`[DesktopActions] 🎯 Re-focused to message composer at (${composerTarget.point.x}, ${composerTarget.point.y})`);
+          await input.request('mouse.click', { x: composerTarget.point.x, y: composerTarget.point.y, button: 'left' }, 3000);
+          await sleep(300);
+          field = await focusedField();
+        } else {
+          return {
+            ok: false,
+            refused: 'search field misdirection',
+            report: `Refused to type message into search box "${field.name}". Please open the target chat and focus the message composer ("Type a message") first.`
+          };
+        }
+      }
+
       if (field && field.isPassword) {
         return { ok: false, refused: 'password field', report: 'refused: the focused field is a password box' };
       }
