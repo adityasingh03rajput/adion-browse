@@ -1298,18 +1298,24 @@ class CDPBridge {
         }
       });
 
-      // If targetQuery is provided, click it to trigger file chooser dialog
+      // If targetQuery is provided, wait for it to be interactive and click it
       if (targetQuery) {
-        console.log(`[CDPBridge] Clicking target upload trigger: "${targetQuery}"...`);
-        const coords = await this.findElementCoordinates(targetQuery);
-        if (coords && coords.x !== undefined && coords.y !== undefined) {
+        console.log(`[CDPBridge] Locating target upload trigger: "${targetQuery}"...`);
+        const coords = await this.waitForElement(targetQuery, { timeoutMs: 3500, visible: true, throwOnTimeout: false });
+        if (coords && coords.found && coords.x !== undefined && coords.y !== undefined) {
           await this.dispatchClick(coords.x, coords.y);
+        } else {
+          // Fallback coordinate search
+          const rawCoords = await this.findElementCoordinates(targetQuery);
+          if (rawCoords && rawCoords.x !== undefined && rawCoords.y !== undefined) {
+            await this.dispatchClick(rawCoords.x, rawCoords.y);
+          }
         }
       }
 
       const chooserResult = await Promise.race([
         fileChooserPromise,
-        new Promise(r => setTimeout(() => r(null), 1500))
+        new Promise(r => setTimeout(() => r(null), 3000))
       ]);
 
       if (chooserResult && chooserResult.handled) {
@@ -1329,9 +1335,9 @@ class CDPBridge {
       return { success: true, method: 'Page.handleFileChooser', files: paths };
     }
 
-    // Strategy 2: Direct DOM.setFileInputFiles via CDP DOM domain
+    // Strategy 2: Direct DOM.setFileInputFiles via CDP DOM domain with state polling
     try {
-      console.log('[CDPBridge] Attempting direct DOM.setFileInputFiles...');
+      console.log('[CDPBridge] Attempting direct DOM.setFileInputFiles across standard DOM and Shadow DOM...');
       const docRes = await this.sendCommand('DOM.getDocument', { depth: -1, pierce: true }).catch(() => null);
       const rootNodeId = docRes?.root?.nodeId;
 
@@ -1362,9 +1368,9 @@ class CDPBridge {
       failureReason = domErr.message;
     }
 
-    // Strategy 3: In-page DOM fallback with File constructor and DataTransfer
+    // Strategy 3: General-purpose in-page DOM fallback with File constructor, DataTransfer, and Shadow DOM piercing
     try {
-      console.log('[CDPBridge] Attempting in-page DOM input/drop fallback...');
+      console.log('[CDPBridge] Attempting universal in-page DOM input/drop fallback...');
       const fileData = paths.map(p => {
         const buf = fs.readFileSync(p);
         return {
@@ -1391,17 +1397,30 @@ class CDPBridge {
               dt.items.add(file);
             }
 
-            const input = document.querySelector('input[type="file"]') || 
-                          document.querySelector('div[data-testid="conversation-panel-wrapper"] input[type="file"]') ||
-                          document.querySelector('#main input[type="file"]');
+            // Universal recursive search for file input across standard and shadow DOM trees
+            function findFileInput(root) {
+              const direct = root.querySelector('input[type="file"]');
+              if (direct) return direct;
+              const allEls = root.querySelectorAll('*');
+              for (let i = 0; i < allEls.length; i++) {
+                if (allEls[i].shadowRoot) {
+                  const shadowInput = findFileInput(allEls[i].shadowRoot);
+                  if (shadowInput) return shadowInput;
+                }
+              }
+              return null;
+            }
+
+            const input = findFileInput(document);
             if (input) {
               input.files = dt.files;
-              input.dispatchEvent(new Event('input', { bubbles: true }));
+              input.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
               input.dispatchEvent(new Event('change', { bubbles: true }));
               return { success: true, method: 'input.files' };
             }
 
-            const dropTarget = document.querySelector('#main') || document.body;
+            // General drop target (dropzone, active region, form, or document body)
+            const dropTarget = document.querySelector('[data-drop-zone="true"], .dropzone, form, [role="main"]') || document.body;
             if (dropTarget) {
               dropTarget.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: dt }));
               dropTarget.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));

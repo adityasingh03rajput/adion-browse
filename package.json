@@ -9,7 +9,7 @@
     "mcp": "node scripts/mcp-server.js",
     "mcp:forward": "node scripts/port-forward.js",
     "mcp:tunnel": "node scripts/port-forward.js --tunnel",
-    "test": "echo \"No tests in workspace\" && exit 0",
+    "test": "node test/domStateMachine.test.js && node test/stateMachinePerception.test.js && node test/semanticAffordanceEngine.test.js",
     "electron:direct": "cmd /c \"set ELECTRON_RUN_AS_NODE=&& set ELECTRON_CACHE=D:\\Adion Browse\\.cache\\electron&& electron .\""
   },
   "keywords": [

@@ -15,6 +15,7 @@
 
 const { chooseElement, tokenOverlap, rectCentre } = require('./grounding');
 const { evaluateAction } = require('../control-plane/actionConsent');
+const { NON_INTERACTIVE_LABELS, extractSemanticAffordances } = require('./semanticAffordanceEngine');
 
 const VK = {
   enter: 0x0d, return: 0x0d, escape: 0x1b, esc: 0x1b, tab: 0x09, backspace: 0x08,
@@ -189,6 +190,25 @@ function createDesktopActions(deps = {}) {
     const textQuery = rawQuery.toLowerCase();
     const cleanQuery = textQuery.replace(/^[#@\s:._-]+|[#@\s:._-]+$/g, '');
 
+    // 0. Interactive Affordance resolution: check if query matches an actionable interactive affordance
+    // (e.g. composer input, search input, button, or list item) before settling for raw static OCR text
+    if (cleanQuery && ctx) {
+      const affordances = ctx.affordances || (ctx.elements && ctx.ocr ? extractSemanticAffordances(ctx.ocr, ctx.elements, ctx.fg ? ctx.fg.rect : null) : []);
+      const matchedAffordance = affordances.find(a => a.isInteractive && (
+        a.name.toLowerCase() === cleanQuery ||
+        a.name.toLowerCase().includes(cleanQuery) ||
+        cleanQuery.includes(a.name.toLowerCase())
+      ));
+      if (matchedAffordance && matchedAffordance.center) {
+        return {
+          point: { x: matchedAffordance.center.x, y: matchedAffordance.center.y },
+          rect: matchedAffordance.rect,
+          name: matchedAffordance.name,
+          type: matchedAffordance.affordanceType
+        };
+      }
+    }
+
     // 1. Text lookup in ctx.ocr if text query provided
     if (cleanQuery && ctx && ctx.ocr) {
       if (Array.isArray(ctx.ocr.lines)) {
@@ -198,6 +218,11 @@ function createDesktopActions(deps = {}) {
         for (const l of ctx.ocr.lines) {
           const lt = String(l.text || '').toLowerCase().trim();
           const cleanLt = lt.replace(/^[#@\s:._-]+|[#@\s:._-]+$/g, '');
+
+          // Disallow matching non-interactive labels via partial substring overlap
+          if (NON_INTERACTIVE_LABELS.has(cleanLt) && cleanLt !== cleanQuery) {
+            continue;
+          }
 
           if (lt === textQuery || cleanLt === cleanQuery) {
             bestLine = l; bestScore = 100; break;
@@ -223,6 +248,22 @@ function createDesktopActions(deps = {}) {
         }
 
         if (bestLine && bestLine.w > 0 && bestLine.h > 0) {
+          const cleanBest = String(bestLine.text || '').toLowerCase().replace(/^[#@\s:._-]+|[#@\s:._-]+$/g, '');
+          // If the best matched OCR line is in NON_INTERACTIVE_LABELS:
+          if (NON_INTERACTIVE_LABELS.has(cleanBest)) {
+            // Check if UIA has an interactive control (like a button or tab item)
+            const uiaElement = findElement(args, ctx && ctx.elements);
+            if (uiaElement && uiaElement.rect) {
+              return { point: rectCentre(uiaElement.rect), rect: uiaElement.rect, name: uiaElement.name || '', type: uiaElement.type || '', element: uiaElement };
+            }
+            // If there is no interactive UIA element, flag as static non-interactive label
+            return {
+              isStaticLabel: true,
+              name: bestLine.text,
+              report: `Refused to click "${bestLine.text}": that is a static non-interactive heading/label, not an actionable control.`
+            };
+          }
+
           const cx = Math.round(bestLine.x + bestLine.w / 2);
           const cy = Math.round(bestLine.y + bestLine.h / 2);
           return {
@@ -311,6 +352,7 @@ function createDesktopActions(deps = {}) {
   const actions = {
     async click(args, ctx = {}) {
       let target = await resolvePoint(args, ctx);
+      if (target && target.isStaticLabel) return { ok: false, report: target.report };
       if (target && target.badCoords) return { ok: false, report: 'coordinates unusable: give x/y pixels inside the screen, or x1000/y1000 within 0-1000' };
       if (!target && watch && probe && probe.available) {
         // Popup fallback: system menus/dialogs (Win+X PopupHost, context

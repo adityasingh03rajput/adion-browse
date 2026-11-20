@@ -7,6 +7,18 @@ const ModelClient = require('./modelClient');
 const SessionManager = require('./sessionManager');
 const { buildDOMGroundingScript, detectSemanticCluster } = require('./universalGrounder');
 const { scoreTokenOverlap } = require('./tokenMatch');
+const {
+  waitForDOMCondition,
+  waitForNavigationSettled,
+  waitForURLChange,
+  waitForTabCountChange,
+  waitForTabClose,
+  waitForWebContentsEvent,
+  waitForScrollChange,
+  retryWithBackoff,
+  StateMachine,
+  _sleep: _domSleep
+} = require('./domStateMachine');
 
 /**
  * Asynchronous Agent Runtime
@@ -1539,9 +1551,13 @@ class AgentRuntime extends EventEmitter {
             }
 
             if (i < actionsInTurn.length - 1) {
-              // A click can open a panel/menu that renders asynchronously;
-              // give multi-action plans a beat before the next grounding pass.
-              await new Promise(r => setTimeout(r, isSuccess ? 900 : 350));
+              // State-driven perception: wait for DOM mutations to settle rather than fixed sleeping
+              const activeWc = this.tabManager?.getActiveTab()?.view?.webContents;
+              if (activeWc && !activeWc.isDestroyed()) {
+                await waitForDOMSettled(activeWc, { timeoutMs: isSuccess ? 1200 : 500, quietMs: 80 });
+              } else {
+                await _domSleep(isSuccess ? 200 : 100);
+              }
             }
           }
 
@@ -1596,10 +1612,16 @@ class AgentRuntime extends EventEmitter {
             break;
           }
 
-          // Sense: Pause for live DOM settling and dynamic re-hydration.
-          // Sustained activities (games etc.) get a longer beat so the page
-          // state (board, animations, turn timers) fully settles between turns.
-          await new Promise(r => setTimeout(r, this.persistentGoal ? 1800 : 600));
+          // Sense: Explicitly observe DOM settling and mutation quiescence instead of blind setTimeout
+          const curWc = this.tabManager?.getActiveTab()?.view?.webContents;
+          if (curWc && !curWc.isDestroyed() && !isComputerUse) {
+            await waitForDOMSettled(curWc, {
+              timeoutMs: this.persistentGoal ? 2000 : 1200,
+              quietMs: this.persistentGoal ? 180 : 90
+            });
+          } else {
+            await _domSleep(this.persistentGoal ? 400 : 100);
+          }
 
           const currentTab = this.tabManager ? this.tabManager.getActiveTab() : null;
 
@@ -2269,17 +2291,19 @@ class AgentRuntime extends EventEmitter {
         } else {
           await this.cdp.dispatchScroll(intent.amount);
         }
-        // Verify the scroll actually moved the page (smooth scroll + lazy load
-        // need a beat). Honest failure lets the planner try another approach.
-        let scrollChanged = !scrollBefore;
-        if (scrollBefore) {
-          const scrollDeadline = Date.now() + 1200;
-          while (Date.now() < scrollDeadline) {
-            await new Promise(r => setTimeout(r, 120));
-            const now = await this.captureInteractionState({ visual: false });
-            if (now && this.interactionStateChanged(scrollBefore, now)) { scrollChanged = true; break; }
-          }
+        // State-driven scroll verification via DOM scroll offset delta
+        let scrollChanged = false;
+        const curWc = activeTab?.view?.webContents;
+        if (curWc && !curWc.isDestroyed()) {
+          const scrollRes = await waitForScrollChange(curWc, scrollBefore?.dom?.nodes || 0, { timeoutMs: 1500 });
+          scrollChanged = scrollRes.ok;
+        } else if (scrollBefore) {
+          const now = await this.captureInteractionState({ visual: false });
+          scrollChanged = this.interactionStateChanged(scrollBefore, now);
+        } else {
+          scrollChanged = true;
         }
+
         if (scrollChanged) {
           this.emit('feedback', { message: `Scrolled ${intent.direction}`, level: 'success' });
           executionResult = { success: true, verified: true };
@@ -2292,18 +2316,10 @@ class AgentRuntime extends EventEmitter {
 
       case ActionType.NEW_TAB: {
         const tabCountBefore = this.tabManager ? this.tabManager.tabs.size : 0;
-        const activeBefore = this.tabManager ? this.tabManager.activeTabId : null;
         this.tabManager.createTab(intent.url || 'adion://newtab');
-        // Verify a new tab actually opened and became active
-        let tabVerified = false;
-        const tabDeadline = Date.now() + 2000;
-        while (Date.now() < tabDeadline) {
-          await new Promise(r => setTimeout(r, 100));
-          if (this.tabManager && (this.tabManager.tabs.size > tabCountBefore || this.tabManager.activeTabId !== activeBefore)) {
-            tabVerified = true; break;
-          }
-        }
-        if (tabVerified) {
+        // State-driven tab count verification
+        const tabCountRes = await waitForTabCountChange(this.tabManager, tabCountBefore, { direction: 'increase', timeoutMs: 2500 });
+        if (tabCountRes.ok) {
           this.emit('feedback', { message: `Opened new tab: ${intent.url}`, level: 'success', isStep: true });
           executionResult = { success: true, verified: true };
         } else {
@@ -2374,16 +2390,8 @@ class AgentRuntime extends EventEmitter {
         if (activeTab) {
           const tabToCloseId = activeTab.id;
           this.tabManager.closeTab(tabToCloseId);
-          let closeVerified = false;
-          const closeDeadline = Date.now() + 1500;
-          while (Date.now() < closeDeadline) {
-            await new Promise(r => setTimeout(r, 80));
-            if (this.tabManager && !this.tabManager.tabs.has(tabToCloseId)) {
-              closeVerified = true;
-              break;
-            }
-          }
-          if (closeVerified) {
+          const closeRes = await waitForTabClose(this.tabManager, tabToCloseId, { timeoutMs: 2000 });
+          if (closeRes.ok) {
             this.emit('feedback', { message: 'Closed active tab', level: 'success' });
             executionResult = { success: true, verified: true };
           } else {
@@ -2397,15 +2405,9 @@ class AgentRuntime extends EventEmitter {
       case ActionType.GO_BACK: {
         const urlBefore = activeTab?.url || '';
         this.tabManager.goBackActiveTab();
-        // History nav is async — poll for URL change (same-page anchors don't count)
-        let backVerified = false;
-        const backDeadline = Date.now() + 2500;
-        while (Date.now() < backDeadline) {
-          await new Promise(r => setTimeout(r, 120));
-          const cur = this.tabManager?.getActiveTab()?.url || '';
-          if (cur && cur !== urlBefore) { backVerified = true; break; }
-        }
-        if (backVerified) {
+        // State-driven navigation verification via URL change
+        const backRes = await waitForURLChange(activeTab?.view?.webContents, urlBefore, { timeoutMs: 3000 });
+        if (backRes.ok) {
           this.emit('feedback', { message: 'Navigated back', level: 'success' });
           executionResult = { success: true, verified: true };
         } else {
@@ -2418,14 +2420,9 @@ class AgentRuntime extends EventEmitter {
       case ActionType.GO_FORWARD: {
         const urlBefore = activeTab?.url || '';
         this.tabManager.goForwardActiveTab();
-        let fwdVerified = false;
-        const fwdDeadline = Date.now() + 2500;
-        while (Date.now() < fwdDeadline) {
-          await new Promise(r => setTimeout(r, 120));
-          const cur = this.tabManager?.getActiveTab()?.url || '';
-          if (cur && cur !== urlBefore) { fwdVerified = true; break; }
-        }
-        if (fwdVerified) {
+        // State-driven navigation verification via URL change
+        const fwdRes = await waitForURLChange(activeTab?.view?.webContents, urlBefore, { timeoutMs: 3000 });
+        if (fwdRes.ok) {
           this.emit('feedback', { message: 'Navigated forward', level: 'success' });
           executionResult = { success: true, verified: true };
         } else {
@@ -2436,27 +2433,15 @@ class AgentRuntime extends EventEmitter {
       }
 
       case ActionType.RELOAD: {
-        // Verify reload actually started via did-start-loading
+        // State-driven reload verification via did-stop-loading and navigation listener
         const reloadContents = activeTab?.view?.webContents;
-        let reloadVerified = false;
-        if (reloadContents) {
-          const __onStart = () => { reloadVerified = true; try { reloadContents.removeListener('did-start-loading', __onStart); } catch (_) {} };
-          try { reloadContents.once('did-start-loading', __onStart); } catch (_) {}
-          this.tabManager.reloadActiveTab();
-          const reloadDeadline = Date.now() + 2500;
-          while (Date.now() < reloadDeadline && !reloadVerified) {
-            await new Promise(r => setTimeout(r, 100));
-          }
-          try { reloadContents.removeListener('did-start-loading', __onStart); } catch (_) {}
-        } else {
-          this.tabManager.reloadActiveTab();
-          reloadVerified = true; // no contents to verify against — don't block
-        }
-        if (reloadVerified) {
+        this.tabManager.reloadActiveTab();
+        const reloadRes = await waitForNavigationSettled(reloadContents, { timeoutMs: 4000, label: 'reload' });
+        if (reloadRes.ok) {
           this.emit('feedback', { message: 'Reloaded page', level: 'success' });
           executionResult = { success: true, verified: true };
         } else {
-          this.emit('feedback', { message: 'Reload did not start', level: 'warning' });
+          this.emit('feedback', { message: 'Reload did not complete in time', level: 'warning' });
           executionResult = { success: false, reason: 'RELOAD_NOT_VERIFIED', verified: false };
         }
         break;
@@ -3842,14 +3827,13 @@ class AgentRuntime extends EventEmitter {
     const runDomLookup = () => contents.executeJavaScript(pageScript).catch(err => ({ found: false, error: err.message }));
 
     // Async UIs (side panels, drawers, lazy shape libraries) mount their
-    // fields after the triggering click. Poll briefly for the field instead
-    // of failing on the first snapshot.
+    // fields after the triggering click. State-driven poll: observe DOM settling rather than blind sleeping.
     let domResult = null;
     const lookupDeadline = Date.now() + 8000;
     do {
       domResult = await runDomLookup();
       if (domResult && domResult.found) break;
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await waitForDOMSettled(contents, { timeoutMs: 400, quietMs: 50 });
     } while (Date.now() < lookupDeadline);
     if (!domResult || !domResult.found) {
       const why = domResult?.error ? `page error: ${domResult.error}` : `reason: ${domResult?.reason || 'not found'}`;
@@ -4464,20 +4448,10 @@ class AgentRuntime extends EventEmitter {
     const query = (targetQuery || '').trim();
     if (!query) return { success: false, reason: 'No target query provided' };
 
-    // If the contents are currently navigating or loading, wait for DOM readiness
+    // If the contents are currently navigating or loading, wait for DOM readiness via event listeners
     if (contents.isLoading && contents.isLoading()) {
-      await new Promise((resolve) => {
-        const timeout = setTimeout(resolve, 2500);
-        contents.once('did-finish-load', () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-        contents.once('dom-ready', () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-      });
-      await new Promise(r => setTimeout(r, 350));
+      await waitForNavigationSettled(contents, { timeoutMs: 3500, label: 'inspect-click navigation' });
+      await waitForDOMSettled(contents, { timeoutMs: 800, quietMs: 60 });
     }
 
     // Attach CDP if not already attached
@@ -4511,7 +4485,8 @@ class AgentRuntime extends EventEmitter {
       }
 
       if (attempt < maxAttempts) {
-        await new Promise(r => setTimeout(r, 350));
+        // State-driven perception: observe DOM settling rather than blind sleeping
+        await waitForDOMSettled(contents, { timeoutMs: 400, quietMs: 60 });
       }
     }
 

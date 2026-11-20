@@ -17,6 +17,9 @@
 
 'use strict';
 
+const { classifyScreenState } = require('./stateMachinePerception');
+const { StatefulPCSession } = require('./semanticAffordanceEngine');
+
 const PC_ACTION_TYPES = new Set(['click', 'type', 'press', 'scroll', 'open_app', 'read', 'wait', 'look', 'list_windows', 'find_window', 'screenshot', 'describe_screen', 'move']);
 
 const TYPE_MAP = {
@@ -83,22 +86,20 @@ const SYSTEM_PROMPT = [
   '  * Move immediately to the next milestone in your plan (e.g. taking screenshot, opening Contact B, pasting screenshot with Ctrl+V, and sending).',
   '- Click targets: Prefer click(text) — e.g. {"name": "click", "args": {"text": "Aksh"}} or {"name": "click", "args": {"text": "Search"}}. You can also use exact pixel coordinates from the OCR list: {"name": "click", "args": {"x": 280, "y": 190}}.',
   '- NEVER guess random screen coordinates blindly. Always use text labels or exact coordinates from the visible controls and OCR list.',
-  '- Messaging Workflows (WhatsApp, Slack, Telegram, Teams):',
-  '  1. Search for recipient: press ctrl+f, then type recipient name (e.g. {"name": "type", "args": {"text": "Pramod"}}).',
-  '  2. SELECT THE CONTACT TO OPEN CHAT (CRITICAL):',
-  '     * Typing the name in search DOES NOT open the chat automatically!',
-  '     * In WhatsApp and chat apps, pressing Enter while focused on the search box does nothing or searches messages.',
-  '     * You MUST either click the contact name in the search results from OCR (e.g. {"name": "click", "args": {"text": "Pramod"}}),',
-  '     * OR press Down arrow then Enter: {"name": "press", "args": {"keys": "down"}}, then {"name": "press", "args": {"keys": "enter"}}.',
-  '  3. STRICT RECIPIENT VERIFICATION (CRITICAL):',
-  '     * Before typing your message, check the open chat header in the OCR / controls list!',
-  '     * If the header shows another contact (e.g. "Don Pidduk" when target is "Pramod"), the target chat is NOT open yet!',
-  '     * DO NOT type the message until the recipient\'s name is confirmed in the chat header!',
-  '  4. COMPOSE AND SEND MESSAGE:',
-  '     * Once the chat is open, click the message composer: {"name": "click", "args": {"text": "Type a message"}} or target it in type: {"name": "type", "args": {"target": "Type a message", "text": "...", "enter": true}}.',
-  '     * NEVER press ctrl+f when you want to compose or send a message! ctrl+f opens the Search bar and will cause your message to be typed into the search box instead of the chat!',
-  '  5. CLEARING SEARCH IF NO CHATS FOUND:',
-  '     * If search shows "No chats, contacts or messages found" or the search box has message text, press Escape ({"name": "press", "args": {"keys": "escape"}}) to clear the search bar.',
+  '- State-Driven Dynamic Messaging Workflows (WhatsApp, Slack, Telegram, Teams):',
+  '  1. RECOGNIZE CURRENT SCREEN STATE:',
+  '     * Look at the "Current Interface State (Dynamic Perception)" block in the prompt.',
+  '     * If the recipient\'s chat is ALREADY OPEN in the header (or you just clicked their name), DO NOT press Ctrl+F! DO NOT search!',
+  '     * Jump straight to Step 3: Type message into composer.',
+  '  2. LOCATING RECIPIENT (ONLY if not already open):',
+  '     * If recipient is visible in the chat list, click their name directly: {"name": "click", "args": {"text": "Name"}}.',
+  '     * If NOT visible: press ctrl+f, type recipient name, then click the contact in the search results.',
+  '  3. COMPOSE AND SEND MESSAGE:',
+  '     * Once the chat is open, click or type directly into the composer: {"name": "type", "args": {"target": "Type a message", "text": "...", "enter": true}}.',
+  '     * NEVER press ctrl+f when composing or sending a message! ctrl+f focuses the search box and takes you away from the chat!',
+  '  4. NEVER REPEAT SEARCH OR CLICK LOOPS:',
+  '     * Clicking a contact opens the chat. The immediate next action must be typing the message into the composer.',
+  '     * Do NOT click "Chats", "start a chat", or search buttons repeatedly when a chat is already open.',
   '- Discord Navigation Workflows:',
   '  1. Quick Switcher: Press ctrl+k to open Quick Switcher ("Where would you like to go?").',
   '  2. Switch to channel or user: Type the channel name (e.g. {"name": "type", "args": {"text": "general", "enter": true}}) to jump straight to that channel.',
@@ -208,11 +209,13 @@ function createPcPlanner(deps = {}) {
   let planSteps = [];
   let cursor = 0;
   let revisions = 0;
+  let session = new StatefulPCSession();
 
   function reset() {
     planSteps = [];
     cursor = 0;
     revisions = 0;
+    session = new StatefulPCSession();
   }
 
   function extractMilestones(history) {
@@ -252,61 +255,12 @@ function createPcPlanner(deps = {}) {
     return lines.join('\n');
   }
 
-  function describeControls(elements, goal, ocr) {
-    const isWindowManagement = /\b(close|minimize|maximize|restore)\b/i.test(String(goal || ''));
-    const filtered = (elements || []).filter(el => {
-      const name = (el.name || '').trim().toLowerCase();
-      if (!isWindowManagement && /^(close|minimize|maximize|restore|system|title\s*bar)$/i.test(name)) {
-        return false;
-      }
-      return true;
-    });
-
-    const list = filtered.slice(0, MAX_CONTROLS).map((element) => {
-      const rect = element.rect || { x: 0, y: 0, w: 0, h: 0 };
-      const type = String(element.type || '?').replace(/^(ControlType\.)?/, '');
-      return `  ${element.id} | ${type} | ${JSON.stringify(clip(element.name, 60))} | ${rect.x},${rect.y},${rect.w},${rect.h}`;
-    });
-
-    let ocrSnippet = '';
-    if (ocr && (ocr.text || (ocr.lines && ocr.lines.length) || (ocr.words && ocr.words.length))) {
-      let entries = '';
-      if (Array.isArray(ocr.lines) && ocr.lines.length > 0) {
-        // Prioritize goal keywords and input/action controls so they are NEVER truncated
-        const goalTokens = String(goal || '').toLowerCase().split(/[\s,.;:!?]+/).filter(t => t.length > 2);
-        const isPriority = (text) => {
-          const t = text.toLowerCase();
-          if (/message|type|search|send|reply|write|input|general|chat|compose/i.test(t)) return true;
-          return goalTokens.some(tok => t.includes(tok));
-        };
-
-        const priorityLines = [];
-        const otherLines = [];
-        for (const l of ocr.lines) {
-          if (isPriority(l.text || '')) priorityLines.push(l);
-          else otherLines.push(l);
-        }
-
-        const combined = [...priorityLines, ...otherLines].slice(0, 120);
-        // Sort top-to-bottom for clean visual layout
-        combined.sort((a, b) => a.y - b.y);
-
-        entries = combined
-          .map(l => `  "${clip(l.text, 60)}" | center: (${Math.round(l.x + l.w / 2)}, ${Math.round(l.y + l.h / 2)}) | rect: ${l.x},${l.y},${l.w},${l.h}`)
-          .join('\n');
-      } else if (Array.isArray(ocr.words) && ocr.words.length > 0) {
-        entries = ocr.words
-          .slice(0, 100)
-          .map(w => `  "${clip(w.text, 40)}" | center: (${Math.round(w.x + w.w / 2)}, ${Math.round(w.y + w.h / 2)}) | rect: ${w.x},${w.y},${w.w},${w.h}`)
-          .join('\n');
-      }
-      ocrSnippet = `\nVisible text & elements on screen with exact pixel coordinates (via local WinRT OCR):\n${entries || clip(ocr.text, 1200)}`;
+  function describeControls(elements, goal, ocr, winInfo) {
+    if (session.goal !== goal) {
+      session = new StatefulPCSession(goal);
     }
-
-    if (!list.length) {
-      return `Controls: (the window exposes no standard UIA body controls — canvas/Electron/custom UI)${ocrSnippet}\nGoal keywords: ${clip(goal, 80)}`;
-    }
-    return `Controls (id | type | name | left,top,width,height):\n${list.join('\n')}${ocrSnippet}`;
+    const state = session.update(ocr, elements, winInfo);
+    return session.formatCompactAffordanceContext(state);
   }
 
   function buildPrompt(ctx) {
@@ -320,10 +274,23 @@ function createPcPlanner(deps = {}) {
     const milestoneBlock = milestones.length
       ? `Completed Milestones (DO NOT REPEAT):\n${milestones.map(m => `  ✓ ${m}`).join('\n')}\n\n`
       : '';
+
+    // Dynamic State Machine Perception
+    const perception = classifyScreenState(ctx.ocr, ctx.elements, ctx.window, ctx.goal);
+    const perceptionBlock = [
+      '## Live Interface State Perception (Ground Truth):',
+      `- Phase: ${perception.phase}`,
+      `- Active Recipient / Header: ${perception.activeRecipient || 'None detected'}`,
+      `- Message Composer Available: ${perception.hasComposer ? 'YES (ready to type)' : 'NO'}`,
+      perception.guidance ? `- Recommended Functional Action: ${perception.guidance}` : ''
+    ].filter(Boolean).join('\n');
+
     return [
       `Request: ${clip(ctx.goal, 400)}`,
       '',
       `Foreground window: ${clip((ctx.window && ctx.window.title) || '', 120)} (${(ctx.window && ctx.window.process) || 'unknown'}${ctx.window && ctx.window.pid ? `, pid ${ctx.window.pid}` : ''})${winRect}`,
+      '',
+      perceptionBlock,
       '',
       planBlock,
       '',
@@ -331,7 +298,7 @@ function createPcPlanner(deps = {}) {
       `What has happened so far:\n${describeHistory(ctx.history)}`,
       ctx.note ? `\nNote from the screen watcher: ${ctx.note}` : '',
       '',
-      describeControls(ctx.elements, ctx.goal, ctx.ocr),
+      describeControls(ctx.elements, ctx.goal, ctx.ocr, ctx.window),
       '',
       'Reply with the next action as RAW JSON.'
     ].filter(Boolean).join('\n');
@@ -347,9 +314,15 @@ function createPcPlanner(deps = {}) {
 
     let parsed;
     try {
+      // Vision grounding: only pass large base64 screenshot when no OCR/elements exist
+      // or when visual scene analysis is specifically demanded (saves ~85% token bandwidth)
+      const isVisualTask = /\b(describe|what\s+does|color|image|picture|look|visual)\b/i.test(ctx.goal || '');
+      const hasNoText = (!ctx.ocr || !ctx.ocr.lines || !ctx.ocr.lines.length) && (!ctx.elements || !ctx.elements.length);
+      const shouldIncludeImage = isVisualTask || hasNoText;
+
       parsed = await modelClient.queryJSON(buildPrompt(ctx), SYSTEM_PROMPT, {
         timeoutMs: 30000,
-        imageDataUrl: (ctx.capture && ctx.capture.dataUrl) || undefined
+        imageDataUrl: shouldIncludeImage ? (ctx.capture && ctx.capture.dataUrl) : undefined
       });
     } catch (error) {
       log(`pc planner model call failed: ${error.message}`);

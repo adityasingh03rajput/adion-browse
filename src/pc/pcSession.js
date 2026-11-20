@@ -19,7 +19,9 @@
 'use strict';
 
 const { createSettleWatcher } = require('../control-plane/settleWatcher');
+const { createStateObserver } = require('./stateObserver');
 const { controlSignature } = require('./grounding');
+const { classifyScreenState, detectLoopCycle } = require('./stateMachinePerception');
 
 const MAX_STEPS = 15;
 const EXTRA_STEPS = 10;
@@ -60,6 +62,8 @@ function createPcSession(deps = {}) {
   const sleep = typeof deps.sleep === 'function' ? deps.sleep : (ms) => new Promise((r) => setTimeout(r, ms));
   const runbooks = deps.runbooks || null;
   const maxSteps = Number(deps.maxSteps) > 0 ? Number(deps.maxSteps) : MAX_STEPS;
+  // StateObserver wired in from index.js for event-driven verification
+  const stateObserver = deps.stateObserver || null;
 
   let running = false;
   let generation = 0;
@@ -85,6 +89,13 @@ function createPcSession(deps = {}) {
   }
 
   async function waitForScreen(beforeElements, options = {}) {
+    // PRIMARY PATH: use stateObserver if available (event-driven, real OCR polling)
+    if (stateObserver) {
+      const timeoutMs = options.timeoutMs || 1800;
+      const result = await stateObserver.waitForStateChange(timeoutMs);
+      return result.changed;
+    }
+    // FALLBACK: legacy UIA-element-based settle watcher (no stateObserver wired)
     if (!Array.isArray(beforeElements)) return true;
     const before = snapshot(beforeElements);
     const watcher = createSettleWatcher({
@@ -158,6 +169,11 @@ function createPcSession(deps = {}) {
     let steps = 0;
     const allowedApps = new Set();
     let openGrace = 0;
+
+    // Start state observer for event-driven screen change detection
+    if (stateObserver) {
+      try { await stateObserver.start(); } catch (_) {}
+    }
 
     try {
       let ctx = await read();
@@ -276,6 +292,14 @@ function createPcSession(deps = {}) {
             continue;
           }
 
+          // Vision-Grounded Dynamic State Machine: Detect multi-step oscillating & circular cycles
+          const loopCycle = detectLoopCycle(history);
+          if (loopCycle) {
+            log(`[pcSession] ${loopCycle.type} detected: ${loopCycle.warning}`);
+            forcedNote = loopCycle.warning;
+            send('pc:note', { message: loopCycle.warning });
+          }
+
           // Detect alternating 2-action oscillating loops (e.g. A -> B -> A -> B)
           if (history.length >= 3) {
             const lastH = history[history.length - 1];
@@ -291,7 +315,6 @@ function createPcSession(deps = {}) {
         }
 
         let halted = false;
-        let changed = null;
         for (const action of decision.actions) {
           if (gen !== generation) break;
           const name = String(action.name || '').toLowerCase();
@@ -339,9 +362,39 @@ function createPcSession(deps = {}) {
           }
 
           // Wait for the screen to react and settle, then look again.
+          // PRIMARY: stateObserver.waitForStateChange() — event-driven, real OCR polling
+          // FALLBACK: legacy waitForScreen() with UIA element signature
           if (result.lookAfter) await sleep(result.lookAfter);
-          changed = result.settle === 0 ? null : await waitForScreen(before, { timeoutMs: result.settle || 1600 });
-                      if (result.text) collected = String(result.text);
+          let changed;
+          if (stateObserver && result.settle !== 0) {
+            const obs = await stateObserver.waitForStateChange(result.settle || 1600);
+            changed = obs.changed;
+            // POST-ACTION VERIFICATION for critical actions
+            if (name === 'type' && result.ok && !changed) {
+              // If type action didn't visibly change anything, we may have typed into wrong field
+              const typedText = String((action.args || {}).text || '').slice(0, 30);
+              if (typedText) {
+                // Give it one more short wait — some apps buffer keystrokes
+                const retry = await stateObserver.waitForStateChange(800);
+                changed = retry.changed;
+              }
+              if (!changed) {
+                // Screen truly didn't react. Report this as an unverified action.
+                log(`[pcSession] WARN: type "${typedText}" produced no visible screen change`);
+                forcedNote = `Your type action did not produce any visible change on screen. ` +
+                  `The text may have gone to the wrong field. ` +
+                  `Verify what field is currently focused (use describe_screen or look), ` +
+                  `then explicitly click the correct target field before typing.`;
+              }
+            }
+            if (name === 'click' && result.ok && !changed) {
+              // Click with no visible change — might have hit wrong target
+              log(`[pcSession] WARN: click "${String((action.args || {}).text || '')}" produced no visible screen change`);
+            }
+          } else {
+            changed = result.settle === 0 ? null : await waitForScreen(before, { timeoutMs: result.settle || 1600 });
+          }
+          if (result.text) collected = String(result.text);
             if (changed === false) {
               deadFingerprint = fingerprint;
               deadRepeats = 0;
@@ -352,6 +405,14 @@ function createPcSession(deps = {}) {
             history.push({ action: name, ok: true, report: clip(result.report, 200), text: result.text ? clip(result.text, 200) : undefined, changed });
             lastFailure = null;
           ctx = await read();
+          // Vision-Grounded State Transition Verification
+          if (ctx && ctx.ocr) {
+            const postState = classifyScreenState(ctx.ocr, ctx.elements, ctx.fg, goal);
+            if (postState.phase === 'CHAT_OPEN_READY_TO_COMPOSE' && name === 'click') {
+              log(`[pcSession] State transition verified: chat with "${postState.activeRecipient}" is open and composer is ready.`);
+              result.report = `Opened chat with "${postState.activeRecipient}"; composer is ready.`;
+            }
+          }
         }
 
         // A consent refusal ends the run on its own line. An ordinary failure
@@ -372,6 +433,9 @@ function createPcSession(deps = {}) {
       send('pc:done', { outcome, report, steps });
       if (actions && actions.cursorOverlay && typeof actions.cursorOverlay.hide === 'function') {
         try { actions.cursorOverlay.hide(); } catch (_) {}
+      }
+      if (stateObserver) {
+        try { stateObserver.stop(); } catch (_) {}
       }
     }
 

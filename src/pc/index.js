@@ -25,6 +25,7 @@ const { createScreenWatch } = require('./screenWatch');
 const { createRunbooks } = require('./runbooks');
 const { createPcSession } = require('./pcSession');
 const { createPcPlanner } = require('./planner');
+const { createStateObserver } = require('./stateObserver');
 
 /**
  * The no-model planner: one clear PC verb becomes one action.
@@ -189,6 +190,19 @@ function createPcEngine(options = {}) {
     file: userDataPath ? path.join(userDataPath, 'pc-runbooks.json') : null,
     log
   });
+
+  // StateObserver: event-driven screen change detection via WinRT OCR polling.
+  // Replaces fixed sleep() delays with real screen state transitions.
+  let stateObserver = null;
+  try {
+    stateObserver = createStateObserver({
+      readScreen: () => watch.readScreen(),
+      log,
+      pollIntervalMs: 300
+    });
+  } catch (err) {
+    log(`[PCEngine] stateObserver init failed (non-fatal): ${err.message}`);
+  }
 
   // The model that decomposes one request into numbered steps and replans after
   // every observed reaction. Without it, only single clear verbs work.

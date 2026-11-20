@@ -1,4 +1,4 @@
-﻿# Adion Browse — Windows input sidecar (the only process that presses keys)
+# Adion Browse — Windows input sidecar (the only process that presses keys)
 #
 # Adapted from nus-companion's reflex/hands.ps1 (Apache-2.0,
 # potlakai/nus-companion v0.1.21), renamed and trimmed. The read-only probe
