@@ -31,6 +31,10 @@ class OpenAIProvider extends BaseProvider {
     if (this.apiKey.startsWith('sk-or-v1-') && this.apiUrl.includes('api.openai.com')) {
       return false;
     }
+    // A Cloudflare token (cfut_...) requires a Cloudflare endpoint, not standard api.openai.com
+    if (this.apiKey.startsWith('cfut_') && this.apiUrl.includes('api.openai.com')) {
+      return false;
+    }
     return true;
   }
 
