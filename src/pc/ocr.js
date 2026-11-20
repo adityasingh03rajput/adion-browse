@@ -40,7 +40,7 @@ function recognizeText(imagePath) {
 function recognizeWords(imagePath) {
   return new Promise((resolve) => {
     if (!imagePath || !fs.existsSync(imagePath)) {
-      return resolve({ text: '', words: [] });
+      return resolve({ text: '', lines: [], words: [] });
     }
 
     const scriptPath = path.join(__dirname, 'ocr.ps1');
@@ -61,15 +61,16 @@ function recognizeWords(imagePath) {
           const parsed = JSON.parse(stdout.trim());
           return resolve({
             text: parsed.text || '',
+            lines: Array.isArray(parsed.lines) ? parsed.lines : [],
             words: Array.isArray(parsed.words) ? parsed.words : []
           });
         } catch (_) {
-          return resolve({ text: stdout.trim(), words: [] });
+          return resolve({ text: stdout.trim(), lines: [], words: [] });
         }
       }
-      resolve({ text: '', words: [] });
+      resolve({ text: '', lines: [], words: [] });
     });
-    child.on('error', () => resolve({ text: '', words: [] }));
+    child.on('error', () => resolve({ text: '', lines: [], words: [] }));
   });
 }
 
@@ -81,14 +82,35 @@ async function findWordCoordinates(imagePath, query) {
   const clean = String(query || '').trim().toLowerCase();
   if (!clean) return { found: false, reason: 'empty-query' };
 
-  const { words, text } = await recognizeWords(imagePath);
-  if (!words || words.length === 0) {
+  const { words, lines, text } = await recognizeWords(imagePath);
+  if ((!words || words.length === 0) && (!lines || lines.length === 0)) {
     return { found: false, reason: 'no-text-detected', fullText: text };
+  }
+
+  // 1. First, check whole lines for exact or substring match
+  if (Array.isArray(lines) && lines.length > 0) {
+    const lineMatch = lines.find(l => {
+      const lt = String(l.text || '').toLowerCase().trim();
+      return lt === clean || lt.includes(clean);
+    });
+    if (lineMatch) {
+      const cx = Math.round(lineMatch.x + lineMatch.w / 2);
+      const cy = Math.round(lineMatch.y + lineMatch.h / 2);
+      return {
+        found: true,
+        x: cx,
+        y: cy,
+        width: lineMatch.w,
+        height: lineMatch.h,
+        label: lineMatch.text,
+        confidence: String(lineMatch.text || '').toLowerCase().trim() === clean ? 0.99 : 0.92
+      };
+    }
   }
 
   const queryTokens = clean.split(/\s+/).filter(Boolean);
 
-  // 1. Exact or substring match for single word
+  // 2. Exact or substring match for single word
   if (queryTokens.length === 1) {
     const target = queryTokens[0];
     // Exact word match
@@ -117,7 +139,7 @@ async function findWordCoordinates(imagePath, query) {
     }
   }
 
-  // 2. Multi-word phrase matching
+  // 3. Multi-word phrase matching
   for (let i = 0; i <= words.length - queryTokens.length; i++) {
     let matched = true;
     for (let j = 0; j < queryTokens.length; j++) {
@@ -155,7 +177,7 @@ async function findWordCoordinates(imagePath, query) {
  * Recognize words and text directly from base64 image data using local Windows OCR.
  */
 async function recognizeWordsInBase64(base64Data) {
-  if (!base64Data) return { text: '', words: [] };
+  if (!base64Data) return { text: '', lines: [], words: [] };
   const cleanB64 = base64Data.replace(/^data:image\/\w+;base64,/, '');
   const tempPath = path.join(os.tmpdir(), `adion_ocr_words_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.png`);
   try {
@@ -164,7 +186,7 @@ async function recognizeWordsInBase64(base64Data) {
     const result = await recognizeWords(tempPath);
     return result;
   } catch (err) {
-    return { text: '', words: [], error: err.message };
+    return { text: '', lines: [], words: [], error: err.message };
   } finally {
     try {
       if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
@@ -177,9 +199,10 @@ async function recognizeWordsInBase64(base64Data) {
  */
 async function findTextInBase64(base64Data, query) {
   if (!base64Data || !query) return { found: false };
+  const cleanB64 = base64Data.replace(/^data:image\/\w+;base64,/, '');
   const tempPath = path.join(os.tmpdir(), `adion_ocr_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.png`);
   try {
-    const buffer = Buffer.from(base64Data, 'base64');
+    const buffer = Buffer.from(cleanB64, 'base64');
     fs.writeFileSync(tempPath, buffer);
     const result = await findWordCoordinates(tempPath, query);
     return result;

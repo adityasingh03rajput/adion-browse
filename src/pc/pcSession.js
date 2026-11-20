@@ -211,7 +211,7 @@ function createPcSession(deps = {}) {
 
         const noteForPlan = forcedNote || note;
         forcedNote = '';
-        const decision = await plan({ goal, window: ctx.fg, elements: ctx.elements, capture: ctx.capture, history, note: noteForPlan, prompt: goal });
+        const decision = await plan({ goal, window: ctx.fg, elements: ctx.elements, capture: ctx.capture, ocr: ctx.ocr, history, note: noteForPlan, prompt: goal });
         if (!decision || typeof decision !== 'object') {
           outcome = 'error';
           report = 'The planner returned nothing I can act on.';

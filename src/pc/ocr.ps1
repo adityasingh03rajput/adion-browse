@@ -17,39 +17,65 @@ function Await($op, [Type]$type) {
   $task.Wait(-1) | Out-Null
   $task.Result
 }
-$file    = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($Path)) ([Windows.Storage.StorageFile])
-$stream  = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
-$decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
-$bitmap  = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
-$engine  = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
-if (-not $engine) { [Console]::Error.WriteLine('no OCR language installed'); exit 2 }
-$result  = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+$file = $null
+$stream = $null
+try {
+  $file    = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($Path)) ([Windows.Storage.StorageFile])
+  $stream  = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+  $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+  $bitmap  = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+  $engine  = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+  if (-not $engine) { [Console]::Error.WriteLine('no OCR language installed'); exit 2 }
+  $result  = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
 
-if ($Mode -eq 'words' -or $Mode -eq 'json') {
-  $wordList = New-Object System.Collections.Generic.List[Object]
-  if ($result.Lines) {
-    foreach ($line in $result.Lines) {
-      if ($line.Words) {
-        foreach ($w in $line.Words) {
-          $rect = $w.BoundingRect
-          $wordList.Add(@{
-            text = $w.Text
-            x = [int][Math]::Round($rect.X)
-            y = [int][Math]::Round($rect.Y)
-            w = [int][Math]::Round($rect.Width)
-            h = [int][Math]::Round($rect.Height)
+  if ($Mode -eq 'words' -or $Mode -eq 'json' -or $Mode -eq 'lines') {
+    $wordList = New-Object System.Collections.Generic.List[Object]
+    $lineList = New-Object System.Collections.Generic.List[Object]
+    if ($result.Lines) {
+      foreach ($line in $result.Lines) {
+        $minX = [int]::MaxValue; $minY = [int]::MaxValue; $maxX = 0; $maxY = 0
+        if ($line.Words) {
+          foreach ($w in $line.Words) {
+            $rect = $w.BoundingRect
+            $wx = [int][Math]::Round($rect.X)
+            $wy = [int][Math]::Round($rect.Y)
+            $ww = [int][Math]::Round($rect.Width)
+            $wh = [int][Math]::Round($rect.Height)
+            if ($wx -lt $minX) { $minX = $wx }
+            if ($wy -lt $minY) { $minY = $wy }
+            if (($wx + $ww) -gt $maxX) { $maxX = ($wx + $ww) }
+            if (($wy + $wh) -gt $maxY) { $maxY = ($wy + $wh) }
+            $wordList.Add(@{
+              text = $w.Text
+              x = $wx
+              y = $wy
+              w = $ww
+              h = $wh
+            })
+          }
+        }
+        if ($minX -lt [int]::MaxValue -and $line.Text) {
+          $lineList.Add(@{
+            text = $line.Text
+            x = $minX
+            y = $minY
+            w = [Math]::Max(1, $maxX - $minX)
+            h = [Math]::Max(1, $maxY - $minY)
           })
         }
       }
     }
+    $obj = @{
+      text = $result.Text
+      lines = $lineList
+      words = $wordList
+    }
+    [Console]::Out.Write((ConvertTo-Json -InputObject $obj -Compress -Depth 4))
+  } else {
+    [Console]::Out.Write($result.Text)
   }
-  $obj = @{
-    text = $result.Text
-    words = $wordList
+} finally {
+  if ($stream) {
+    try { $stream.Dispose() } catch {}
   }
-  [Console]::Out.Write((ConvertTo-Json -InputObject $obj -Compress -Depth 4))
-} else {
-  [Console]::Out.Write($result.Text)
 }
-
-$stream.Dispose()

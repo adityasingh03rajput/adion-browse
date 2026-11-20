@@ -202,10 +202,33 @@ function createPcEngine(options = {}) {
     });
 
     let ocr = null;
-    if (capture && capture.dataUrl && (nonChromeElements.length < 25 || !elements.length)) {
+    if (capture && capture.dataUrl) {
       try {
         const { recognizeWordsInBase64 } = require('./ocr');
         ocr = await recognizeWordsInBase64(capture.dataUrl);
+        if (ocr && (ocr.lines || ocr.words)) {
+          const scaleX = (capture.pxWidth && capture.width) ? (capture.pxWidth / capture.width) : 1;
+          const scaleY = (capture.pxHeight && capture.height) ? (capture.pxHeight / capture.height) : 1;
+          const offsetX = (capture.display && capture.display.bounds && capture.display.bounds.x) || 0;
+          const offsetY = (capture.display && capture.display.bounds && capture.display.bounds.y) || 0;
+
+          if (Array.isArray(ocr.lines)) {
+            for (const l of ocr.lines) {
+              l.x = Math.round(offsetX + l.x * scaleX);
+              l.y = Math.round(offsetY + l.y * scaleY);
+              l.w = Math.round(l.w * scaleX);
+              l.h = Math.round(l.h * scaleY);
+            }
+          }
+          if (Array.isArray(ocr.words)) {
+            for (const w of ocr.words) {
+              w.x = Math.round(offsetX + w.x * scaleX);
+              w.y = Math.round(offsetY + w.y * scaleY);
+              w.w = Math.round(w.w * scaleX);
+              w.h = Math.round(w.h * scaleY);
+            }
+          }
+        }
       } catch (ocrErr) {
         log(`pc local ocr note: ${ocrErr.message}`);
       }

@@ -74,12 +74,21 @@ const SYSTEM_PROMPT = [
   '- NEVER repeat the same failed action',
   '- NEVER loop on observation tools (read, describe_screen, screenshot) without taking concrete action (click, type, press).',
   '- NEVER hallucinate that an action is "(done)" in thought or plan before it was actually executed and verified in history.',
-  '- To search and open a conversation in messaging apps (WhatsApp, Slack, Telegram, Teams): (1) open_app, (2) press ctrl+f to focus search, (3) type recipient name (e.g. {"name": "type", "args": {"text": "Aksh"}}), (4) open the chat by clicking the contact result directly by text (e.g. {"name": "click", "args": {"text": "Aksh"}}) or pressing down then enter, (5) type message with enter: true (e.g. {"name": "type", "args": {"text": "hello", "enter": true}}), (6) done: true.',
+  '- Click targets: Prefer click(text) — e.g. {"name": "click", "args": {"text": "Aksh"}} or {"name": "click", "args": {"text": "Search"}}. You can also use exact pixel coordinates from the OCR list: {"name": "click", "args": {"x": 280, "y": 190}}.',
+  '- NEVER guess random screen coordinates blindly. Always use text labels or exact coordinates from the visible controls and OCR list.',
+  '- To search and open a conversation in messaging apps (WhatsApp, Slack, Telegram, Teams):',
+  '  1. Launch app with open_app (e.g. {"name": "open_app", "args": {"name": "whatsapp"}}).',
+  '  2. Focus search by pressing ctrl+f (or clicking Search).',
+  '  3. Type recipient name: {"name": "type", "args": {"text": "Aksh"}}.',
+  '  4. Open the chat: Click the recipient in the search results from the OCR/controls list (e.g. {"name": "click", "args": {"text": "Aksh"}}) or press down then enter ({"name": "press", "args": {"keys": "down"}}, then {"name": "press", "args": {"keys": "enter"}}). NEVER loop trying to re-click the search bar after typing the name.',
+  '  5. Type message: {"name": "type", "args": {"text": "your message", "enter": true}}.',
+  '  6. If task requires a screenshot: {"name": "screenshot", "args": {}}.',
+  '  7. Set "done": true once the task is accomplished.',
   '- NEVER click window titlebar buttons ("Restore", "Minimize", "Close", id 2) to activate a window: clicking Restore resizes or un-maximizes the app! The window is already active after open_app.',
   '- If screen unchanged for 2+ steps, something is wrong: try different control, shortcut, or stop',
   '- A click that opens a dialog is NOT completion: inspect dialog fields next',
   '- System/popup menus (Win+X, tray, context menus) expose NO clickable elements: NEVER click a menu item. Drive an open menu with press (underlined accelerator letter, or arrows + Enter; Esc closes it), or skip the menu and open the target directly with open_app (e.g. Event Viewer, Device Manager).',
-  '- When vision shows the target but the control list has no id for it, answer with text in click, or x1000/y1000 coordinates (0-1000 across the whole virtual screen) in click/move — never invent an id, never click blind.',
+  '- When vision shows the target but the control list has no id for it, answer with text in click, or exact coordinates from the OCR list in click/move — never invent an id, never click blind.',
   '- If terminal command fails, diagnose error — DO NOT switch to web navigation',
   '',
   '## Work in Two Phases',
@@ -211,12 +220,20 @@ function createPcPlanner(deps = {}) {
     });
 
     let ocrSnippet = '';
-    if (ocr && (ocr.text || (ocr.words && ocr.words.length))) {
-      const wordsList = (ocr.words || [])
-        .slice(0, 100)
-        .map(w => `"${w.text}" (${w.x},${w.y})`)
-        .join(', ');
-      ocrSnippet = `\nVisible text on screen with coordinates (via local WinRT OCR):\n${wordsList || clip(ocr.text, 900)}`;
+    if (ocr && (ocr.text || (ocr.lines && ocr.lines.length) || (ocr.words && ocr.words.length))) {
+      let entries = '';
+      if (Array.isArray(ocr.lines) && ocr.lines.length > 0) {
+        entries = ocr.lines
+          .slice(0, 80)
+          .map(l => `  "${clip(l.text, 60)}" | center: (${Math.round(l.x + l.w / 2)}, ${Math.round(l.y + l.h / 2)}) | rect: ${l.x},${l.y},${l.w},${l.h}`)
+          .join('\n');
+      } else if (Array.isArray(ocr.words) && ocr.words.length > 0) {
+        entries = ocr.words
+          .slice(0, 80)
+          .map(w => `  "${clip(w.text, 40)}" | center: (${Math.round(w.x + w.w / 2)}, ${Math.round(w.y + w.h / 2)}) | rect: ${w.x},${w.y},${w.w},${w.h}`)
+          .join('\n');
+      }
+      ocrSnippet = `\nVisible text & elements on screen with exact pixel coordinates (via local WinRT OCR):\n${entries || clip(ocr.text, 1200)}`;
     }
 
     if (!list.length) {
@@ -229,10 +246,13 @@ function createPcPlanner(deps = {}) {
     const planBlock = planSteps.length
       ? `Current plan:\n${planSteps.map((step, index) => `  ${index + 1}. [${index < cursor ? 'done' : index === cursor ? 'now' : 'next'}] ${step}`).join('\n')}`
       : 'No plan yet: this is the first reply, so produce the numbered plan now.';
+    const winRect = (ctx.window && ctx.window.rect)
+      ? ` [window bounds: x=${ctx.window.rect.x}, y=${ctx.window.rect.y}, w=${ctx.window.rect.w}, h=${ctx.window.rect.h}]`
+      : '';
     return [
       `Request: ${clip(ctx.goal, 400)}`,
       '',
-      `Foreground window: ${clip((ctx.window && ctx.window.title) || '', 120)} (${(ctx.window && ctx.window.process) || 'unknown'}${ctx.window && ctx.window.pid ? `, pid ${ctx.window.pid}` : ''})`,
+      `Foreground window: ${clip((ctx.window && ctx.window.title) || '', 120)} (${(ctx.window && ctx.window.process) || 'unknown'}${ctx.window && ctx.window.pid ? `, pid ${ctx.window.pid}` : ''})${winRect}`,
       '',
       planBlock,
       '',

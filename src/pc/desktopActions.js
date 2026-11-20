@@ -149,12 +149,31 @@ function createDesktopActions(deps = {}) {
   let vsCache = null;
   async function virtualBounds() {
     if (vsCache) return vsCache;
-    if (!watch) return null;
     try {
-      const shot = await watch.screenshot('coord-bounds');
-      if (shot && shot.ok && shot.virtualScreen) { vsCache = shot.virtualScreen; return vsCache; }
-    } catch (_) { /* fall through */ }
-    return null;
+      const electron = require('electron');
+      if (electron.screen) {
+        const displays = electron.screen.getAllDisplays();
+        if (displays && displays.length) {
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          for (const d of displays) {
+            const b = d.bounds;
+            if (b.x < minX) minX = b.x;
+            if (b.y < minY) minY = b.y;
+            if (b.x + b.width > maxX) maxX = b.x + b.width;
+            if (b.y + b.height > maxY) maxY = b.y + b.height;
+          }
+          vsCache = { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+          return vsCache;
+        }
+      }
+    } catch (_) {}
+    if (watch) {
+      try {
+        const shot = await watch.screenshot('coord-bounds');
+        if (shot && shot.ok && shot.virtualScreen) { vsCache = shot.virtualScreen; return vsCache; }
+      } catch (_) {}
+    }
+    return { x: 0, y: 0, w: 1920, h: 1080 };
   }
 
   async function physFromArgs(args) {
@@ -165,6 +184,44 @@ function createDesktopActions(deps = {}) {
   }
 
   async function resolvePoint(args, ctx = {}) {
+    // 1. Text lookup in ctx.ocr if text query provided
+    const textQuery = String(args.text || args.target || '').trim().toLowerCase();
+    if (textQuery && ctx && ctx.ocr) {
+      if (Array.isArray(ctx.ocr.lines)) {
+        const lineHit = ctx.ocr.lines.find(l => {
+          const lt = String(l.text || '').toLowerCase().trim();
+          return lt === textQuery || lt.includes(textQuery);
+        });
+        if (lineHit && lineHit.w > 0 && lineHit.h > 0) {
+          const cx = Math.round(lineHit.x + lineHit.w / 2);
+          const cy = Math.round(lineHit.y + lineHit.h / 2);
+          return {
+            point: { x: cx, y: cy },
+            rect: { x: lineHit.x, y: lineHit.y, w: lineHit.w, h: lineHit.h },
+            name: lineHit.text,
+            type: 'ocr-line'
+          };
+        }
+      }
+      if (Array.isArray(ctx.ocr.words)) {
+        const wordHit = ctx.ocr.words.find(w => {
+          const wt = String(w.text || '').toLowerCase().trim();
+          return wt === textQuery || wt.includes(textQuery);
+        });
+        if (wordHit && wordHit.w > 0 && wordHit.h > 0) {
+          const cx = Math.round(wordHit.x + wordHit.w / 2);
+          const cy = Math.round(wordHit.y + wordHit.h / 2);
+          return {
+            point: { x: cx, y: cy },
+            rect: { x: wordHit.x, y: wordHit.y, w: wordHit.w, h: wordHit.h },
+            name: wordHit.text,
+            type: 'ocr-word'
+          };
+        }
+      }
+    }
+
+    // 2. Element lookup from UI Automation list
     const element = findElement(args, ctx && ctx.elements);
     if (element && element.rect) {
       return { point: rectCentre(element.rect), rect: element.rect, name: element.name || '', type: element.type || '', element };
@@ -360,7 +417,7 @@ function createDesktopActions(deps = {}) {
       return {
         ok: true,
         unverified: !verified,
-        report: `typed ${Math.min(payload.length, MAX_TYPE_CHARS)} characters${where}${args.enter ? ' and pressed Enter' : ''}${verified ? '' : ' (the field could not confirm it)'}`,
+        report: `typed "${clip(payload, 30)}"${where}${args.enter ? ' and pressed Enter' : ''}`,
         settle: args.enter ? 2200 : 900,
         lookAfter: 250
       };
@@ -460,6 +517,12 @@ function createDesktopActions(deps = {}) {
           ok: false,
           report: `I started the launcher for "${clip(name, 40)}" but no window for it appeared, so I am not calling it open.`
         };
+      }
+      if (found.hwnd && input && input.available) {
+        try {
+          await input.request('win.activate', { hwnd: found.hwnd }, 3000);
+          await sleep(300);
+        } catch (_) {}
       }
       const landedTitle = String(found.title || found.process || '').slice(0, 60);
       return {

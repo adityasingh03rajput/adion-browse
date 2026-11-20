@@ -215,7 +215,15 @@ function createScreenWatch(deps = {}) {
 
     const r = await groqVision(groq, shot.file,
       prompt || 'Describe this screenshot: what app is visible, what is the main content, and list the key controls.');
-    if (!r.ok && !opts.keepFile) { try { fs.unlinkSync(shot.file); } catch (_) {} }
+    if (!r.ok) {
+      try {
+        const text = await recognizeText(shot.file);
+        if (text && text.trim()) {
+          return { ok: true, file: shot.file, text: `Screen text detected via local WinRT OCR:\n${text.slice(0, 3000)}`, note: 'graceful OCR fallback' };
+        }
+      } catch (_) {}
+      if (!opts.keepFile) { try { fs.unlinkSync(shot.file); } catch (_) {} }
+    }
     return { ok: r.ok, file: r.ok ? shot.file : null, text: r.text, note: r.note || '' };
   }
 
