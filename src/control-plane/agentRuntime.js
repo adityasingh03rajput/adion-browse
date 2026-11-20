@@ -657,6 +657,8 @@ class AgentRuntime extends EventEmitter {
         else if (act.type === ActionType.CLICK_SELECTOR) title = `Click "${act.params?.target || 'target element'}"`;
         else if (act.type === ActionType.CLOSE_TAB) title = 'Close active tab';
         else if (act.type === ActionType.INPUT_TEXT) title = `Input text into ${act.params?.selector || 'form field'}`;
+        else if (act.type === ActionType.WAIT_FOR_ELEMENT) title = `Wait for "${act.params?.target || act.params?.selector || 'element'}"`;
+        else if (act.type === ActionType.UPLOAD_FILE || act.type === ActionType.ATTACH_FILE) title = `Attach file to ${act.params?.target || 'page'}`;
         else if (act.type === 'WHATSAPP_CHAT_SEND') title = `Send WhatsApp message to "${act.params?.contact || 'recipient'}"`;
         else if (act.type === ActionType.TERMINAL_EXEC || act.type === 'TERMINAL_EXEC') title = `Execute terminal: \`${act.params?.command || act.command || 'command'}\``;
         else title = `Execute ${act.type}`;
@@ -1938,7 +1940,10 @@ class AgentRuntime extends EventEmitter {
       ActionType.CLICK_COORDINATE,
       ActionType.CAPTURE_VIEWPORT,
       ActionType.ANALYZE_IMAGES,
-      ActionType.PLAY_VIDEO_FROM_THUMBNAIL
+      ActionType.PLAY_VIDEO_FROM_THUMBNAIL,
+      ActionType.WAIT_FOR_ELEMENT,
+      ActionType.UPLOAD_FILE,
+      ActionType.ATTACH_FILE
     ].includes(intent.type)) {
       await this.cdp.attach(activeTab.view.webContents);
     }
@@ -3036,7 +3041,7 @@ class AgentRuntime extends EventEmitter {
           const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
           this.tabManager.navigateActiveTab(searchUrl);
           this.emit('feedback', { message: `Navigating to YouTube: ${query}...`, level: 'info' });
-          await new Promise(r => setTimeout(r, 2200));
+          await this.cdp.waitForElement('ytd-video-renderer, ytd-rich-item-renderer, #contents', { timeoutMs: 6000, throwOnTimeout: false });
         }
 
         await this.cdp.attach(activeTab.view.webContents);
@@ -3044,7 +3049,7 @@ class AgentRuntime extends EventEmitter {
         // 2. Extract visible video card renderers & thumbnails from page
         let candidates = this.vision ? await this.vision.extractYouTubeVideoCandidates() : [];
         if (!candidates || candidates.length === 0) {
-          await new Promise(r => setTimeout(r, 1200));
+          await this.cdp.waitForElement('ytd-video-renderer, #video-title', { timeoutMs: 3000, throwOnTimeout: false });
           candidates = this.vision ? await this.vision.extractYouTubeVideoCandidates() : [];
         }
 
@@ -3132,6 +3137,60 @@ class AgentRuntime extends EventEmitter {
           reason: typeRes && typeRes.success === false ? typeRes.reason : undefined,
           typeRes
         };
+        break;
+      }
+
+      case ActionType.WAIT_FOR_ELEMENT: {
+        const target = intent.target || intent.selector || intent.query || intent.params?.target || intent.params?.selector;
+        if (!target) {
+          executionResult = { success: false, reason: 'Target query or selector is required for WAIT_FOR_ELEMENT' };
+          break;
+        }
+        this.emit('feedback', { message: `Waiting for element "${target}" to render in DOM...`, level: 'info' });
+        try {
+          const waitRes = await this.cdp.waitForElement(target, {
+            timeoutMs: intent.timeoutMs || intent.params?.timeoutMs || 8000,
+            throwOnTimeout: true
+          });
+          executionResult = {
+            success: true,
+            details: `Element "${target}" verified at (${waitRes.x}, ${waitRes.y}) in ${waitRes.elapsedMs}ms.`,
+            coords: { x: waitRes.x, y: waitRes.y }
+          };
+        } catch (err) {
+          console.warn(`[AgentRuntime] WAIT_FOR_ELEMENT notice:`, err.message);
+          executionResult = {
+            success: false,
+            reason: err.message
+          };
+        }
+        break;
+      }
+
+      case ActionType.UPLOAD_FILE:
+      case ActionType.ATTACH_FILE: {
+        const target = intent.target || intent.selector || intent.params?.target || intent.params?.selector;
+        const filePaths = intent.files || intent.filePath || intent.file || intent.params?.files || intent.params?.filePath || intent.params?.file;
+        if (!filePaths) {
+          executionResult = { success: false, reason: 'File path(s) required for file upload action' };
+          break;
+        }
+        this.emit('feedback', { message: `Attaching file(s) to ${target || 'active document'}...`, level: 'info' });
+        try {
+          const uploadRes = await this.cdp.uploadFile(target, filePaths, intent.options || intent.params?.options || {});
+          executionResult = {
+            success: true,
+            details: `Uploaded ${uploadRes.files.length} file(s) via ${uploadRes.method}.`,
+            files: uploadRes.files
+          };
+        } catch (err) {
+          console.error(`[AgentRuntime] File upload failed:`, err.message);
+          this.emit('feedback', { message: `⚠️ File upload failed: ${err.message}`, level: 'warning' });
+          executionResult = {
+            success: false,
+            reason: err.message
+          };
+        }
         break;
       }
 
@@ -5221,57 +5280,68 @@ class AgentRuntime extends EventEmitter {
           console.log(`[AgentRuntime WhatsApp] 📄 Attaching and dispatching document "${fileName}" (${resolvedFilePath}) to "${contact}"...`);
           this.emit('feedback', { message: `📋 Step 4/${stepTotal} [ATTACH & SEND]: Attaching document "${fileName}" to chat with "${contact}"...`, level: 'info' });
 
-          const fileContent = fs.readFileSync(resolvedFilePath, 'utf8');
+          try {
+            if (!fs.existsSync(resolvedFilePath)) {
+              throw new Error(`Document file does not exist on disk: "${resolvedFilePath}"`);
+            }
 
-          // 1. Dispatch drop event on #main
-          await contents.executeJavaScript(`
-            (() => {
-              const main = document.querySelector('#main') || document.querySelector('div[data-testid="conversation-panel-wrapper"]');
-              if (!main) return { success: false, reason: 'no main' };
-              const content = ${JSON.stringify(fileContent)};
-              const file = new File([content], ${JSON.stringify(fileName)}, { type: 'text/javascript' });
-              const dt = new DataTransfer();
-              dt.items.add(file);
-              main.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: dt }));
-              main.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
-              main.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
-              return { success: true };
-            })()
-          `).catch(() => null);
+            // Ensure CDP is attached
+            if (this.cdp && !this.cdp.isAttached) {
+              await this.cdp.attach(contents);
+            }
 
-          await new Promise(r => setTimeout(r, 1500));
+            // Step 1: Explicitly poll for attachment button
+            console.log('[AgentRuntime WhatsApp] Polling DOM for WhatsApp attachment menu trigger...');
+            const attachBtnRes = await this.cdp.waitForElement('button[title="Attach"], button[aria-label="Attach"], span[data-icon="plus"], span[data-icon="attach-menu-plus"], span[data-icon="clip"]', {
+              timeoutMs: 4000,
+              throwOnTimeout: false
+            });
 
-          // 2. Click Send button on document preview modal
-          const sendBtnCoords = await contents.executeJavaScript(`
-            (() => {
-              const sendBtn = Array.from(document.querySelectorAll('*')).find(el => {
-                const aria = el.getAttribute('aria-label') || el.getAttribute('title') || '';
-                return aria.includes('Send') && (aria.includes('selected') || aria === 'Send');
-              }) || document.querySelector('span[data-icon="send"]')?.closest('button');
-              if (!sendBtn) return null;
-              const r = sendBtn.getBoundingClientRect();
-              return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) };
-            })()
-          `).catch(() => null);
+            if (attachBtnRes && attachBtnRes.found) {
+              console.log(`[AgentRuntime WhatsApp] Clicking attachment button at (${attachBtnRes.x}, ${attachBtnRes.y})...`);
+              await this.cdp.dispatchClick(attachBtnRes.x, attachBtnRes.y);
+              // Wait for menu options / file input to mount
+              await this.cdp.waitForElement('ul[role="menu"], div[role="application"], input[type="file"], span[data-icon="attach-document"]', {
+                timeoutMs: 2500,
+                throwOnTimeout: false
+              });
+            }
 
-          if (sendBtnCoords) {
-            contents.sendInputEvent({ type: 'mouseMove', x: sendBtnCoords.x, y: sendBtnCoords.y });
-            contents.sendInputEvent({ type: 'mouseDown', x: sendBtnCoords.x, y: sendBtnCoords.y, button: 'left', clickCount: 1 });
-            contents.sendInputEvent({ type: 'mouseUp', x: sendBtnCoords.x, y: sendBtnCoords.y, button: 'left', clickCount: 1 });
-          }
-          contents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
-          contents.sendInputEvent({ type: 'char', keyCode: '\r' });
-          contents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+            // Step 2: Upload file via CDP primitives
+            console.log(`[AgentRuntime WhatsApp] Uploading "${fileName}" via CDP uploadFile...`);
+            await this.cdp.uploadFile('span[data-icon="attach-document"], li button', resolvedFilePath, { timeoutMs: 5000 });
 
-          // 3. Verify in live DOM that document message was sent!
-          for (let v = 0; v < 6; v++) {
-            await new Promise(r => setTimeout(r, 1000));
-            const docVerified = await contents.executeJavaScript(`
-              (() => {
-                const outBubbles = Array.from(document.querySelectorAll('#main div.message-out, #main [data-testid^="msg-container"]'));
-                return outBubbles.some(el => (el.innerText || el.textContent || '').includes(${JSON.stringify(fileName)}));
-              })()
-            `).catch(() => false);
+            // Step 3: Explicitly wait for Document / Media preview modal & Send button to render in DOM
+            console.log('[AgentRuntime WhatsApp] Waiting for document preview modal & send button to render...');
+            const sendBtnRes = await this.cdp.waitForElement('span[data-icon="send"], [data-testid="send"], button[aria-label="Send"], div[aria-label="Send"]', {
+              timeoutMs: 7000,
+              throwOnTimeout: true
+            });
+
+            console.log(`[AgentRuntime WhatsApp] Send button ready at (${sendBtnRes.x}, ${sendBtnRes.y}), clicking Send...`);
+            await this.cdp.dispatchClick(sendBtnRes.x, sendBtnRes.y);
+
+            // Send Enter key as backup
+            contents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+            contents.sendInputEvent({ type: 'char', keyCode: '\r' });
+            contents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+
+            // Step 4: Frame-synchronized live DOM polling for delivery
+            console.log('[AgentRuntime WhatsApp] Polling live DOM for outgoing message bubble...');
+            const pollStart = Date.now();
+            let docVerified = false;
+
+            while (Date.now() - pollStart < 8000) {
+              docVerified = await contents.executeJavaScript(`
+                (() => {
+                  const outBubbles = Array.from(document.querySelectorAll('#main div.message-out, #main [data-testid^="msg-container"]'));
+                  return outBubbles.some(el => (el.innerText || el.textContent || '').includes(${JSON.stringify(fileName)}));
+                })()
+              `).catch(() => false);
+
+              if (docVerified) break;
+              await new Promise(r => setTimeout(r, 150));
+            }
 
             if (docVerified) {
               messageSent = true;
@@ -5289,7 +5359,23 @@ class AgentRuntime extends EventEmitter {
                 timestamp: new Date().toLocaleTimeString(),
                 summary: successMsg
               };
+            } else {
+              throw new Error(`Document "${fileName}" was dispatched but could not be verified in outgoing message bubbles within 8s.`);
             }
+          } catch (uploadError) {
+            console.error(`[AgentRuntime WhatsApp] ❌ File upload step failed:`, uploadError.message);
+            this.emit('feedback', {
+              message: `⚠️ File upload error: ${uploadError.message}. Point of failure logged.`,
+              level: 'warning'
+            });
+            return {
+              success: false,
+              task: 'WHATSAPP_DOCUMENT_DELIVERY',
+              recipient: contact,
+              document: fileName,
+              error: uploadError.message,
+              pointOfFailure: uploadError.code || 'UPLOAD_DISPATCH_FAILURE'
+            };
           }
         }
 
@@ -5331,9 +5417,9 @@ class AgentRuntime extends EventEmitter {
             })()
           `).catch(() => null);
 
-          // 3. Verify if sent and rendered in the live message list (check across 3 intervals)
-          for (let v = 0; v < 3; v++) {
-            await new Promise(r => setTimeout(r, 600));
+          // 3. Frame-synchronized live DOM polling for sent message delivery
+          const verifyStart = Date.now();
+          while (Date.now() - verifyStart < 4500) {
             const verifySent = await contents.executeJavaScript(`
               (() => {
                 const targetMsg = ${JSON.stringify(message.toLowerCase().trim())};
@@ -5360,6 +5446,7 @@ class AgentRuntime extends EventEmitter {
                 summary: successMsg
               };
             }
+            await new Promise(r => setTimeout(r, 120));
           }
         }
 

@@ -4,6 +4,37 @@
  * Handles synthetic input dispatch, viewport capture for VLM grounding, and DOM introspection.
  */
 
+const fs = require('fs');
+const path = require('path');
+
+function getMimeType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const map = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif',
+    '.svg': 'image/svg+xml',
+    '.pdf': 'application/pdf',
+    '.txt': 'text/plain',
+    '.json': 'application/json',
+    '.js': 'text/javascript',
+    '.ts': 'text/typescript',
+    '.html': 'text/html',
+    '.css': 'text/css',
+    '.csv': 'text/csv',
+    '.zip': 'application/zip',
+    '.tar': 'application/x-tar',
+    '.gz': 'application/gzip',
+    '.mp4': 'video/mp4',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg'
+  };
+  return map[ext] || 'application/octet-stream';
+}
+
 class CDPBridge {
   constructor() {
     this.currentWebContents = null;
@@ -1129,6 +1160,272 @@ class CDPBridge {
     } catch (_) {
       return null;
     }
+  }
+
+  /**
+   * Explicitly poll the live DOM and Shadow DOM until an element matching a query or selector
+   * exists and is rendered with visible dimensions.
+   * Eliminates brittle fixed delays across dynamic Single Page Apps & messaging platforms.
+   *
+   * @param {string} target - CSS selector or natural language label/query
+   * @param {object} options
+   * @param {number} [options.timeoutMs=6000] - Maximum duration to wait before timeout
+   * @param {number} [options.intervalMs=100] - Polling interval
+   * @param {boolean} [options.visible=true] - Require element to have positive dimensions
+   * @param {boolean} [options.throwOnTimeout=true] - Throw Error on timeout vs return null
+   * @returns {Promise<{ found: boolean, x: number, y: number, width: number, height: number, elapsedMs: number }>}
+   */
+  async waitForElement(target, options = {}) {
+    if (!target) throw new Error('waitForElement requires a target query or selector');
+    const timeoutMs = options.timeoutMs ?? 6000;
+    const intervalMs = options.intervalMs ?? 100;
+    const visible = options.visible !== false;
+    const throwOnTimeout = options.throwOnTimeout !== false;
+
+    const startTime = Date.now();
+    let lastError = null;
+
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        const coords = await this.findElementCoordinates(target);
+        if (coords && coords.x !== undefined && coords.y !== undefined) {
+          if (!visible || ((coords.width ?? 1) > 0 && (coords.height ?? 1) > 0)) {
+            return {
+              found: true,
+              x: coords.x,
+              y: coords.y,
+              width: coords.width || 0,
+              height: coords.height || 0,
+              text: coords.text || '',
+              tag: coords.tag || '',
+              elapsedMs: Date.now() - startTime
+            };
+          }
+        }
+      } catch (err) {
+        lastError = err;
+      }
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+
+    const elapsed = Date.now() - startTime;
+    const errMsg = `Timeout waiting for element "${target}" after ${elapsed}ms${lastError ? ` (${lastError.message})` : ''}`;
+    console.warn(`[CDPBridge] ⏱️ ${errMsg}`);
+    if (throwOnTimeout) {
+      const err = new Error(errMsg);
+      err.code = 'ELEMENT_TIMEOUT';
+      err.target = target;
+      throw err;
+    }
+    return { found: false, elapsedMs: elapsed };
+  }
+
+  /**
+   * Explicitly poll until an element matching a target is NO LONGER visible or present in DOM.
+   * Useful for modals, loading spinners, and preview overlays.
+   */
+  async waitForDisappear(target, options = {}) {
+    if (!target) return { disappeared: true, elapsedMs: 0 };
+    const timeoutMs = options.timeoutMs ?? 6000;
+    const intervalMs = options.intervalMs ?? 100;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        const coords = await this.findElementCoordinates(target);
+        if (!coords || coords.x === undefined || (coords.width <= 0 && coords.height <= 0)) {
+          return { disappeared: true, elapsedMs: Date.now() - startTime };
+        }
+      } catch (_) {
+        return { disappeared: true, elapsedMs: Date.now() - startTime };
+      }
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+    return { disappeared: false, elapsedMs: Date.now() - startTime };
+  }
+
+  /**
+   * Upload one or more files to a file input or trigger a file chooser upload
+   * using native Chrome DevTools Protocol mechanisms (DOM.setFileInputFiles and Page.handleFileChooser).
+   *
+   * @param {string|null} targetQuery - Selector or label for the file input / upload button (optional)
+   * @param {string|string[]} filePaths - One or more absolute file paths on the local filesystem
+   * @param {object} options
+   */
+  async uploadFile(targetQuery, filePaths, options = {}) {
+    if (!this.isAttached) throw new Error('CDP not attached');
+
+    const paths = (Array.isArray(filePaths) ? filePaths : [filePaths]).filter(Boolean);
+    if (paths.length === 0) {
+      throw new Error('uploadFile requires at least one valid filePath');
+    }
+
+    // Verify all files exist locally
+    for (const fp of paths) {
+      if (!fs.existsSync(fp)) {
+        throw new Error(`File to upload does not exist: "${fp}"`);
+      }
+    }
+
+    console.log(`[CDPBridge] 📤 Initiating file upload for ${paths.length} file(s): [${paths.map(p => path.basename(p)).join(', ')}]...`);
+
+    let uploadSucceeded = false;
+    let failureReason = null;
+
+    // Strategy 1: Intercept native file chooser dialogs (Page.setInterceptFileChooserDialog)
+    let chooserListener = null;
+    try {
+      await this.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true }).catch(() => {});
+
+      const fileChooserPromise = new Promise((resolve) => {
+        chooserListener = async (event, method, params) => {
+          if (method === 'Page.fileChooserOpened') {
+            console.log('[CDPBridge] 📁 Intercepted Page.fileChooserOpened dialog event:', params);
+            try {
+              await this.sendCommand('Page.handleFileChooser', {
+                action: 'accept',
+                files: paths
+              });
+              resolve({ handled: true });
+            } catch (handleErr) {
+              console.warn('[CDPBridge] Page.handleFileChooser error:', handleErr.message);
+              resolve({ handled: false, error: handleErr });
+            }
+          }
+        };
+        if (this.currentWebContents && this.currentWebContents.debugger) {
+          this.currentWebContents.debugger.on('message', chooserListener);
+        }
+      });
+
+      // If targetQuery is provided, click it to trigger file chooser dialog
+      if (targetQuery) {
+        console.log(`[CDPBridge] Clicking target upload trigger: "${targetQuery}"...`);
+        const coords = await this.findElementCoordinates(targetQuery);
+        if (coords && coords.x !== undefined && coords.y !== undefined) {
+          await this.dispatchClick(coords.x, coords.y);
+        }
+      }
+
+      const chooserResult = await Promise.race([
+        fileChooserPromise,
+        new Promise(r => setTimeout(() => r(null), 1500))
+      ]);
+
+      if (chooserResult && chooserResult.handled) {
+        uploadSucceeded = true;
+        console.log('[CDPBridge] ✅ Successfully attached files via Page.handleFileChooser interception');
+      }
+    } catch (interceptionErr) {
+      console.warn('[CDPBridge] File chooser interception notice:', interceptionErr.message);
+    } finally {
+      if (chooserListener && this.currentWebContents && this.currentWebContents.debugger) {
+        this.currentWebContents.debugger.removeListener('message', chooserListener);
+      }
+      await this.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {});
+    }
+
+    if (uploadSucceeded) {
+      return { success: true, method: 'Page.handleFileChooser', files: paths };
+    }
+
+    // Strategy 2: Direct DOM.setFileInputFiles via CDP DOM domain
+    try {
+      console.log('[CDPBridge] Attempting direct DOM.setFileInputFiles...');
+      const docRes = await this.sendCommand('DOM.getDocument', { depth: -1, pierce: true }).catch(() => null);
+      const rootNodeId = docRes?.root?.nodeId;
+
+      if (rootNodeId) {
+        let targetNodeId = null;
+        if (targetQuery && (targetQuery.includes('input') || targetQuery.includes('['))) {
+          const qRes = await this.sendCommand('DOM.querySelector', { nodeId: rootNodeId, selector: targetQuery }).catch(() => null);
+          targetNodeId = qRes?.nodeId;
+        }
+
+        if (!targetNodeId) {
+          const qRes = await this.sendCommand('DOM.querySelector', { nodeId: rootNodeId, selector: 'input[type="file"]' }).catch(() => null);
+          targetNodeId = qRes?.nodeId;
+        }
+
+        if (targetNodeId) {
+          await this.sendCommand('DOM.setFileInputFiles', {
+            files: paths,
+            nodeId: targetNodeId
+          });
+          uploadSucceeded = true;
+          console.log('[CDPBridge] ✅ Successfully set file input via DOM.setFileInputFiles');
+          return { success: true, method: 'DOM.setFileInputFiles', files: paths };
+        }
+      }
+    } catch (domErr) {
+      console.warn('[CDPBridge] DOM.setFileInputFiles notice:', domErr.message);
+      failureReason = domErr.message;
+    }
+
+    // Strategy 3: In-page DOM fallback with File constructor and DataTransfer
+    try {
+      console.log('[CDPBridge] Attempting in-page DOM input/drop fallback...');
+      const fileData = paths.map(p => {
+        const buf = fs.readFileSync(p);
+        return {
+          name: path.basename(p),
+          base64: buf.toString('base64'),
+          type: getMimeType(p)
+        };
+      });
+
+      const script = `
+        (() => {
+          try {
+            const filesData = ${JSON.stringify(fileData)};
+            const dt = new DataTransfer();
+            for (const f of filesData) {
+              const byteChars = atob(f.base64);
+              const byteNums = new Array(byteChars.length);
+              for (let i = 0; i < byteChars.length; i++) {
+                byteNums[i] = byteChars.charCodeAt(i);
+              }
+              const byteArray = new Uint8Array(byteNums);
+              const blob = new Blob([byteArray], { type: f.type });
+              const file = new File([blob], f.name, { type: f.type });
+              dt.items.add(file);
+            }
+
+            const input = document.querySelector('input[type="file"]') || 
+                          document.querySelector('div[data-testid="conversation-panel-wrapper"] input[type="file"]') ||
+                          document.querySelector('#main input[type="file"]');
+            if (input) {
+              input.files = dt.files;
+              input.dispatchEvent(new Event('input', { bubbles: true }));
+              input.dispatchEvent(new Event('change', { bubbles: true }));
+              return { success: true, method: 'input.files' };
+            }
+
+            const dropTarget = document.querySelector('#main') || document.body;
+            if (dropTarget) {
+              dropTarget.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: dt }));
+              dropTarget.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
+              dropTarget.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+              return { success: true, method: 'dragdrop' };
+            }
+
+            return { success: false, reason: 'No file input or drop target found' };
+          } catch (e) {
+            return { success: false, reason: e.message };
+          }
+        })()
+      `;
+      const fallbackRes = await this.currentWebContents.executeJavaScript(script).catch(e => ({ success: false, reason: e.message }));
+      if (fallbackRes && fallbackRes.success) {
+        console.log(`[CDPBridge] ✅ Successfully attached files via in-page ${fallbackRes.method}`);
+        return { success: true, method: fallbackRes.method, files: paths };
+      }
+      failureReason = fallbackRes?.reason || failureReason;
+    } catch (scriptErr) {
+      failureReason = scriptErr.message;
+    }
+
+    throw new Error(`File upload failed for [${paths.map(p => path.basename(p)).join(', ')}]: ${failureReason || 'Target element/file chooser not found'}`);
   }
 }
 

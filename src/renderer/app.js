@@ -1252,6 +1252,14 @@ document.addEventListener('DOMContentLoaded', () => {
           tag = 'PC';
           tagClass = 'tag-dom';
           label = `Desktop: ${actType.replace('PC_', '').toLowerCase()} ${stepInput.key || stepInput.text || stepInput.app || ''}`.trim();
+        } else if (actType === 'UPLOAD_FILE' || actType === 'ATTACH_FILE') {
+          tag = 'FILE';
+          tagClass = 'tag-dom';
+          label = `Attached file to ${stepInput.target || 'page'}`;
+        } else if (actType === 'WAIT_FOR_ELEMENT') {
+          tag = 'WAIT';
+          tagClass = 'tag-plan';
+          label = `Waited for "${stepInput.target || 'element'}"`;
         } else if (actType.includes('CLICK') || actType.includes('INPUT') || actType.includes('SCROLL') || actType.includes('DOM') || actType.includes('INSPECT')) {
           tag = 'DOM';
           tagClass = 'tag-dom';
