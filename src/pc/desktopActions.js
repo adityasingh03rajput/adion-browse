@@ -357,8 +357,8 @@ function createDesktopActions(deps = {}) {
         ok: true,
         report: `clicked ${target.name ? `"${clip(target.name, 40)}"` : `(${target.point.x}, ${target.point.y})`}`,
         target: { name: target.name, type: target.type, rect: target.rect },
-        settle: 1600,
-        lookAfter: 250
+        settle: 600,
+        lookAfter: 150
       };
     },
 
@@ -375,7 +375,7 @@ function createDesktopActions(deps = {}) {
       if (!reply || reply.ok === false) {
         return { ok: false, report: `move failed: ${(reply && reply.error) || 'no answer'}` };
       }
-      return { ok: true, report: `moved to (${px.x}, ${px.y})`, settle: 300 };
+      return { ok: true, report: `moved to (${px.x}, ${px.y})`, settle: 150 };
     },
 
     async type(args, ctx = {}) {
@@ -418,8 +418,8 @@ function createDesktopActions(deps = {}) {
         ok: true,
         unverified: !verified,
         report: `typed "${clip(payload, 30)}"${where}${args.enter ? ' and pressed Enter' : ''}`,
-        settle: args.enter ? 2200 : 900,
-        lookAfter: 250
+        settle: args.enter ? 600 : 250,
+        lookAfter: 150
       };
     },
 
@@ -430,7 +430,7 @@ function createDesktopActions(deps = {}) {
       if (!reply || reply.ok === false) {
         return { ok: false, report: `key press failed: ${(reply && (reply.refused || reply.error)) || 'no answer'}` };
       }
-      return { ok: true, report: `pressed ${clip(args.keys || args.key, 30)}`, settle: 1200, lookAfter: 200 };
+      return { ok: true, report: `pressed ${clip(args.keys || args.key, 30)}`, settle: 400, lookAfter: 150 };
     },
 
     async scroll(args, ctx = {}) {
@@ -442,7 +442,7 @@ function createDesktopActions(deps = {}) {
       const dy = direction === 'up' ? ticks : -ticks;
       const reply = await input.request('mouse.scroll', { x: Math.round(point.x), y: Math.round(point.y), dy, dx: 0 }, 4000);
       if (!reply || reply.ok === false) return { ok: false, report: 'scroll failed' };
-      return { ok: true, report: `scrolled ${direction} ${ticks}`, settle: 1200, lookAfter: 150 };
+      return { ok: true, report: `scrolled ${direction} ${ticks}`, settle: 400, lookAfter: 150 };
     },
 
     async read(args, ctx = {}) {
@@ -529,8 +529,8 @@ function createDesktopActions(deps = {}) {
         ok: true,
         report: `opened "${clip(name, 40)}"${landedTitle ? ` (${landedTitle})` : ''}`,
         opened: name,
-        settle: 2500,
-        lookAfter: 600
+        settle: 1200,
+        lookAfter: 250
       };
     },
 
@@ -564,7 +564,37 @@ function createDesktopActions(deps = {}) {
       if (!watch) return { ok: false, report: 'screenshots are not available (screenWatch missing)' };
       const shot = await watch.screenshot();
       if (!shot.ok) return { ok: false, report: `screenshot failed: ${shot.note || 'unknown'}`, settle: 0 };
-      return { ok: true, report: `saved whole-screen shot to ${shot.file}`, file: shot.file, virtualScreen: shot.virtualScreen || null, settle: 0 };
+
+      // Automatically copy screenshot to Windows clipboard for instant pasting (Ctrl+V) in messaging apps
+      let clipboardNotice = '';
+      try {
+        const { clipboard, nativeImage } = require('electron');
+        if (shot.file && clipboard && nativeImage) {
+          const img = nativeImage.createFromPath(shot.file);
+          if (!img.isEmpty()) {
+            clipboard.writeImage(img);
+            clipboardNotice = ' and copied to clipboard (ready to paste with ctrl+v)';
+          }
+        }
+      } catch (_) {}
+
+      if (!clipboardNotice && shot.file) {
+        try {
+          const { spawn } = require('child_process');
+          const psCode = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetImage([System.Drawing.Image]::FromFile('${shot.file.replace(/'/g, "''")}'))`;
+          const cp = spawn('powershell.exe', ['-NoProfile', '-Command', psCode], { windowsHide: true });
+          cp.unref();
+          clipboardNotice = ' and copied to clipboard (ready to paste with ctrl+v)';
+        } catch (_) {}
+      }
+
+      return {
+        ok: true,
+        report: `saved whole-screen shot to ${shot.file}${clipboardNotice}`,
+        file: shot.file,
+        virtualScreen: shot.virtualScreen || null,
+        settle: 0
+      };
     },
 
     async describe_screen(args) {

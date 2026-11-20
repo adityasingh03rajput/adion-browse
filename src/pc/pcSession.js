@@ -275,6 +275,19 @@ function createPcSession(deps = {}) {
             send('pc:note', { message: 'The same action did nothing; asking for another route.' });
             continue;
           }
+
+          // Detect alternating 2-action oscillating loops (e.g. A -> B -> A -> B)
+          if (history.length >= 3) {
+            const lastH = history[history.length - 1];
+            const prevH = history[history.length - 2];
+            const prev2H = history[history.length - 3];
+            const curFp = `${firstAction.name} ${JSON.stringify(firstAction.args || {})}`;
+            const prevFp = `${prevH.action} ${JSON.stringify(prevH.args || {})}`;
+            if (curFp === prevFp && lastH.action === prev2H.action) {
+              forcedNote = `You are alternating in an oscillating loop between ${firstAction.name} and ${lastH.action}. STOP this loop! Take a completely different approach (e.g. use keyboard shortcuts like Ctrl+V, navigate by text labels, or verify next step).`;
+              send('pc:note', { message: 'Oscillating loop detected; forcing a different approach.' });
+            }
+          }
         }
 
         let halted = false;

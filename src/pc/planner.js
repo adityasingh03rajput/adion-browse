@@ -74,6 +74,13 @@ const SYSTEM_PROMPT = [
   '- NEVER repeat the same failed action',
   '- NEVER loop on observation tools (read, describe_screen, screenshot) without taking concrete action (click, type, press).',
   '- NEVER hallucinate that an action is "(done)" in thought or plan before it was actually executed and verified in history.',
+  '- Sharing/Sending Screenshots in Any Chat App:',
+  '  * Taking a screenshot automatically COPIES the image to the Windows clipboard.',
+  '  * To send a screenshot to a contact (e.g. Pranav): (1) click/search the contact to open chat, (2) paste with ctrl+v: {"name": "press", "args": {"keys": "ctrl+v"}}, (3) send: {"name": "press", "args": {"keys": "enter"}}.',
+  '  * NEVER click paperclip icons, attachment menus, file pickers, or press ctrl+shift+a. Pasting directly with Ctrl+V is the instant, standard, 100% reliable way to send images.',
+  '- Multi-Step Milestones:',
+  '  * Once you type and send a message to Contact A, DO NOT repeat sending the message to Contact A!',
+  '  * Move immediately to the next milestone in your plan (e.g. taking screenshot, opening Contact B, pasting screenshot with Ctrl+V, and sending).',
   '- Click targets: Prefer click(text) — e.g. {"name": "click", "args": {"text": "Aksh"}} or {"name": "click", "args": {"text": "Search"}}. You can also use exact pixel coordinates from the OCR list: {"name": "click", "args": {"x": 280, "y": 190}}.',
   '- NEVER guess random screen coordinates blindly. Always use text labels or exact coordinates from the visible controls and OCR list.',
   '- To search and open a conversation in messaging apps (WhatsApp, Slack, Telegram, Teams):',
@@ -82,7 +89,7 @@ const SYSTEM_PROMPT = [
   '  3. Type recipient name: {"name": "type", "args": {"text": "Aksh"}}.',
   '  4. Open the chat: Click the recipient in the search results from the OCR/controls list (e.g. {"name": "click", "args": {"text": "Aksh"}}) or press down then enter ({"name": "press", "args": {"keys": "down"}}, then {"name": "press", "args": {"keys": "enter"}}). NEVER loop trying to re-click the search bar after typing the name.',
   '  5. Type message: {"name": "type", "args": {"text": "your message", "enter": true}}.',
-  '  6. If task requires a screenshot: {"name": "screenshot", "args": {}}.',
+  '  6. If task requires a screenshot: {"name": "screenshot", "args": {}} (this automatically copies to clipboard).',
   '  7. Set "done": true once the task is accomplished.',
   '- NEVER click window titlebar buttons ("Restore", "Minimize", "Close", id 2) to activate a window: clicking Restore resizes or un-maximizes the app! The window is already active after open_app.',
   '- If screen unchanged for 2+ steps, something is wrong: try different control, shortcut, or stop',
@@ -190,17 +197,41 @@ function createPcPlanner(deps = {}) {
     revisions = 0;
   }
 
+  function extractMilestones(history) {
+    if (!history || !history.length) return [];
+    const milestones = [];
+    for (const h of history) {
+      if (!h.ok) continue;
+      if (h.action === 'open_app') {
+        milestones.push(`Opened application: ${h.report}`);
+      } else if (h.action === 'type' && !h.report.includes('ctrl+f')) {
+        milestones.push(`Message/Text sent: ${h.report}`);
+      } else if (h.action === 'screenshot') {
+        milestones.push(`Screenshot taken and copied to clipboard`);
+      } else if (h.action === 'click' && h.report && !h.report.includes('(')) {
+        milestones.push(`Clicked: ${h.report}`);
+      }
+    }
+    return milestones.slice(-5);
+  }
+
   function describeHistory(history) {
     if (!history || !history.length) return 'Nothing has been done yet.';
-    return history.map((entry, index) => {
+    const slice = history.slice(-6);
+    const offset = history.length - slice.length;
+    const lines = slice.map((entry, index) => {
       const reaction = entry.changed === true
         ? 'the screen changed'
         : entry.changed === false
           ? 'THE SCREEN DID NOT CHANGE'
           : 'not observed';
       const textPreview = entry.text ? ` [Output: "${clip(entry.text, 140)}"]` : '';
-      return `${index + 1}. ${entry.action}: ${entry.ok ? 'ok' : 'FAILED'} — ${clip(entry.report, 140)}${textPreview} [${reaction}]`;
-    }).join('\n');
+      return `${offset + index + 1}. ${entry.action}: ${entry.ok ? 'ok' : 'FAILED'} — ${clip(entry.report, 140)}${textPreview} [${reaction}]`;
+    });
+    if (offset > 0) {
+      return `... (${offset} earlier actions completed successfully)\n${lines.join('\n')}`;
+    }
+    return lines.join('\n');
   }
 
   function describeControls(elements, goal, ocr) {
@@ -224,12 +255,12 @@ function createPcPlanner(deps = {}) {
       let entries = '';
       if (Array.isArray(ocr.lines) && ocr.lines.length > 0) {
         entries = ocr.lines
-          .slice(0, 80)
+          .slice(0, 40)
           .map(l => `  "${clip(l.text, 60)}" | center: (${Math.round(l.x + l.w / 2)}, ${Math.round(l.y + l.h / 2)}) | rect: ${l.x},${l.y},${l.w},${l.h}`)
           .join('\n');
       } else if (Array.isArray(ocr.words) && ocr.words.length > 0) {
         entries = ocr.words
-          .slice(0, 80)
+          .slice(0, 40)
           .map(w => `  "${clip(w.text, 40)}" | center: (${Math.round(w.x + w.w / 2)}, ${Math.round(w.y + w.h / 2)}) | rect: ${w.x},${w.y},${w.w},${w.h}`)
           .join('\n');
       }
@@ -244,10 +275,14 @@ function createPcPlanner(deps = {}) {
 
   function buildPrompt(ctx) {
     const planBlock = planSteps.length
-      ? `Current plan:\n${planSteps.map((step, index) => `  ${index + 1}. [${index < cursor ? 'done' : index === cursor ? 'now' : 'next'}] ${step}`).join('\n')}`
+      ? `Task Roadmap:\n${planSteps.map((step, index) => `  ${index + 1}. [${index < cursor ? 'DONE' : index === cursor ? 'ACTIVE' : 'UPCOMING'}] ${step}`).join('\n')}`
       : 'No plan yet: this is the first reply, so produce the numbered plan now.';
     const winRect = (ctx.window && ctx.window.rect)
       ? ` [window bounds: x=${ctx.window.rect.x}, y=${ctx.window.rect.y}, w=${ctx.window.rect.w}, h=${ctx.window.rect.h}]`
+      : '';
+    const milestones = extractMilestones(ctx.history);
+    const milestoneBlock = milestones.length
+      ? `Completed Milestones (DO NOT REPEAT):\n${milestones.map(m => `  ✓ ${m}`).join('\n')}\n\n`
       : '';
     return [
       `Request: ${clip(ctx.goal, 400)}`,
@@ -256,6 +291,7 @@ function createPcPlanner(deps = {}) {
       '',
       planBlock,
       '',
+      milestoneBlock,
       `What has happened so far:\n${describeHistory(ctx.history)}`,
       ctx.note ? `\nNote from the screen watcher: ${ctx.note}` : '',
       '',
@@ -296,14 +332,22 @@ function createPcPlanner(deps = {}) {
 
     const titles = planTitles(parsed);
     if (titles.length) {
-      const changed = titles.join('\n') !== planSteps.join('\n');
-      if (changed) {
-        if (planSteps.length) revisions++;
+      if (planSteps.length === 0) {
         planSteps = titles;
+        cursor = 0;
+      } else {
+        const changed = titles.join('\n') !== planSteps.join('\n');
+        if (changed && titles.length >= Math.max(3, planSteps.length - 1)) {
+          revisions++;
+          planSteps = titles;
+        }
       }
     }
-    if (Number.isFinite(Number(parsed.step))) {
-      cursor = Math.max(0, Math.min(planSteps.length - 1, Number(parsed.step) - 1));
+    if (Number.isFinite(Number(parsed.step)) && Number(parsed.step) > 0) {
+      const candidate = Number(parsed.step) - 1;
+      if (candidate >= cursor && candidate < planSteps.length) {
+        cursor = candidate;
+      }
     } else if (!planSteps.length) {
       cursor = 0;
     }
