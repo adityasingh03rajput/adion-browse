@@ -1319,6 +1319,16 @@ document.addEventListener('DOMContentLoaded', () => {
     clearInterval(activeAntigravityCard.timer);
     activeAntigravityCard.isDone = true;
 
+    // If zero actual tool steps were recorded (pure conversational reply, greeting, or direct Q&A),
+    // cleanly remove the empty progress card from DOM rather than displaying a fake "Ran 0 steps".
+    if (activeAntigravityCard.stepCount === 0) {
+      if (activeAntigravityCard.cardEl && activeAntigravityCard.cardEl.parentNode) {
+        activeAntigravityCard.cardEl.parentNode.removeChild(activeAntigravityCard.cardEl);
+      }
+      activeAntigravityCard = null;
+      return;
+    }
+
     const elapsed = formatElapsedSec(Date.now() - activeAntigravityCard.startTime);
     activeAntigravityCard.cardEl.classList.remove('running');
     activeAntigravityCard.cardEl.classList.add('completed');

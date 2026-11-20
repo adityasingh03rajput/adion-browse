@@ -1071,8 +1071,55 @@ class AgentRuntime extends EventEmitter {
         }
       }
 
-      if (initialPlan && (Array.isArray(initialPlan.actions) || initialPlan.thought)) {
+      if (initialPlan && (Array.isArray(initialPlan.actions) || initialPlan.thought || initialPlan.response)) {
         if (!Array.isArray(initialPlan.actions)) initialPlan.actions = [];
+
+        // If model returned 0 actions: pure conversational turn, greeting, or direct Q&A
+        if (initialPlan.actions.length === 0) {
+          this.setState(AgentState.IDLE);
+
+          let feedbackMsg = initialPlan.response || initialPlan.reply || initialPlan.message || '';
+          if (!feedbackMsg) {
+            const rawThought = String(initialPlan.thought || '').trim();
+            // If thought is third-person robotic monologue, convert to warm, helpful first-person response
+            if (/^(?:user\s+greeted|user\s+says|user\s+is\s+asking|the\s+user\s+wants|the\s+user\s+is|no\s+further\s+action\s+is\s+required)\b/i.test(rawThought)) {
+              if (/^(?:hi|hello|hey|greetings|good\s+(?:morning|afternoon|evening)|howdy|sup|hola)\b/i.test(exactPrompt.trim())) {
+                feedbackMsg = "Hello! How can I help you today? I'm ready to search the web, open tabs, navigate websites, or control your desktop.";
+              } else {
+                feedbackMsg = rawThought
+                  .replace(/^(?:user\s+greeted\s+with\s*['"][^'"]*['"]\s*(?:while\s+[^.]*)?\.\s*no\s+further\s+action\s+is\s+required\s*(?:other\s+than\s+acknowledging\s+the\s+greeting)?\.?)/i, "Hello! How can I help you today?")
+                  .replace(/^(?:the\s+user\s+is\s+asking\s+(?:about|for|to)?|the\s+user\s+wants\s+(?:to)?)\s*/i, "")
+                  .trim();
+                if (!feedbackMsg) feedbackMsg = "Hello! How can I assist you today?";
+              }
+            } else {
+              feedbackMsg = rawThought || 'Standing by for browser commands.';
+            }
+          }
+
+          if (this.currentTask) {
+            this.currentTask.status = 'COMPLETED';
+            this.currentTask.finalOutcome = feedbackMsg;
+            this.emitTaskModeUpdate();
+            this.emit('task-mode:completed', this.currentTask);
+          }
+
+          this.emit('feedback', { message: feedbackMsg, level: 'info', isCompletion: true });
+          this.emit('adion-notification', { type: 'info', message: feedbackMsg });
+          this.sessionManager.recordInteraction({
+            source: source,
+            rawPrompt: exactPrompt,
+            transcription: text,
+            pageContext: pageContext,
+            modelResponse: initialPlan,
+            status: 'success',
+            feedback: feedbackMsg
+          });
+          if (this.jarvisSession) {
+            this.jarvisSession.addTurn(exactPrompt, feedbackMsg, pageContext);
+          }
+          return;
+        }
 
         // Synthesize or extract structured subtasks for user visibility
         let activeTasks = (Array.isArray(initialPlan.tasks) && initialPlan.tasks.length > 0)
@@ -1114,35 +1161,6 @@ class AgentRuntime extends EventEmitter {
             }
           };
           this.emitTaskModeUpdate();
-        }
-
-        // If model returned 0 actions:
-        if (initialPlan.actions.length === 0) {
-          this.setState(AgentState.IDLE);
-          const feedbackMsg = initialPlan.thought || 'Standing by for browser commands.';
-
-          if (this.currentTask) {
-            this.currentTask.status = 'COMPLETED';
-            this.currentTask.finalOutcome = feedbackMsg;
-            this.emitTaskModeUpdate();
-            this.emit('task-mode:completed', this.currentTask);
-          }
-
-          this.emit('feedback', { message: feedbackMsg, level: 'info', isCompletion: true });
-          this.emit('adion-notification', { type: 'info', message: feedbackMsg });
-          this.sessionManager.recordInteraction({
-            source: source,
-            rawPrompt: exactPrompt,
-            transcription: text,
-            pageContext: pageContext,
-            modelResponse: initialPlan,
-            status: 'success',
-            feedback: feedbackMsg
-          });
-          if (this.jarvisSession) {
-            this.jarvisSession.addTurn(exactPrompt, feedbackMsg, pageContext);
-          }
-          return;
         }
 
         let currentPlan = initialPlan;

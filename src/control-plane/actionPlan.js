@@ -138,6 +138,10 @@ function normalizePlan(parsed) {
   }
 
   // BUA self-correction pattern: memory and next_goal fields for compressed history
+  const responseText = parsed.response || parsed.reply || parsed.message || parsed.answer;
+  if (typeof responseText === 'string' && responseText.trim()) {
+    plan.response = responseText.trim();
+  }
   if (parsed.memory && typeof parsed.memory === 'string') {
     plan.memory = parsed.memory.trim();
   }

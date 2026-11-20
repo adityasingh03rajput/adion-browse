@@ -197,7 +197,8 @@ Each step should produce a self-contained memory for the next step. This enables
 
 Use this JSON schema:
 {
-  "thought": "Brief reasoning explaining current state and next action",
+  "thought": "Brief internal reasoning explaining current state and next action",
+  "response": "Direct, conversational, and helpful response to the user (required for greetings, conversational turns, general questions, and completion summaries)",
   "memory": "Key progress and information for next steps (25-50 words max)",
   "next_goal": "Immediate next action to take",
   "goalAccomplished": true|false,
@@ -220,7 +221,13 @@ Use this JSON schema:
 
 ## Response Rules
 - Output RAW JSON ONLY - no markdown fences, no prose
-- "thought" must explain what happened and what's next
+- "thought" is internal reasoning.
+- "response" is the direct, conversational, human-facing reply to the user.
+- FOR GREETINGS AND CHAT (e.g. "hi", "hello", "hey", "how are you", general questions):
+  * Set "actions": []
+  * Set "goalAccomplished": true
+  * Provide a warm, helpful assistant reply in "response" (e.g. "Hello! How can I help you browse or complete tasks today?").
+  * NEVER write third-person robotic monologue like "User greeted with hi" or "No action is required" in "response" or "thought". Always address the user directly as a helpful AI assistant.
 - "memory" must summarize key progress (e.g., "Form submitted, confirmation page loaded")
 - "next_goal" must state immediate next step
 - For single-step tasks (e.g. closing tabs, switching tab, pressing a shortcut, navigation) or when the dispatched actions conclude the user's entire request, set "goalAccomplished": true.
