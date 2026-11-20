@@ -1,4 +1,4 @@
-# Adion Browse — Windows input sidecar (the only process that presses keys)
+﻿# Adion Browse — Windows input sidecar (the only process that presses keys)
 #
 # Adapted from nus-companion's reflex/hands.ps1 (Apache-2.0,
 # potlakai/nus-companion v0.1.21), renamed and trimmed. The read-only probe
@@ -48,6 +48,9 @@ public static class AdionInput {
     return GetForegroundWindow() == h;
   }
   [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+  [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
   [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
   [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
   [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
@@ -86,13 +89,19 @@ public static class AdionInput {
     return Mouse(MOVE | ABS | VDESK, ax, ay, 0);
   }
   public static void Move(int x, int y) { Send(MoveTo(x, y)); }
-  public static void Click(int x, int y, string button, bool twice) {
+  public static void Click(int x, int y, string button, bool twice, bool restoreUser = true) {
+    POINT original = new POINT();
+    bool hasOriginal = restoreUser && GetCursorPos(out original);
     uint down = LDOWN, up = LUP;
     if (button == "right") { down = RDOWN; up = RUP; } else if (button == "middle") { down = MDOWN; up = MUP; }
     Send(MoveTo(x, y));
-    System.Threading.Thread.Sleep(30);
+    System.Threading.Thread.Sleep(25);
     Send(Mouse(down, 0, 0, 0), Mouse(up, 0, 0, 0));
-    if (twice) { System.Threading.Thread.Sleep(60); Send(Mouse(down, 0, 0, 0), Mouse(up, 0, 0, 0)); }
+    if (twice) { System.Threading.Thread.Sleep(50); Send(Mouse(down, 0, 0, 0), Mouse(up, 0, 0, 0)); }
+    if (hasOriginal) {
+      System.Threading.Thread.Sleep(20);
+      SetCursorPos(original.X, original.Y);
+    }
   }
   public static void Scroll(int x, int y, int dy, int dx) {
     Send(MoveTo(x, y));
@@ -199,7 +208,8 @@ function Handle($req) {
       $target = Ensure-Target $req
       if ($target.isPassword) { return @{ ok=$false; refused='password field'; window=$target.window } }
       $button = if ($req.button) { [string]$req.button } else { 'left' }
-      [AdionInput]::Click([int]$req.x, [int]$req.y, $button, [bool]$req.twice)
+      $restore = if ($null -ne $req.restoreUser) { [bool]$req.restoreUser } else { $true }
+      [AdionInput]::Click([int]$req.x, [int]$req.y, $button, [bool]$req.twice, [bool]$restore)
       return @{ ok=$true; x=[int]$req.x; y=[int]$req.y; window=$target.window }
     }
     'mouse.move' { [AdionInput]::Move([int]$req.x, [int]$req.y); return @{ ok=$true } }

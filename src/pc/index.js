@@ -174,10 +174,13 @@ function createPcEngine(options = {}) {
 
   // screenWatch: the tool-scan scanner wired in — win.list, whole-screen
   // shots, OCR reads and vision descriptions that the planner actions use.
+  const { createCursorOverlay } = require('./cursorOverlay');
+  const cursorOverlay = createCursorOverlay({ log });
   const watch = createScreenWatch({ probe, log, workDir: userDataPath || undefined, selfPid });
-  const desktopActions = createDesktopActions({ probe, input, launchApp, log, selfPid, watch });
+  const desktopActions = createDesktopActions({ probe, input, launchApp, log, selfPid, watch, cursorOverlay });
   const actions = {
     ...desktopActions.actions,
+    cursorOverlay,
     run: desktopActions.run,
     resolvePoint: desktopActions.resolvePoint,
     focusedField: desktopActions.focusedField

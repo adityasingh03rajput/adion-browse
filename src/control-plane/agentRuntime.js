@@ -2873,6 +2873,24 @@ class AgentRuntime extends EventEmitter {
         await contents.executeJavaScript(`
           (() => {
             const el = document.elementFromPoint(${px}, ${py});
+            // Animated AI pointer & ripple feedback
+            let p = document.getElementById('__adion_web_cursor__');
+            if (!p) {
+              p = document.createElement('div');
+              p.id = '__adion_web_cursor__';
+              p.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483647;transition:transform 0.22s cubic-bezier(0.2,0.8,0.2,1);';
+              p.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M3 3L10.5 21L14 13.5L21.5 10L3 3Z" fill="#00f2fe" stroke="#fff" stroke-width="1.5"/></svg>';
+              document.body.appendChild(p);
+            }
+            p.style.transform = 'translate3d(' + ${px} + 'px,' + ${py} + 'px,0)';
+            const r = document.createElement('div');
+            r.style.cssText = 'position:fixed;left:' + ${px} + 'px;top:' + ${py} + 'px;width:10px;height:10px;margin-left:-5px;margin-top:-5px;border-radius:50%;border:2px solid #00f2fe;box-shadow:0 0 12px #00f2fe;pointer-events:none;z-index:2147483647;transition:all 0.5s ease-out;';
+            document.body.appendChild(r);
+            requestAnimationFrame(() => {
+              r.style.transform = 'scale(4.5)';
+              r.style.opacity = '0';
+            });
+            setTimeout(() => r.remove(), 550);
             if (!el) return;
             const opts = { bubbles: true, cancelable: true, clientX: ${px}, clientY: ${py}, button: 0, buttons: 1, view: window };
             el.dispatchEvent(new PointerEvent('pointerdown', opts));

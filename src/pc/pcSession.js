@@ -370,6 +370,9 @@ function createPcSession(deps = {}) {
     } finally {
       running = false;
       send('pc:done', { outcome, report, steps });
+      if (actions && actions.cursorOverlay && typeof actions.cursorOverlay.hide === 'function') {
+        try { actions.cursorOverlay.hide(); } catch (_) {}
+      }
     }
 
     lastRecord = { goal, steps: history, startedAt, endedAt: now(), outcome };

@@ -140,6 +140,7 @@ function coordsToPhysical(args, b) {
 function createDesktopActions(deps = {}) {
   const { probe, input } = deps;
   const watch = deps.watch || null; // screenWatch (tool-scan wiring); null-safe everywhere
+  const cursorOverlay = deps.cursorOverlay || null;
   const log = typeof deps.log === 'function' ? deps.log : () => {};
   const sleep = typeof deps.sleep === 'function' ? deps.sleep : (ms) => new Promise((r) => setTimeout(r, ms));
   const selfPid = deps.selfPid != null ? deps.selfPid : -1;
@@ -374,6 +375,10 @@ function createDesktopActions(deps = {}) {
       const gate = evaluateAction({ kind: 'page', label }, ctx.prompt || '');
       if (!gate.allowed) return { ok: false, refused: gate.reason, report: gate.message };
 
+      if (cursorOverlay && target.point) {
+        cursorOverlay.clickAt(target.point.x, target.point.y, target.name || 'Click');
+      }
+
       const reply = await input.request('mouse.click', {
         x: target.point.x,
         y: target.point.y,
@@ -402,6 +407,9 @@ function createDesktopActions(deps = {}) {
         : fractionToPhysical(args, ctx && ctx.capture, ctx && ctx.originPhys);
       if (!point) return { ok: false, report: 'move needs coordinates: x/y pixels or x1000/y1000 (0-1000)' };
       const px = { x: Math.round(point.x), y: Math.round(point.y) };
+      if (cursorOverlay) {
+        cursorOverlay.moveTo(px.x, px.y, 'Adion');
+      }
       const reply = await input.request('mouse.move', px, 4000);
       if (!reply || reply.ok === false) {
         return { ok: false, report: `move failed: ${(reply && reply.error) || 'no answer'}` };
@@ -414,10 +422,12 @@ function createDesktopActions(deps = {}) {
       if (!text.trim()) return { ok: false, report: 'nothing to type' };
 
       // 1. Focus target field first if explicitly provided
+      let target = null;
       if (args.id != null || args.target || args.text_target || args.field) {
         try {
-          const target = await resolvePoint({ id: args.id, text: args.target || args.text_target || args.field }, ctx);
+          target = await resolvePoint({ id: args.id, text: args.target || args.text_target || args.field }, ctx);
           if (target && target.point) {
+            if (cursorOverlay) cursorOverlay.typeAt(target.point.x, target.point.y, text);
             await input.request('mouse.click', { x: target.point.x, y: target.point.y, button: 'left' }, 3000);
             await sleep(250);
           }
@@ -477,6 +487,7 @@ function createDesktopActions(deps = {}) {
 
         if (composerTarget && composerTarget.point) {
           console.log(`[DesktopActions] 🎯 Auto-focused message composer at (${composerTarget.point.x}, ${composerTarget.point.y})`);
+          if (cursorOverlay) cursorOverlay.typeAt(composerTarget.point.x, composerTarget.point.y, text);
           await input.request('mouse.click', { x: composerTarget.point.x, y: composerTarget.point.y, button: 'left' }, 3000);
           await sleep(300);
           field = await focusedField();
