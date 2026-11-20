@@ -894,9 +894,9 @@ class AgentRuntime extends EventEmitter {
                           /^\/(?:pc_use|pc|computer|workspace)\b/i.test(exactPrompt) ||
                           /^(?:run\s+on\s+(?:pc|computer|workspace)|on\s+(?:my\s+)?(?:pc|computer|workspace))\b/i.test(exactPrompt);
 
-    // Intelligent desktop app intent routing: if user mentions a native desktop application, route to PcEngine
+    // Intelligent desktop app intent routing: if user mentions a native desktop application or desktop action, route to PcEngine
     if (!isComputerUse && this.pcEngine && this.pcEngine.platform === 'win32') {
-      const desktopAppPattern = /^(?:(?:open|launch|start|switch\s+to|bring\s+up)\s+(?:whatsapp|notepad|calculator|spotify|discord|slack|telegram|word|excel|powerpoint|paint|vlc|terminal|cmd|powershell)|(?:in|on)\s+whatsapp\b)/i;
+      const desktopAppPattern = /(?:(?:open|launch|start|switch\s+to|bring\s+up)\s+(?:whatsapp|discord|slack|telegram|spotify|notepad|calculator|teams|code|vscode|word|excel|powerpoint|paint|terminal|cmd|powershell))|(?:(?:in|on)\s+(?:whatsapp|discord|slack|telegram|spotify|teams))|(?:(?:send\s+(?:a\s+)?message|message|text|chat)\s+(?:to\s+[a-zA-Z0-9_\s]+?\s+)?(?:on|in)\s+(?:whatsapp|discord|slack|telegram|teams))|(?:take\s+(?:a\s+)?screenshot)|(?:on\s+(?:my\s+)?(?:pc|computer|desktop))/i;
       if (desktopAppPattern.test(exactPrompt.trim())) {
         isComputerUse = true;
       }

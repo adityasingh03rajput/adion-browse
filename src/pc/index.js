@@ -104,9 +104,20 @@ function createPcEngine(options = {}) {
       const uriMap = {
         whatsapp: 'whatsapp:',
         spotify: 'spotify:',
+        discord: 'discord:',
+        slack: 'slack:',
+        telegram: 'tg:',
+        tg: 'tg:',
+        teams: 'msteams:',
+        msteams: 'msteams:',
         calculator: 'calculator:',
         calc: 'calculator:',
-        settings: 'ms-settings:'
+        settings: 'ms-settings:',
+        vscode: 'vscode:',
+        code: 'vscode:',
+        chrome: 'chrome:',
+        edge: 'microsoft-edge:',
+        terminal: 'wt:'
       };
       const directUri = uriMap[clean.toLowerCase()];
       if (directUri) {
@@ -115,13 +126,31 @@ function createPcEngine(options = {}) {
         return resolve({ ok: true });
       }
 
-      // Universal StartApps launcher (handles both UWP/Store Apps and Win32 Desktop Apps)
+      // Universal launcher (StartApps -> Start Menu .lnk -> LocalAppData Squirrel/Electron -> Path)
       const psCommand = `
         $t = '${clean.replace(/'/g, "''")}';
         $app = Get-StartApps | Where-Object { $_.Name -like "*$t*" -or $_.AppID -like "*$t*" } | Select-Object -First 1;
         if ($app) {
           Start-Process ("shell:AppsFolder\\" + $app.AppID);
           exit 0;
+        }
+        $lnks = @(Get-ChildItem -Path "$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs", "$env:ProgramData\\Microsoft\\Windows\\Start Menu\\Programs" -Filter "*$t*.lnk" -Recurse -ErrorAction SilentlyContinue);
+        if ($lnks.Count -gt 0) {
+          Start-Process $lnks[0].FullName;
+          exit 0;
+        }
+        $localApp = "$env:LOCALAPPDATA\\$t";
+        if (Test-Path $localApp) {
+          $updateExe = Join-Path $localApp "Update.exe";
+          if (Test-Path $updateExe) {
+            Start-Process $updateExe -ArgumentList "--processStart", "$t.exe";
+            exit 0;
+          }
+          $exe = Get-ChildItem -Path $localApp -Filter "$t.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1;
+          if ($exe) {
+            Start-Process $exe.FullName;
+            exit 0;
+          }
         }
         try {
           Start-Process $t;

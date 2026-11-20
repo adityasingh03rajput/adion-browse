@@ -1370,7 +1370,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!dataOrText) return false;
     if (typeof dataOrText === 'object') {
       if (dataOrText.isCompletion) return false;
-      if (dataOrText.isStep || dataOrText.type || dataOrText.tasks) return true;
+      if (dataOrText.isStep || (Array.isArray(dataOrText.tasks) && dataOrText.tasks.length > 0)) return true;
       dataOrText = dataOrText.message || '';
     }
     return Boolean(activeAntigravityCard && !activeAntigravityCard.isDone);
@@ -1486,7 +1486,7 @@ document.addEventListener('DOMContentLoaded', () => {
           // Add conversation entries
           recent.forEach((entry) => {
             const userMsg = entry.prompt?.raw || entry.prompt?.transcription || '';
-            const agentMsg = entry.response?.thought || entry.feedback || '';
+            const agentMsg = entry.response?.response || entry.response?.reply || entry.feedback || (typeof entry.response === 'string' ? entry.response : '');
             
             if (userMsg) {
               appendCopilotUserMessage(userMsg);

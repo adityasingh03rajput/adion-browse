@@ -184,29 +184,60 @@ function createDesktopActions(deps = {}) {
   }
 
   async function resolvePoint(args, ctx = {}) {
+    const rawQuery = String(args.text || args.target || '').trim();
+    const textQuery = rawQuery.toLowerCase();
+    const cleanQuery = textQuery.replace(/^[#@\s:._-]+|[#@\s:._-]+$/g, '');
+
     // 1. Text lookup in ctx.ocr if text query provided
-    const textQuery = String(args.text || args.target || '').trim().toLowerCase();
-    if (textQuery && ctx && ctx.ocr) {
+    if (cleanQuery && ctx && ctx.ocr) {
       if (Array.isArray(ctx.ocr.lines)) {
-        const lineHit = ctx.ocr.lines.find(l => {
+        let bestLine = null;
+        let bestScore = 0;
+
+        for (const l of ctx.ocr.lines) {
           const lt = String(l.text || '').toLowerCase().trim();
-          return lt === textQuery || lt.includes(textQuery);
-        });
-        if (lineHit && lineHit.w > 0 && lineHit.h > 0) {
-          const cx = Math.round(lineHit.x + lineHit.w / 2);
-          const cy = Math.round(lineHit.y + lineHit.h / 2);
+          const cleanLt = lt.replace(/^[#@\s:._-]+|[#@\s:._-]+$/g, '');
+
+          if (lt === textQuery || cleanLt === cleanQuery) {
+            bestLine = l; bestScore = 100; break;
+          }
+          if (lt.includes(textQuery) || lt.includes(cleanQuery)) {
+            const score = 80;
+            if (score > bestScore) { bestLine = l; bestScore = score; }
+          } else if (textQuery.includes(lt) || cleanQuery.includes(cleanLt)) {
+            const score = 70;
+            if (score > bestScore) { bestLine = l; bestScore = score; }
+          } else {
+            const qTokens = cleanQuery.split(/\s+/).filter(t => t.length > 1);
+            const lTokens = cleanLt.split(/\s+/).filter(t => t.length > 1);
+            if (qTokens.length > 0 && lTokens.length > 0) {
+              const matches = qTokens.filter(qt => lTokens.some(ltok => ltok === qt || ltok.includes(qt) || qt.includes(ltok)));
+              const ratio = matches.length / qTokens.length;
+              if (ratio >= 0.6 && Math.round(ratio * 60) > bestScore) {
+                bestLine = l;
+                bestScore = Math.round(ratio * 60);
+              }
+            }
+          }
+        }
+
+        if (bestLine && bestLine.w > 0 && bestLine.h > 0) {
+          const cx = Math.round(bestLine.x + bestLine.w / 2);
+          const cy = Math.round(bestLine.y + bestLine.h / 2);
           return {
             point: { x: cx, y: cy },
-            rect: { x: lineHit.x, y: lineHit.y, w: lineHit.w, h: lineHit.h },
-            name: lineHit.text,
+            rect: { x: bestLine.x, y: bestLine.y, w: bestLine.w, h: bestLine.h },
+            name: bestLine.text,
             type: 'ocr-line'
           };
         }
       }
+
       if (Array.isArray(ctx.ocr.words)) {
         const wordHit = ctx.ocr.words.find(w => {
           const wt = String(w.text || '').toLowerCase().trim();
-          return wt === textQuery || wt.includes(textQuery);
+          const cleanWt = wt.replace(/^[#@\s:._-]+|[#@\s:._-]+$/g, '');
+          return wt === textQuery || cleanWt === cleanQuery || cleanWt.includes(cleanQuery) || cleanQuery.includes(cleanWt);
         });
         if (wordHit && wordHit.w > 0 && wordHit.h > 0) {
           const cx = Math.round(wordHit.x + wordHit.w / 2);
@@ -382,10 +413,10 @@ function createDesktopActions(deps = {}) {
       const text = String(args.text || '');
       if (!text.trim()) return { ok: false, report: 'nothing to type' };
 
-      // Focus target field first if explicitly provided
-      if (args.id != null || args.target || args.text_target) {
+      // 1. Focus target field first if explicitly provided
+      if (args.id != null || args.target || args.text_target || args.field) {
         try {
-          const target = await resolvePoint({ id: args.id, text: args.target || args.text_target }, ctx);
+          const target = await resolvePoint({ id: args.id, text: args.target || args.text_target || args.field }, ctx);
           if (target && target.point) {
             await input.request('mouse.click', { x: target.point.x, y: target.point.y, button: 'left' }, 3000);
             await sleep(250);
@@ -395,40 +426,65 @@ function createDesktopActions(deps = {}) {
 
       let field = await focusedField();
 
-      // Intelligent Auto-Redirection Guard:
-      // If keyboard focus is currently on a SEARCH box and text is a long multi-word message (> 25 chars),
-      // the agent is trying to send a message, NOT search for a paragraph! Auto-locate and focus the composer.
-      const isSearchBox = field && /search|find|filter/i.test(field.name || '');
-      const isLongMessage = text.length > 25 && /\s/.test(text.trim());
-      if (isSearchBox && isLongMessage) {
-        console.warn(`[DesktopActions] ⚠️ Detected attempt to type long message (${text.length} chars) into search field "${field.name}". Re-routing focus to message composer...`);
-        const composerLabels = ['Type a message', 'Type a message...', 'Message', 'Write a message', 'Send a message'];
+      // 2. Intelligent Chat Composer & Misdirection Routing
+      const winTitle = String((ctx.fg && ctx.fg.title) || (ctx.window && ctx.window.title) || '').toLowerCase();
+      const winProc = String((ctx.fg && ctx.fg.process) || (ctx.window && ctx.window.process) || '').toLowerCase();
+      const isMessagingApp = /whatsapp|discord|slack|telegram|teams|skype|signal|messenger/i.test(winProc) ||
+                             /whatsapp|discord|slack|telegram|teams|skype|signal|messenger/i.test(winTitle);
+
+      // Check if search returned empty results (e.g. "No chats, contacts or messages found")
+      let hasNoResults = false;
+      if (ctx.ocr && Array.isArray(ctx.ocr.lines)) {
+        hasNoResults = ctx.ocr.lines.some(l => /no chats|no contacts|no messages found|no results/i.test(l.text || ''));
+      }
+
+      if (hasNoResults && isMessagingApp) {
+        try { await input.request('keys.chord', { keys: [27] }, 1500); } catch (_) {}
+        return {
+          ok: false,
+          refused: 'contact not found in search',
+          report: 'Search returned "No chats, contacts or messages found". The recipient is not in your contact list or search results. Chat was not opened.'
+        };
+      }
+
+      // Check if current focus is a search box (by name, autoId, or class)
+      const fieldDesc = String((field && (field.name || field.autoId || field.className)) || '').toLowerCase();
+      const isSearchBox = /search|find|filter/i.test(fieldDesc);
+      const isMessageText = text.length > 20 || /\s/.test(text.trim()) || /(?:hello|hi|hey|good|dear|thank|please|yes|no)\b/i.test(text);
+
+      // In messaging apps without explicit target, or when focused on a search box while typing a message:
+      // Auto-locate and focus the message composer!
+      if ((isMessagingApp && !args.target && !args.text_target && !args.field) || (isSearchBox && isMessageText)) {
         let composerTarget = null;
+        const composerLabels = [
+          'Type a message', 'Type a message...', 'Message', 'Write a message', 'Send a message',
+          'Message #general', 'Message @', 'Reply'
+        ];
         for (const label of composerLabels) {
           composerTarget = await resolvePoint({ text: label }, ctx);
           if (composerTarget && composerTarget.point) break;
         }
 
-        // OCR position fallback: find 'message' or 'type' text near the bottom 25% of the window
+        // OCR position fallback: find 'message', 'type', or 'reply' text near the bottom 30% of the active window
         if (!composerTarget && ctx.ocr && Array.isArray(ctx.ocr.lines)) {
           const winRect = ctx.fg && ctx.fg.rect ? ctx.fg.rect : { x: 0, y: 0, w: 1920, h: 1080 };
-          const bottomBound = winRect.y + (winRect.h * 0.75);
-          const hit = ctx.ocr.lines.find(l => (l.y + l.h / 2) >= bottomBound && /message|type/i.test(l.text || ''));
+          const bottomBound = winRect.y + (winRect.h * 0.70);
+          const hit = ctx.ocr.lines.find(l => (l.y + l.h / 2) >= bottomBound && /message|type|reply/i.test(l.text || ''));
           if (hit) {
             composerTarget = { point: { x: Math.round(hit.x + hit.w / 2), y: Math.round(hit.y + hit.h / 2) } };
           }
         }
 
         if (composerTarget && composerTarget.point) {
-          console.log(`[DesktopActions] 🎯 Re-focused to message composer at (${composerTarget.point.x}, ${composerTarget.point.y})`);
+          console.log(`[DesktopActions] 🎯 Auto-focused message composer at (${composerTarget.point.x}, ${composerTarget.point.y})`);
           await input.request('mouse.click', { x: composerTarget.point.x, y: composerTarget.point.y, button: 'left' }, 3000);
           await sleep(300);
           field = await focusedField();
-        } else {
+        } else if (isSearchBox) {
           return {
             ok: false,
             refused: 'search field misdirection',
-            report: `Refused to type message into search box "${field.name}". Please open the target chat and focus the message composer ("Type a message") first.`
+            report: `Refused to type message into search box "${field.name || 'Search'}". Please open the target chat and focus the message composer ("Type a message") first.`
           };
         }
       }

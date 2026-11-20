@@ -1,4 +1,4 @@
-# Adion Browse — Windows read-only probe sidecar
+﻿# Adion Browse — Windows read-only probe sidecar
 #
 # Adapted from nus-companion's win/probe.ps1 (Apache-2.0, potlakai/nus-companion
 # v0.1.21), renamed and trimmed to the read-only surface Adion needs. The
@@ -350,7 +350,9 @@ function Handle($req) {
         $d = Describe $f $false 0
         if ($ignore -ne 0 -and $d.pid -eq $ignore) { return @{ element=$null; ours=$true } }
         $pw = $false; try { $pw = [bool]$f.Current.IsPassword } catch {}
-        return @{ element=@{ name=$d.name; type=$d.type; rect=$d.rect; isPassword=$pw; pid=$d.pid } }
+        $autoId = ''; try { $autoId = [string]$f.Current.AutomationId } catch {}
+        $cls = ''; try { $cls = [string]$f.Current.ClassName } catch {}
+        return @{ element=@{ name=$d.name; type=$d.type; rect=$d.rect; isPassword=$pw; pid=$d.pid; autoId=$autoId; className=$cls } }
       } catch { return @{ element=$null; error=[string]$_.Exception.Message } }
     }
     'uia.text' {
@@ -380,6 +382,28 @@ function Handle($req) {
     'win.find' {
       $want = ([string]$req.name).ToLowerInvariant() -replace '[^a-z0-9]', ''
       if ($want.Length -lt 2) { return @{ found=$false; error='name too short' } }
+
+      # 1. Check visible top-level windows first (most reliable for real HWNDs across Electron, UWP, WPF)
+      $n = [AdionWin]::GetWindow([AdionWin]::GetForegroundWindow(), 0); $guard = 0
+      while ($n -ne [IntPtr]::Zero -and $guard++ -lt 256) {
+        if ([AdionWin]::IsWindowVisible($n)) {
+          $wp = [AdionWin]::Pid($n)
+          $t = [AdionWin]::Title($n)
+          $rr = [AdionWin]::Rect($n)
+          if ($wp -ne $PID -and $t -and $t -ne 'Program Manager' -and $rr -and ($rr[2] - $rr[0]) -gt 80) {
+            $pName = ''
+            try { $pName = (Get-Process -Id $wp -ErrorAction SilentlyContinue).ProcessName } catch {}
+            $normP = $pName.ToLowerInvariant() -replace '[^a-z0-9]', ''
+            $normT = $t.ToLowerInvariant() -replace '[^a-z0-9]', ''
+            if (($normP.Length -ge 2 -and ($want.Contains($normP) -or $normP.Contains($want))) -or ($normT.Length -ge 2 -and ($normT.Contains($want) -or $want.Contains($normT)))) {
+              return @{ found=$true; process=$pName; title=$t; hwnd=[int64]$n }
+            }
+          }
+        }
+        $n = [AdionWin]::GetWindow($n, 2)
+      }
+
+      # 2. Process search with non-zero MainWindowHandle
       $hit = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.Id -ne $PID } | Where-Object {
         $p = $_.ProcessName.ToLowerInvariant() -replace '[^a-z0-9]', ''
         $t = ([string]$_.MainWindowTitle).ToLowerInvariant() -replace '[^a-z0-9]', ''

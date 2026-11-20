@@ -99,6 +99,11 @@ const SYSTEM_PROMPT = [
   '     * NEVER press ctrl+f when you want to compose or send a message! ctrl+f opens the Search bar and will cause your message to be typed into the search box instead of the chat!',
   '  5. CLEARING SEARCH IF NO CHATS FOUND:',
   '     * If search shows "No chats, contacts or messages found" or the search box has message text, press Escape ({"name": "press", "args": {"keys": "escape"}}) to clear the search bar.',
+  '- Discord Navigation Workflows:',
+  '  1. Quick Switcher: Press ctrl+k to open Quick Switcher ("Where would you like to go?").',
+  '  2. Switch to channel or user: Type the channel name (e.g. {"name": "type", "args": {"text": "general", "enter": true}}) to jump straight to that channel.',
+  '  3. Direct Click: You can also click the channel or server directly from the OCR list (e.g. {"name": "click", "args": {"text": "general"}}).',
+  '  4. Message Composer in Discord: Target "Message #" or click the bottom input area, then type with enter:true (e.g. {"name": "type", "args": {"target": "Message", "text": "hello", "enter": true}}).',
   '  6. If task requires a screenshot: {"name": "screenshot", "args": {}} (this automatically copies to clipboard).',
   '  7. Set "done": true once the task is accomplished.',
   '- NEVER click window titlebar buttons ("Restore", "Minimize", "Close", id 2) to activate a window: clicking Restore resizes or un-maximizes the app! The window is already active after open_app.',
@@ -159,6 +164,7 @@ function normalizeAction(action, contextGoal = '', instruction = '') {
   if (name === 'type') {
     args.text = args.text != null ? args.text : (args.value != null ? args.value : (action.text != null ? action.text : ''));
     args.enter = args.enter === true || action.enter === true;
+    args.target = args.target || args.field || args.placeholder || params.target || action.target || '';
   }
   if (name === 'press') args.keys = args.keys || args.key || args.hotkey || action.keys || '';
   if (name === 'open_app') {
@@ -173,7 +179,9 @@ function normalizeAction(action, contextGoal = '', instruction = '') {
   if (name === 'scroll') args.direction = String(args.direction || 'down').toLowerCase();
   if (name === 'find_window') args.name = args.name || args.text || args.window || '';
   if (name === 'describe_screen') args.prompt = args.prompt || args.text || '';
-  delete args.target;
+  if (name !== 'type') {
+    delete args.target;
+  }
   delete args.selector;
   return { name, args };
 }
@@ -264,13 +272,31 @@ function createPcPlanner(deps = {}) {
     if (ocr && (ocr.text || (ocr.lines && ocr.lines.length) || (ocr.words && ocr.words.length))) {
       let entries = '';
       if (Array.isArray(ocr.lines) && ocr.lines.length > 0) {
-        entries = ocr.lines
-          .slice(0, 40)
+        // Prioritize goal keywords and input/action controls so they are NEVER truncated
+        const goalTokens = String(goal || '').toLowerCase().split(/[\s,.;:!?]+/).filter(t => t.length > 2);
+        const isPriority = (text) => {
+          const t = text.toLowerCase();
+          if (/message|type|search|send|reply|write|input|general|chat|compose/i.test(t)) return true;
+          return goalTokens.some(tok => t.includes(tok));
+        };
+
+        const priorityLines = [];
+        const otherLines = [];
+        for (const l of ocr.lines) {
+          if (isPriority(l.text || '')) priorityLines.push(l);
+          else otherLines.push(l);
+        }
+
+        const combined = [...priorityLines, ...otherLines].slice(0, 120);
+        // Sort top-to-bottom for clean visual layout
+        combined.sort((a, b) => a.y - b.y);
+
+        entries = combined
           .map(l => `  "${clip(l.text, 60)}" | center: (${Math.round(l.x + l.w / 2)}, ${Math.round(l.y + l.h / 2)}) | rect: ${l.x},${l.y},${l.w},${l.h}`)
           .join('\n');
       } else if (Array.isArray(ocr.words) && ocr.words.length > 0) {
         entries = ocr.words
-          .slice(0, 40)
+          .slice(0, 100)
           .map(w => `  "${clip(w.text, 40)}" | center: (${Math.round(w.x + w.w / 2)}, ${Math.round(w.y + w.h / 2)}) | rect: ${w.x},${w.y},${w.w},${w.h}`)
           .join('\n');
       }

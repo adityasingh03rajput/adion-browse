@@ -28,7 +28,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
-const { recognizeText } = require('./ocr');
+const { recognizeText, recognizeWords } = require('./ocr');
 
 function firstExisting(list) {
   for (const p of list) {
@@ -191,10 +191,16 @@ function createScreenWatch(deps = {}) {
 
   async function readScreen(opts = {}) {
     const shot = await screenshot('adion-ocr');
-    if (!shot.ok) return { ok: false, file: null, text: '', note: shot.note };
-    const text = await recognizeText(shot.file);
+    if (!shot.ok) return { ok: false, file: null, text: '', lines: [], words: [], note: shot.note };
+    let parsed = null;
+    try {
+      parsed = await recognizeWords(shot.file);
+    } catch (_) {}
+    const text = (parsed && parsed.text) || (await recognizeText(shot.file));
     return {
       ok: true, file: shot.file, text: String(text || '').slice(0, opts.max || 20000),
+      lines: (parsed && parsed.lines) || [],
+      words: (parsed && parsed.words) || [],
       chars: String(text || '').length, source: 'winrt-ocr', virtualScreen: shot.virtualScreen,
     };
   }
