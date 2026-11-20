@@ -794,7 +794,7 @@ class AgentRuntime extends EventEmitter {
     }
 
     this.setState(AgentState.PARSING_INTENT, { input: exactPrompt });
-    this.emit('feedback', { message: `Autonomous Agent coordinating: "${text}"`, level: 'info', isStep: true });
+    this.emit('feedback', { message: `Autonomous Agent coordinating: "${text}"`, level: 'info' });
 
     // Meta Skills Commands (/skills, /skill list, /skill add, /skill delete, /skill toggle)
     if (this.skillManager) {
@@ -1081,22 +1081,21 @@ class AgentRuntime extends EventEmitter {
           this.setState(AgentState.IDLE);
 
           let feedbackMsg = initialPlan.response || initialPlan.reply || initialPlan.message || '';
-          if (!feedbackMsg) {
-            const rawThought = String(initialPlan.thought || '').trim();
-            // If thought is third-person robotic monologue, convert to warm, helpful first-person response
-            if (/^(?:user\s+greeted|user\s+says|user\s+is\s+asking|the\s+user\s+wants|the\s+user\s+is|no\s+further\s+action\s+is\s+required)\b/i.test(rawThought)) {
-              if (/^(?:hi|hello|hey|greetings|good\s+(?:morning|afternoon|evening)|howdy|sup|hola)\b/i.test(exactPrompt.trim())) {
-                feedbackMsg = "Hello! How can I help you today? I'm ready to search the web, open tabs, navigate websites, or control your desktop.";
-              } else {
-                feedbackMsg = rawThought
-                  .replace(/^(?:user\s+greeted\s+with\s*['"][^'"]*['"]\s*(?:while\s+[^.]*)?\.\s*no\s+further\s+action\s+is\s+required\s*(?:other\s+than\s+acknowledging\s+the\s+greeting)?\.?)/i, "Hello! How can I help you today?")
-                  .replace(/^(?:the\s+user\s+is\s+asking\s+(?:about|for|to)?|the\s+user\s+wants\s+(?:to)?)\s*/i, "")
-                  .trim();
-                if (!feedbackMsg) feedbackMsg = "Hello! How can I assist you today?";
+          
+          // NEVER display the planner's internal chain-of-thought ("thought") to the user!
+          // When no human-facing response was returned by the planner, synthesize a real conversational reply.
+          if (!feedbackMsg || typeof feedbackMsg !== 'string' || !feedbackMsg.trim()) {
+            if (this.model && typeof this.model.synthesizeAnswer === 'function') {
+              try {
+                feedbackMsg = await this.model.synthesizeAnswer(exactPrompt, pageContext, conversationHistory);
+              } catch (synthErr) {
+                console.warn('[AgentRuntime] Conversational synthesis notice:', synthErr.message);
               }
-            } else {
-              feedbackMsg = rawThought || 'Standing by for browser commands.';
             }
+          }
+
+          if (!feedbackMsg || typeof feedbackMsg !== 'string' || !feedbackMsg.trim()) {
+            feedbackMsg = "Hello! How can I help you today? I'm ready to search the web, open tabs, navigate websites, or help you with your browser.";
           }
 
           if (this.currentTask) {

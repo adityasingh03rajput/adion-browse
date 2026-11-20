@@ -40,6 +40,64 @@ class BaseProvider {
   }
 
   /**
+   * Conversational chat completion without JSON action schemas.
+   * Direct human-facing dialogue between user and assistant.
+   * Default implementation supports standard OpenAI-compatible endpoints.
+   */
+  async chat(prompt, systemPrompt = 'You are Adion Copilot, the intelligent AI assistant in Adion Browse. Communicate directly, warmly, and helpfully with the user in natural language.', options = {}) {
+    if (!this.isConfigured()) {
+      throw new Error(`Provider ${this.displayName} is not configured`);
+    }
+
+    const modelToUse = options.model || this.model;
+    const rawHistory = Array.isArray(options.history) ? options.history : [];
+    const formattedHistory = rawHistory.map(h => {
+      if (h.role && h.content) return h;
+      return [
+        h.user ? { role: 'user', content: h.user } : null,
+        h.agent ? { role: 'assistant', content: h.agent } : null
+      ].filter(Boolean);
+    }).flat();
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...this.coalesceMessages(formattedHistory),
+      { role: 'user', content: prompt }
+    ];
+
+    const payload = {
+      model: modelToUse,
+      messages,
+      temperature: options.temperature ?? 0.7,
+      max_tokens: options.maxTokens || 1000
+    };
+
+    console.log(`[${this.displayName}] Conversational chat querying ${modelToUse}...`);
+
+    const headers = {
+      'Content-Type': 'application/json'
+    };
+    if (this.apiKey) {
+      headers['Authorization'] = `Bearer ${this.apiKey}`;
+    }
+
+    const res = await this.fetchFn(this.apiUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      throw new Error(`${this.displayName} chat error ${res.status}: ${errBody}`);
+    }
+
+    const data = await res.json();
+    const rawContent = data.choices?.[0]?.message?.content || data.response || '';
+    return rawContent.trim();
+  }
+
+  /**
    * Merge consecutive same-role turns so the history stays valid for
    * providers that require strict user/assistant alternation.
    */

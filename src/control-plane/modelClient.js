@@ -412,12 +412,12 @@ JSON Action Plan:
           activeProvider.plan(prompt, this.systemPrompt, { history: historyMessages }),
           new Promise((_, rej) => setTimeout(() => rej(new Error('provider timeout 20s')), 20000)),
         ]);
-        if (result && (Array.isArray(result.actions) || result.thought)) {
+        if (result && (Array.isArray(result.actions) || result.thought || result.response)) {
           if (!Array.isArray(result.actions)) result.actions = [];
           if (result.actions.length > 0) {
             console.log(`[ModelClient] ${activeProvider.displayName} generated ${result.actions.length} action(s):`, result.thought);
           } else {
-            console.log(`[ModelClient] ${activeProvider.displayName} conversational evaluation:`, result.thought);
+            console.log(`[ModelClient] ${activeProvider.displayName} plan evaluation:`, result.response || result.thought);
           }
           return result;
         }
@@ -431,12 +431,12 @@ JSON Action Plan:
       try {
         console.log(`[ModelClient] Querying Groq Cloud (${this.groqModel})...`);
         const result = await this.queryGroq(prompt, historyMessages);
-        if (result && (Array.isArray(result.actions) || result.thought)) {
+        if (result && (Array.isArray(result.actions) || result.thought || result.response)) {
           if (!Array.isArray(result.actions)) result.actions = [];
           if (result.actions.length > 0) {
             console.log(`[ModelClient] Groq generated ${result.actions.length} action(s):`, result.thought);
           } else {
-            console.log(`[ModelClient] Groq conversational evaluation:`, result.thought);
+            console.log(`[ModelClient] Groq plan evaluation:`, result.response || result.thought);
           }
           return result;
         }
@@ -1057,30 +1057,59 @@ JSON Action Plan:
   }
 
   /**
+   * Conversational chat directly querying the active provider or fallbacks.
+   * Produces direct human-facing text, NOT JSON action schemas or internal monologue.
+   */
+  async chat(prompt, systemPrompt = 'You are Adion Copilot, the AI assistant inside Adion Browse. Communicate directly, warmly, and helpfully with the user in natural language.', options = {}) {
+    const activeProvider = this.registry ? this.registry.getActiveProvider() : null;
+    if (activeProvider && activeProvider.isConfigured()) {
+      try {
+        if (typeof activeProvider.chat === 'function') {
+          const res = await activeProvider.chat(prompt, systemPrompt, options);
+          if (res && res.trim()) return res.trim();
+        }
+      } catch (err) {
+        console.warn(`[ModelClient chat] ${activeProvider.displayName} notice:`, err.message);
+      }
+    }
+
+    if (this.groqKey) {
+      try {
+        const groqProv = this.registry ? this.registry.getProvider('groq') : null;
+        if (groqProv && typeof groqProv.chat === 'function') {
+          const res = await groqProv.chat(prompt, systemPrompt, options);
+          if (res && res.trim()) return res.trim();
+        }
+      } catch (err) {
+        console.warn('[ModelClient chat] Groq fallback notice:', err.message);
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Synthesize a conversational answer without performing any action.
-   * Used for PAGE_ANALYSIS_OR_QA tool when user asks for information.
+   * Used for PAGE_ANALYSIS_OR_QA tool when user asks for information or for conversational turns.
    */
   async synthesizeAnswer(query, pageContext = {}, conversationHistory = []) {
     // Build context for the answer
     const elementsInfo = [];
-    if (Array.isArray(pageContext.buttons) && pageContext.buttons.length > 0) {
-      elementsInfo.push(`Visible buttons: ${pageContext.buttons.slice(0, 10).join(', ')}`);
+    if (pageContext.url && !pageContext.url.includes('newtab') && !pageContext.url.includes('adion://')) {
+      elementsInfo.push(`Current Page URL: ${pageContext.url}`);
+    }
+    if (pageContext.title && pageContext.title !== 'New Tab') {
+      elementsInfo.push(`Page Title: ${pageContext.title}`);
     }
     if (Array.isArray(pageContext.headings) && pageContext.headings.length > 0) {
-      elementsInfo.push(`Headings: ${pageContext.headings.slice(0, 10).join(' | ')}`);
+      elementsInfo.push(`Headings: ${pageContext.headings.slice(0, 6).join(' | ')}`);
     }
-    if (pageContext.pageText) {
-      elementsInfo.push(`Page content: ${pageContext.pageText.slice(0, 500)}...`);
+    if (pageContext.pageText && pageContext.isShared !== false) {
+      elementsInfo.push(`Page Content:\n${pageContext.pageText.slice(0, 600)}`);
     }
 
     const contextSnippet = elementsInfo.length > 0 
       ? `\n\nPage Context:\n${elementsInfo.join('\n')}` 
-      : '';
-
-    const historySnippet = conversationHistory && conversationHistory.length > 0
-      ? `\n\nRecent Conversation:\n${conversationHistory.slice(-3).map(h => 
-          `${h.prompt ? 'User: ' + h.prompt : ''}${h.response && h.response.thought ? '\nAssistant: ' + h.response.thought : ''}`
-        ).join('\n')}`
       : '';
 
     let activeSkillSection = '';
@@ -1089,48 +1118,23 @@ JSON Action Plan:
       activeSkillSection = `\n\n[Active Specialized AI Skill: ${sk.title} (${sk.trigger})]\n${sk.instructions}`;
     }
 
-    const prompt = `You are Adion Browse, an AI assistant that helps users navigate and understand web pages.
+    const systemPrompt = `You are Adion Copilot, the intelligent AI assistant in the Adion Browse web browser.
+You communicate directly, warmly, and helpfully with the user in the first person ("I").
+Provide clear, conversational answers. If the user is greeting you (e.g. "hi", "hello"), greet them warmly and let them know you're ready to help them browse the web, navigate pages, or assist with tasks.
+Do NOT output JSON. Do NOT speak about the user in the third person. Address the user directly as a helpful companion.`;
 
-User Question: "${query}"
+    const prompt = `${contextSnippet}${activeSkillSection}User: "${query}"\n\nDirect response to the user:`;
 
-Current Page:
-- URL: ${pageContext.url || 'unknown'}
-- Title: ${pageContext.title || 'unknown'}
-${contextSnippet}${activeSkillSection}
+    const chatResponse = await this.chat(prompt, systemPrompt, {
+      history: conversationHistory,
+      maxTokens: 500
+    });
 
-Answer the user's question concisely and accurately based on the page context, active skill instructions, and conversation history. 
-If the answer cannot be determined from the page, say so honestly. Keep your response under 3 sentences.
-${historySnippet}
-
-Direct answer (no markdown, no preamble):`;
-
-    // Try active provider first (use plan method with custom system prompt)
-    const activeProvider = this.registry ? this.registry.getActiveProvider() : null;
-    if (activeProvider && activeProvider.isConfigured()) {
-      try {
-        const result = await activeProvider.plan(prompt, 'You are Adion Browse, an AI assistant that helps users navigate and understand web pages.', {
-          maxTokens: 300,
-          temperature: 0.3,
-          raw: true
-        });
-        if (result) return String(result).trim();
-      } catch (err) {
-        console.warn('[ModelClient synthesizeAnswer] Active provider error:', err.message);
-      }
+    if (chatResponse && chatResponse.trim()) {
+      return chatResponse.trim();
     }
 
-    // Fallback to Groq
-    if (this.groqKey) {
-      try {
-        const result = await this.queryGroq(prompt, [], { raw: true });
-        if (result) return String(result).trim();
-      } catch (err) {
-        console.warn('[ModelClient synthesizeAnswer] Groq error:', err.message);
-      }
-    }
-
-    // Last resort: return a placeholder
-    return `I can see the page at ${pageContext.url || 'this location'}, but I don't have enough context to answer "${query}" directly. What would you like me to do?`;
+    return `Hello! How can I help you today? I'm ready to search the web, open tabs, navigate websites, or help you with your browser.`;
   }
 
   normalizeActionParams(action) {
